@@ -23,7 +23,7 @@ peer review, and an individual quiz.
 
 ## 2. System architecture
 
-Four subsystems. Assume all four exist and must interoperate; do not design anything that assumes a
+Five subsystems. Assume all five exist and must interoperate; do not design anything that assumes a
 monolith.
 
 | Subsystem | Hardware / stack | Responsibility |
@@ -460,15 +460,15 @@ penalty per touch — and bulldozing disqualifies outright. Tune for clearance f
 
 ## 8. Reference implementation notes
 
-> **This repository *is* that reference implementation.** We cloned `Pante/SC2079` (AY2023 Sem 2,
-> Group 14) with all 312 of its commits and re-pointed `origin` at our own repo. Everything in
-> `service/`, `RPi/`, `robot/`, `android/`, `image rec/` and `simulator-client/` is **their** code,
-> not ours.
+> **The reference is `Pante/SC2079` (AY2023 Sem 2, Group 14) — a prior-year implementation we
+> studied. It is *not* checked into this repository.** There is no `service/`, `RPi/`, `robot/`,
+> `android/`, `image rec/` or `simulator-client/` here. Everything in §8 is notes taken from reading
+> their tree elsewhere; clone it separately if you want to read the code alongside these notes.
 >
-> **Stance: read, do not import.** Study these modules for API shape, geometry and hard-won
-> constants, then write our own subsystems in new directories (§9.1). Do not import from their
-> packages, subclass their types, or edit their files in place — a half-migrated tree is the worst
-> of both worlds. Their history stays as provenance; our work lands alongside it.
+> **Stance: read, do not import.** Study their modules for API shape, geometry and hard-won
+> constants, then write our own subsystems from scratch (§9.1). Do not vendor their packages,
+> subclass their types, or copy their files in wholesale — inheriting a prior year's tree is the
+> worst of both worlds. Take the ideas; write our own code.
 
 Their `service/` module is a Flask + `flask-openapi3` pathfinding microservice (Python 3.12, pipenv,
 Swagger at `/openapi/swagger`).
@@ -573,8 +573,8 @@ with angle and val rounded to 2 dp.
 | `T` / `t` | Drive forward / backward | distance in cm, or `90` for a turn |
 | `W` / `w` | Drive forward / backward **until a sensor threshold is met** | the threshold |
 | `S` | Stop — halt before image capture | — |
-| `D` | Distance-tracking marker (semantics inferred — confirm against `robot/`) | — |
-| `M` | Marker (semantics inferred — confirm against `robot/`) | — |
+| `D` | Distance-tracking marker (semantics inferred — confirm against their firmware) | — |
+| `M` | Marker (semantics inferred — confirm against their firmware) | — |
 
 **Angle sign: negative = left, positive = right.** A turn is `angle = ±drive_angle`, `val = 90`; a
 straight move is `angle = 0`, `val = distance`. Observed constants: `drive_angle = 25`;
@@ -598,27 +598,22 @@ JSON-line or length-prefixed frame is far easier to debug, log and version (§2.
 
 ### 9.1 Layout: what exists vs. what we build
 
-The repository already contains Pante's tree (§8). We do not edit it. Our subsystems go in new
-directories beside it.
+The repository currently holds this brief, the README, and the course reference PDFs in `docs/`.
+**Every subsystem below is still to be created.** We write all of it ourselves; §8's reference
+implementation is read elsewhere, not vendored here.
 
-| Theirs (reference, read-only) | Ours (build here) | Notes |
+| Ours (build here) | Read first (§8) | Notes |
 |---|---|---|
-| `service/` | `algorithm/` | Flask pathfinding service. Read for API shape (§8.1) |
-| `simulator-client/` | `simulator/` | Visualisation (§7.9) |
-| `openapi-simulator-client/` | — | Generated client — never hand-edit |
-| `RPi/` | `rpi/` | Bluetooth, serial, orchestration |
-| `image rec/` | `image-rec/` | ⚠️ Their directory name **contains a space** |
-| `robot/` | `stm/` | STM32 firmware |
-| `android/` | `android/` *(new module)* | Do not modify their app in place |
-| `music/`, `yolov5/` | — | Leave alone |
-| — | `docs/` | Protocols, calibration records, checklist evidence |
+| `algorithm/` | their `service/` | Flask pathfinding service. Mirror the API shape (§8.1) |
+| `simulator/` | their `simulator-client/` | Visualisation (§7.9) |
+| `rpi/` | their `RPi/` | Bluetooth, serial, orchestration |
+| `image-rec/` | their `image rec/` | CV model and inference |
+| `stm/` | their `robot/` | STM32 firmware |
+| `android/` | their `android/` | Tablet app, Bluetooth SPP |
+| `docs/` | — | **Exists.** Course PDFs; add protocols, calibration records, checklist evidence |
 
-Two traps in their tree:
-
-- **`image rec/` has a space in it.** Always quote it: `cd "image rec"`. Ours is `image-rec/` with a
-  hyphen — never create a new path containing a space.
-- **`yolov5/` is an empty, uninitialised submodule** pointing at `ultralytics/yolov5`
-  (`.gitmodules`). Run `git submodule update --init` before any image-rec work or it stays empty.
+Naming: **hyphens, never spaces.** Their tree had a space in `image rec/`, which makes every shell
+command that touches it need quoting. Ours is `image-rec/`. Never create a path containing a space.
 
 ### 9.2 Rules
 
@@ -635,9 +630,9 @@ Two traps in their tree:
 7. **Attribute work.** Checklist items require contributor names, and peer review scores depend on a
    demonstrable contribution record. Commit under your own identity.
 8. **Prefer measured numbers to briefing numbers** where they conflict, and record the measurement.
-9. **Never edit Pante's directories** (§9.1, left column). Read them, lift the ideas, write our
-   version in our tree. If something of theirs must change to be usable, that is the signal to
-   rewrite it in ours — not to patch theirs.
+9. **Never vendor the reference implementation in.** Read it where it lives, lift the ideas, write
+   our version in our tree (§9.1). If something of theirs would need changing to be usable, that is
+   the signal to write our own — not to copy theirs in and patch it.
 
 ### 9.3 Definition of done for a run-critical feature
 
@@ -658,4 +653,4 @@ Two traps in their tree:
 - **Which standoff distance is authoritative** — the ~20 cm camera optimum (§3.1), the 25–30 cm
   planning band (§7.5), or §7.2's two mutually inconsistent formulas. See the note in §3.1.
 - Semantics of the reference firmware's bare `D` and `M` serial flags (§8.5), if we reuse any part
-  of their STM firmware in `robot/`.
+  of their STM firmware as a starting point for our `stm/`.
