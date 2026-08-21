@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+
+    <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
+
+    <application
+        android:name=".MdpApplication"
+        android:allowBackup="true"
+        android:label="MDP Grp 11"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <!--
+            resizeableActivity=false: MainScreen's arena is sized by HEIGHT and
+            takes its square first, leaving the remainder to the control column.
+            In a narrow split-screen half the square consumes the full width and
+            that remainder resolves to zero - every control including STOP
+            disappears with nothing on screen to say why. The layout has no
+            scroll to fall back on, deliberately. This app is a full-screen
+            landscape operating surface for one scored run; multi-window is not
+            a mode it has any use for.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:resizeableActivity="false"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
