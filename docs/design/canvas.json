@@ -1,0 +1,93 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "Main screen (live)",
+      "x": 0,
+      "y": 0,
+      "w": 1340,
+      "h": 700
+    },
+    {
+      "file": "DevicePicker.dc.html",
+      "title": "C.2 Device picker",
+      "x": 1440,
+      "y": 0,
+      "w": 1340,
+      "h": 700
+    },
+    {
+      "file": "ConnectionStates.dc.html",
+      "title": "C.8 Connection states",
+      "x": 2880,
+      "y": 0,
+      "w": 1040,
+      "h": 660
+    },
+    {
+      "file": "DragInteraction.dc.html",
+      "title": "C.6 Place & remove",
+      "x": 4020,
+      "y": 0,
+      "w": 1040,
+      "h": 780
+    },
+    {
+      "file": "FaceSelector.dc.html",
+      "title": "C.7 Face annotation",
+      "x": 5160,
+      "y": 0,
+      "w": 1040,
+      "h": 720
+    },
+    {
+      "file": "TargetStates.dc.html",
+      "title": "C.9 Block states",
+      "x": 6300,
+      "y": 0,
+      "w": 1040,
+      "h": 560
+    },
+    {
+      "file": "RobotHeadings.dc.html",
+      "title": "C.10 Robot heading",
+      "x": 7440,
+      "y": 0,
+      "w": 1040,
+      "h": 500
+    }
+  ],
+  "annotations": [
+    {
+      "id": "size-budget",
+      "x": 0,
+      "y": -400,
+      "w": 700,
+      "text": "THE TABLET IS 1340 x 700, NOT 1340 x 800.\n\nThese two boards used to be drawn at the full 1340 x 800 panel. The app never gets that: Android's status bar takes ~32px off the top and the taskbar ~68px off the bottom, so the window it actually lays out in is about 700px tall. Designing against 800 is what made the status card and the raw log clip when this was built.\n\nWhat paid for the missing 100px: the dark ARENA Control header is gone (the connection chip and the obstacle count moved into the right column, which is where the built app already puts them), and the grid went from 33px cells to 29px.\n\nNothing on this screen scrolls except the log. STOP has to be reachable without a scroll at every moment of a run, and a control you have to scroll back into view is a control that is missing when it is needed."
+    },
+    {
+      "id": "live-arena",
+      "x": 0,
+      "y": -230,
+      "w": 560,
+      "text": "THIS ONE IS LIVE — try it.\n\nTap empty grid to place a block. Drag a block to move it. Drag it off the edge to remove it. Tap a block to open the face compass.\n\nThe black panel is the raw Bluetooth log, both directions — TX for what we send, RX for what arrives. That is C.1's evidence, and it stays separate from the selective status panel that C.4 requires."
+    },
+    {
+      "id": "checklist-coverage",
+      "x": 0,
+      "y": 780,
+      "w": 820,
+      "text": "C.1 raw log, both directions · C.2 device picker · C.3 control pad · C.4 selective status panel · C.5 arena with numbered blocks and robot heading · C.6 drag to place and remove · C.7 face compass, coordinate included · C.8 connection states · C.9 block states · C.10 all four headings.\n\nTwo things still need a supervisor's answer, both marked on their boards: whether ROBOT names the robot's bottom-left cell or its centre, and whether the FACE format should carry the coordinate (the checklist text asks for it, the briefing slide omits it — we send it)."
+    },
+    {
+      "id": "not-yet-built",
+      "x": 900,
+      "y": 780,
+      "w": 560,
+      "text": "These boards are the target, not a screenshot - and the app now matches most of them.\n\nBuilt since these were drawn: both typefaces ship with the app (Bricolage Grotesque and DM Mono, in res/font, not downloaded at runtime); the control-pad keys carry the stroked arrow glyphs drawn here, ported from these paths rather than eyeballed; the connection bar takes its fill and status dot from the connection state, green when connected; the obstacle count is a card; and the run clocks are dark with yellow numerals while a run is timed.\n\nStill different, on purpose: there is no top bar. The tablet gives the app ~700px, not the 800 these boards were first drawn at, so the wordmark bar was cut and its contents moved into the right column.\n\nStill to do: the device picker's rows are plain in the app where this canvas gives them bordered cards. That is the last item of the styling pass."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

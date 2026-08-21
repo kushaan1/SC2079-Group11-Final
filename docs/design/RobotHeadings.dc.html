@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: "Bricolage Grotesque", "Trebuchet MS", sans-serif; }
+    a { color: oklch(0.68 0.20 250); } a:hover { color: oklch(0.55 0.20 250); }
+    .rh-mono { font-family: "DM Mono", ui-monospace, monospace; }
+    .rh-cap { font-family: "DM Mono", ui-monospace, monospace; font-size: 11px; letter-spacing: 0.1em; color: oklch(0.50 0.03 280); }
+    .rh-card { background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280); padding: 16px 14px; display: flex; flex-direction: column; align-items: center; gap: 13px; }
+    .rh-bot { position: relative; width: 120px; height: 120px; background: oklch(0.86 0.17 95); border: 4px solid oklch(0.20 0.025 280); border-radius: 10px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); }
+    .rh-chip { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; font-weight: 500; padding: 7px 10px; border-radius: 6px; white-space: nowrap; background: oklch(0.72 0.19 145); border: 2px solid oklch(0.20 0.025 280); }
+  </style>
+</helmet>
+
+<div style="width: 1040px; height: 500px; background: oklch(0.94 0.03 95); color: oklch(0.20 0.025 280); display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="height: 64px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 24px; background: oklch(0.20 0.025 280);">
+    <div style="font-size: 20px; font-weight: 800; color: oklch(0.86 0.17 95); letter-spacing: -0.02em;">C.10</div>
+    <div style="font-size: 20px; font-weight: 500; color: oklch(0.96 0.01 95); letter-spacing: -0.02em;">Robot position and heading</div>
+  </div>
+
+  <div style="display: flex; gap: 16px; padding: 20px 24px 0;">
+
+    <div class="rh-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="rh-cap">NORTH</div>
+      <div class="rh-bot">
+        <div style="position: absolute; left: 50%; top: 14px; transform: translateX(-50%); width: 0; height: 0; border-left: 16px solid transparent; border-right: 16px solid transparent; border-bottom: 22px solid oklch(0.20 0.025 280);"></div>
+      </div>
+      <div class="rh-chip">&darr; ROBOT,7,2,N</div>
+    </div>
+
+    <div class="rh-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="rh-cap">EAST</div>
+      <div class="rh-bot">
+        <div style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); width: 0; height: 0; border-top: 16px solid transparent; border-bottom: 16px solid transparent; border-left: 22px solid oklch(0.20 0.025 280);"></div>
+      </div>
+      <div class="rh-chip">&darr; ROBOT,7,2,E</div>
+    </div>
+
+    <div class="rh-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="rh-cap">SOUTH</div>
+      <div class="rh-bot">
+        <div style="position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); width: 0; height: 0; border-left: 16px solid transparent; border-right: 16px solid transparent; border-top: 22px solid oklch(0.20 0.025 280);"></div>
+      </div>
+      <div class="rh-chip">&darr; ROBOT,7,2,S</div>
+    </div>
+
+    <div class="rh-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="rh-cap">WEST</div>
+      <div class="rh-bot">
+        <div style="position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 0; height: 0; border-top: 16px solid transparent; border-bottom: 16px solid transparent; border-right: 22px solid oklch(0.20 0.025 280);"></div>
+      </div>
+      <div class="rh-chip">&darr; ROBOT,7,2,W</div>
+    </div>
+
+  </div>
+
+  <div style="display: flex; gap: 16px; padding: 22px 24px 0;">
+
+    <div style="flex: 1 1 0; background: oklch(0.20 0.025 280); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.68 0.20 250); padding: 18px 22px;">
+      <div class="rh-cap" style="color: oklch(0.75 0.03 280); margin-bottom: 10px;">THE AXIS FLIP</div>
+      <div style="font-size: 15px; color: oklch(0.94 0.01 95); line-height: 1.5;">Arena y counts <strong style="color: oklch(0.86 0.17 95);">upward</strong> from (0,0) at bottom-left. Android canvas y counts <strong style="color: oklch(0.86 0.17 95);">downward</strong>. Every draw inverts: <span class="rh-mono">screenY = (19 &minus; cellY) &times; cell</span>.</div>
+      <div style="margin-top: 12px; font-size: 15px; color: oklch(0.94 0.01 95); line-height: 1.5;">That inversion lives in one function in <span class="rh-mono">arena/</span>, unit-tested on the JVM. Scattering it is how grids end up mirrored.</div>
+    </div>
+
+    <div style="flex: 1 1 0; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.68 0.20 5); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.68 0.20 5); padding: 18px 22px;">
+      <div class="rh-cap" style="color: oklch(0.55 0.16 5); margin-bottom: 10px;">CONFIRM WITH THE SUPERVISOR</div>
+      <div style="font-size: 15px; line-height: 1.5;">The robot is 3&times;3 cells, so <span class="rh-mono">ROBOT,7,2</span> could name its <strong>bottom-left cell</strong> or its <strong>centre</strong>. The algorithms briefing <em>recommends</em> bottom-left, but its other sanctioned representation explicitly allows the centre &mdash; and the ARCM slide just prints &ldquo;Robot (7, 2)&rdquo; without saying which.</div>
+      <div style="margin-top: 12px; font-size: 15px; line-height: 1.5;">We draw bottom-left. If the RPi means centre, everything sits one cell off diagonally &mdash; cheap to fix, expensive to discover during a run.</div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1040,"height":500}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

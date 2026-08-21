@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: "Bricolage Grotesque", "Trebuchet MS", sans-serif; }
+    a { color: oklch(0.68 0.20 250); } a:hover { color: oklch(0.55 0.20 250); }
+    .di-mono { font-family: "DM Mono", ui-monospace, monospace; }
+    .di-grid {
+      background-image:
+        repeating-linear-gradient(to right, oklch(0.87 0.025 280) 0 1px, transparent 1px 56px),
+        repeating-linear-gradient(to top,   oklch(0.87 0.025 280) 0 1px, transparent 1px 56px);
+    }
+    .di-cap { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: 0.08em; color: oklch(0.50 0.03 280); }
+  </style>
+</helmet>
+
+<div style="width: 1040px; height: 780px; background: oklch(0.94 0.03 95); color: oklch(0.20 0.025 280); display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="height: 64px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 24px; background: oklch(0.20 0.025 280);">
+    <div style="font-size: 20px; font-weight: 800; color: oklch(0.86 0.17 95); letter-spacing: -0.02em;">C.6</div>
+    <div style="font-size: 20px; font-weight: 500; color: oklch(0.96 0.01 95); letter-spacing: -0.02em;">Placing and moving obstacles</div>
+  </div>
+
+  <div style="display: flex; gap: 18px; padding: 20px 24px 0;">
+
+    <div style="flex: 1 1 0; min-width: 0;">
+      <div class="di-cap" style="margin-bottom: 8px;">1 &middot; RESTING</div>
+      <div class="di-grid" style="position: relative; height: 224px; background-color: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280);">
+        <div style="position: absolute; left: 112px; bottom: 84px; box-sizing: border-box; width: 56px; height: 56px; background: oklch(0.68 0.20 250); border: 3px solid oklch(0.20 0.025 280); border-radius: 6px; display: flex; align-items: flex-start; justify-content: flex-end;">
+          <div class="di-mono" style="font-size: 12px; font-weight: 500; color: oklch(1 0 0); padding: 1px 4px;">3</div>
+        </div>
+      </div>
+      <div style="margin-top: 10px; font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.4;">Obstacle sits on its cell. Nothing is sent.</div>
+    </div>
+
+    <div style="flex: 1 1 0; min-width: 0;">
+      <div class="di-cap" style="margin-bottom: 8px;">2 &middot; DRAGGING</div>
+      <div class="di-grid" style="position: relative; height: 224px; background-color: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280);">
+        <div style="position: absolute; left: 112px; bottom: 84px; box-sizing: border-box; width: 56px; height: 56px; border: 3px dashed oklch(0.78 0.03 280); border-radius: 6px;"></div>
+        <div style="position: absolute; left: 168px; bottom: 28px; box-sizing: border-box; width: 56px; height: 56px; background: oklch(0.68 0.20 250); border: 3px solid oklch(0.20 0.025 280); border-radius: 6px; box-shadow: 0 0 0 4px oklch(0.86 0.17 95), 4px 4px 0 oklch(0.20 0.025 280 / 0.25);"></div>
+        <div style="position: absolute; left: 150px; bottom: 96px; background: oklch(0.20 0.025 280); color: oklch(0.99 0.005 95); padding: 6px 11px; border-radius: 6px; font-size: 14px; font-weight: 800; white-space: nowrap;">(14, 3)</div>
+      </div>
+      <div style="margin-top: 10px; font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.4;">Badge sits above the finger, so the cell stays readable while covered.</div>
+    </div>
+
+    <div style="flex: 1 1 0; min-width: 0;">
+      <div class="di-cap" style="margin-bottom: 8px;">3 &middot; DRAGGED OUT</div>
+      <div class="di-grid" style="position: relative; height: 224px; background-color: oklch(0.99 0.005 95); border: 3px solid oklch(0.68 0.20 5); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.68 0.20 5);">
+        <div style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: oklch(0.68 0.20 5 / 0.14); display: flex; align-items: center; justify-content: center;">
+          <div style="background: oklch(0.68 0.20 5); color: oklch(1 0 0); padding: 10px 18px; border-radius: 999px; font-weight: 800; font-size: 15px; letter-spacing: 0.04em;">RELEASE TO REMOVE</div>
+        </div>
+      </div>
+      <div style="margin-top: 10px; font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.4;">Whole arena flags the destructive state &mdash; no small target to miss.</div>
+    </div>
+
+  </div>
+
+  <div style="display: flex; gap: 18px; padding: 22px 24px; align-items: stretch;">
+
+    <div style="width: 330px; flex-shrink: 0; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280); position: relative; height: 250px;">
+      <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 108px; height: 108px; border: 3px dashed oklch(0.68 0.20 5); border-radius: 50%;"></div>
+      <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); box-sizing: border-box; width: 68px; height: 68px; background: oklch(0.68 0.20 250); border: 3px solid oklch(0.20 0.025 280); border-radius: 6px;"></div>
+      <div class="di-mono" style="position: absolute; left: 50%; top: 16px; transform: translateX(-50%); font-size: 11px; letter-spacing: 0.08em; color: oklch(0.55 0.16 5);">HIT AREA &middot; 7.6 mm</div>
+      <div class="di-mono" style="position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); font-size: 11px; letter-spacing: 0.08em; color: oklch(0.45 0.14 250);">DRAWN &middot; 4.7 mm</div>
+      <div class="di-mono" style="position: absolute; left: 12px; bottom: 12px; font-size: 10px; color: oklch(0.62 0.02 280);">2&times; SCALE</div>
+    </div>
+
+    <div style="flex-grow: 1; background: oklch(0.20 0.025 280); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.68 0.20 250); padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; height: 250px; box-sizing: border-box;">
+      <div class="di-mono" style="font-size: 11px; letter-spacing: 0.12em; color: oklch(0.75 0.03 280);">WHY THE HIT AREA IS BIGGER THAN THE BLOCK</div>
+      <div style="font-size: 16px; color: oklch(0.94 0.01 95); line-height: 1.5;">On an 8.7&Prime; screen a grid cell is <strong style="color: oklch(0.86 0.17 95);">4.7 mm</strong>. Material&rsquo;s minimum touch target is 48dp &mdash; <strong style="color: oklch(0.86 0.17 95);">7.6 mm</strong>. The block cannot be its own target.</div>
+      <div style="font-size: 16px; color: oklch(0.94 0.01 95); line-height: 1.5;">So hit-testing is decoupled from rendering: the block draws at one cell, but claims a 48dp radius. Overlaps resolve to the nearest centre.</div>
+      <div style="margin-top: auto; display: flex; gap: 10px; flex-wrap: wrap;">
+        <div class="di-mono" style="font-size: 13px; font-weight: 500; padding: 7px 12px; background: oklch(0.30 0.03 280); border-radius: 6px; color: oklch(0.86 0.17 95);">ADD,B3,(14,3)</div>
+        <div class="di-mono" style="font-size: 13px; font-weight: 500; padding: 7px 12px; background: oklch(0.30 0.03 280); border-radius: 6px; color: oklch(0.72 0.19 145);">SUB,B3</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="padding: 0 24px 20px;">
+    <div style="font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.45;">Both messages fire on finger-up, never during the drag &mdash; otherwise a single reposition floods the link with one message per cell crossed.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1040,"height":780}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

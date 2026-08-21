@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: "Bricolage Grotesque", "Trebuchet MS", sans-serif; }
+    a { color: oklch(0.68 0.20 250); } a:hover { color: oklch(0.55 0.20 250); }
+    .dp-mono { font-family: "DM Mono", ui-monospace, monospace; }
+    .dp-grid {
+      background-image:
+        repeating-linear-gradient(to right, oklch(0.70 0.045 280) 0 2px, transparent 2px 145px),
+        repeating-linear-gradient(to top,   oklch(0.70 0.045 280) 0 2px, transparent 2px 145px),
+        repeating-linear-gradient(to right, oklch(0.87 0.025 280) 0 1px, transparent 1px 29px),
+        repeating-linear-gradient(to top,   oklch(0.87 0.025 280) 0 1px, transparent 1px 29px);
+    }
+    .dp-tool { flex-grow: 1; height: 52px; display: flex; align-items: center; justify-content: center; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); font-size: 13px; font-weight: 800; letter-spacing: 0.08em; }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 1340px; height: 700px; background: oklch(0.94 0.03 95); color: oklch(0.20 0.025 280); overflow: hidden;">
+
+  <div style="display: flex; gap: 16px; padding: 16px;">
+    <div style="width: 600px; flex-shrink: 0; display: flex; flex-direction: column;">
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+        <div class="dp-tool">SAVE</div>
+        <div class="dp-tool">LOAD</div>
+        <div class="dp-tool">RESET</div>
+      </div>
+      <div style="display: flex;">
+        <div style="width: 20px; flex-shrink: 0;"></div>
+        <div class="dp-grid" style="width: 580px; height: 580px; flex-shrink: 0; border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; background-color: oklch(0.99 0.005 95);"></div>
+      </div>
+    </div>
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; gap: 12px;">
+        <div style="flex-grow: 1; height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px; background: oklch(0.94 0.03 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); box-sizing: border-box;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.62 0.02 280); flex-shrink: 0;"></div>
+          <div class="dp-mono" style="font-size: 13px; font-weight: 500; letter-spacing: 0.04em;">NOT CONNECTED</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: oklch(0.20 0.025 280 / 0.55);"></div>
+
+  <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 620px; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 12px; box-shadow: 8px 8px 0 oklch(0.68 0.20 250); overflow: hidden;">
+
+    <div style="padding: 18px 22px; border-bottom: 3px solid oklch(0.20 0.025 280); display: flex; align-items: center; justify-content: space-between;">
+      <div style="font-size: 22px; font-weight: 800; letter-spacing: -0.02em;">Connect to device</div>
+      <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: oklch(0.86 0.17 95); border: 2px solid oklch(0.20 0.025 280); border-radius: 999px;">
+        <div style="display: flex; gap: 3px;">
+          <div style="width: 5px; height: 5px; border-radius: 50%; background: oklch(0.20 0.025 280);"></div>
+          <div style="width: 5px; height: 5px; border-radius: 50%; background: oklch(0.20 0.025 280); opacity: 0.55;"></div>
+          <div style="width: 5px; height: 5px; border-radius: 50%; background: oklch(0.20 0.025 280); opacity: 0.25;"></div>
+        </div>
+        <div class="dp-mono" style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em;">SCANNING</div>
+      </div>
+    </div>
+
+    <div style="padding: 16px 22px 6px;">
+      <div class="dp-mono" style="font-size: 11px; letter-spacing: 0.12em; color: oklch(0.50 0.03 280);">PAIRED</div>
+    </div>
+
+    <div style="padding: 0 22px; display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 14px; padding: 12px 14px; background: oklch(0.94 0.03 95); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 9px;">
+        <div style="flex-grow: 1; min-width: 0;">
+          <div style="font-size: 17px; font-weight: 700;">RPI-GRP11</div>
+          <div class="dp-mono" style="font-size: 12px; color: oklch(0.50 0.03 280);">B8:27:EB:4A:1C:09</div>
+        </div>
+        <div style="padding: 10px 20px; height: 44px; box-sizing: border-box; background: oklch(0.68 0.20 250); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; font-size: 14px; font-weight: 800; color: oklch(1 0 0); display: flex; align-items: center;">CONNECT</div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 14px; padding: 12px 14px; background: oklch(0.94 0.03 95); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 9px;">
+        <div style="flex-grow: 1; min-width: 0;">
+          <div style="font-size: 17px; font-weight: 700;">AMD-TOOL</div>
+          <div class="dp-mono" style="font-size: 12px; color: oklch(0.50 0.03 280);">3C:5A:B4:11:88:F2</div>
+        </div>
+        <div style="padding: 10px 20px; height: 44px; box-sizing: border-box; background: oklch(0.68 0.20 250); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; font-size: 14px; font-weight: 800; color: oklch(1 0 0); display: flex; align-items: center;">CONNECT</div>
+      </div>
+    </div>
+
+    <div style="padding: 18px 22px 6px;">
+      <div class="dp-mono" style="font-size: 11px; letter-spacing: 0.12em; color: oklch(0.50 0.03 280);">NEARBY</div>
+    </div>
+
+    <div style="padding: 0 22px; display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 2.5px dashed oklch(0.72 0.03 280); border-radius: 9px;">
+        <div style="flex-grow: 1; min-width: 0;">
+          <div style="font-size: 17px; font-weight: 700; color: oklch(0.42 0.03 280);">HC-05</div>
+          <div class="dp-mono" style="font-size: 12px; color: oklch(0.58 0.03 280);">98:D3:31:F5:22:0A</div>
+        </div>
+        <div style="padding: 10px 20px; height: 44px; box-sizing: border-box; border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; font-size: 14px; font-weight: 800; display: flex; align-items: center;">PAIR</div>
+      </div>
+    </div>
+
+    <div style="margin: 20px 22px 22px; padding: 14px; background: oklch(0.86 0.17 95 / 0.35); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 9px; display: flex; align-items: center; gap: 14px;">
+      <div style="width: 52px; height: 30px; flex-shrink: 0; background: oklch(0.72 0.19 145); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 999px; position: relative;">
+        <div style="position: absolute; right: 2px; top: 2px; width: 22px; height: 22px; border-radius: 50%; background: oklch(0.99 0.005 95); border: 2px solid oklch(0.20 0.025 280); box-sizing: border-box;"></div>
+      </div>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 15px; font-weight: 700;">Discoverable to other devices</div>
+        <div style="font-size: 13px; color: oklch(0.42 0.03 280); line-height: 1.35;">Keeps the tablet listening so AMD can reconnect to us after a drop &mdash; required for C.8.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1340,"height":700}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

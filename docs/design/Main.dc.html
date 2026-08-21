@@ -1,0 +1,464 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: "Bricolage Grotesque", "Trebuchet MS", sans-serif; }
+    a { color: oklch(0.68 0.20 250); } a:hover { color: oklch(0.55 0.20 250); }
+    .ar-grid {
+      background-image:
+        repeating-linear-gradient(to right, oklch(0.70 0.045 280) 0 2px, transparent 2px 145px),
+        repeating-linear-gradient(to top,   oklch(0.70 0.045 280) 0 2px, transparent 2px 145px),
+        repeating-linear-gradient(to right, oklch(0.87 0.025 280) 0 1px, transparent 1px 29px),
+        repeating-linear-gradient(to top,   oklch(0.87 0.025 280) 0 1px, transparent 1px 29px);
+    }
+    .ar-mono { font-family: "DM Mono", ui-monospace, monospace; }
+    .ar-btn svg { width: 26px; height: 26px; fill: none; stroke: oklch(0.20 0.025 280); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .ar-lbl { font-family: "DM Mono", ui-monospace, monospace; font-size: 10px; letter-spacing: 0.1em; color: oklch(0.50 0.03 280); }
+    .ar-ax { font-family: "DM Mono", ui-monospace, monospace; font-size: 9px; color: oklch(0.48 0.03 280); display: flex; align-items: center; justify-content: center; }
+    .ar-tool { flex-grow: 1; height: 52px; display: flex; align-items: center; justify-content: center; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); font-size: 13px; font-weight: 800; letter-spacing: 0.08em; }
+  </style>
+</helmet>
+
+<div style="width: 1340px; height: 700px; background: oklch(0.94 0.03 95); color: oklch(0.20 0.025 280); display: flex; gap: 16px; padding: 16px; box-sizing: border-box; overflow: hidden;">
+
+  <div style="width: 600px; flex-shrink: 0; display: flex; flex-direction: column;">
+
+    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+      <div class="ar-tool">SAVE</div>
+      <div class="ar-tool">LOAD</div>
+      <div class="ar-tool">RESET</div>
+      <div class="ar-tool">IMAGES</div>
+    </div>
+
+    <div style="display: flex;">
+
+      <div style="width: 20px; flex-shrink: 0; padding-top: 3px; display: flex; flex-direction: column;">
+        <sc-for list="{{ yLabels }}" as="ylab" hint-placeholder-count="20">
+          <div class="ar-ax" style="height: 29px; justify-content: flex-end; padding-right: 4px;">{{ ylab.n }}</div>
+        </sc-for>
+      </div>
+
+      <div class="ar-grid" onPointerDown="{{ onDown }}" onPointerMove="{{ onMove }}" onPointerUp="{{ onUp }}" style="position: relative; width: 580px; height: 580px; flex-shrink: 0; border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; background-color: oklch(0.99 0.005 95); box-shadow: 5px 5px 0 oklch(0.20 0.025 280); touch-action: none; cursor: crosshair;">
+
+        <div style="position: absolute; left: 0; bottom: 0; width: 116px; height: 116px; box-sizing: border-box; background: oklch(0.86 0.17 95 / 0.32); border-right: 2px dashed oklch(0.20 0.025 280); border-top: 2px dashed oklch(0.20 0.025 280); border-bottom-left-radius: 5px; pointer-events: none;"></div>
+
+        <sc-for list="{{ obstacles }}" as="ob" hint-placeholder-count="5">
+          <div style="position: absolute; box-sizing: border-box; left: {{ ob.left }}px; bottom: {{ ob.bottom }}px; width: 29px; height: 29px; background: {{ ob.bg }}; border: 2px solid oklch(0.20 0.025 280); border-radius: 4px; box-shadow: {{ ob.ring }}; z-index: {{ ob.z }}; display: flex; align-items: center; justify-content: center; pointer-events: none;">
+            <sc-if value="{{ ob.hasFace }}" hint-placeholder-val="{{ true }}">
+              <div style="position: absolute; background: oklch(0.86 0.17 95); {{ ob.faceStyle }}"></div>
+            </sc-if>
+            <sc-if value="{{ ob.hasTarget }}" hint-placeholder-val="{{ true }}">
+              <div style="font-size: 15px; font-weight: 800; color: oklch(1 0 0); line-height: 1;">{{ ob.target }}</div>
+            </sc-if>
+            <sc-if value="{{ ob.noTarget }}" hint-placeholder-val="{{ true }}">
+              <div class="ar-mono" style="position: absolute; top: 0; right: 2px; font-size: 9px; font-weight: 500; color: oklch(1 0 0);">{{ ob.num }}</div>
+            </sc-if>
+          </div>
+        </sc-for>
+
+        <div style="position: absolute; left: 29px; bottom: 29px; width: 87px; height: 87px; box-sizing: border-box; background: oklch(0.86 0.17 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); z-index: 1; pointer-events: none;">
+          <div style="position: absolute; left: 50%; top: 9px; transform: translateX(-50%); width: 0; height: 0; border-left: 11px solid transparent; border-right: 11px solid transparent; border-bottom: 17px solid oklch(0.20 0.025 280);"></div>
+          <div class="ar-mono" style="position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); font-size: 10px; font-weight: 500; white-space: nowrap;">1,1 N</div>
+        </div>
+
+        <sc-if value="{{ dragging }}" hint-placeholder-val="{{ true }}">
+          <div style="position: absolute; left: {{ dragBadgeLeft }}px; bottom: {{ dragBadgeBottom }}px; z-index: 6; background: oklch(0.20 0.025 280); color: oklch(0.99 0.005 95); padding: 5px 10px; border-radius: 6px; font-size: 13px; font-weight: 800; white-space: nowrap; pointer-events: none;">{{ dragLabel }}</div>
+        </sc-if>
+
+        <sc-if value="{{ dragOutside }}" hint-placeholder-val="{{ true }}">
+          <div style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; z-index: 5; background: oklch(0.68 0.20 5 / 0.14); border: 4px dashed oklch(0.68 0.20 5); border-radius: 5px; display: flex; align-items: center; justify-content: center; pointer-events: none;">
+            <div style="background: oklch(0.68 0.20 5); color: oklch(1 0 0); padding: 10px 18px; border-radius: 999px; font-weight: 800; font-size: 15px; letter-spacing: 0.04em;">RELEASE TO REMOVE</div>
+          </div>
+        </sc-if>
+
+      </div>
+    </div>
+
+    <div style="display: flex; margin-top: 2px;">
+      <div style="width: 23px; flex-shrink: 0;"></div>
+      <div style="width: 580px; display: flex;">
+        <sc-for list="{{ xLabels }}" as="xlab" hint-placeholder-count="20">
+          <div class="ar-ax" style="width: 29px; height: 16px;">{{ xlab.n }}</div>
+        </sc-for>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0;">
+
+    <div style="display: flex; gap: 12px; flex-shrink: 0;">
+      <div style="flex-grow: 1; height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px; background: oklch(0.72 0.19 145); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); box-sizing: border-box;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.20 0.025 280); flex-shrink: 0;"></div>
+        <div class="ar-mono" style="font-size: 13px; font-weight: 500; letter-spacing: 0.04em;">RPI-GRP11</div>
+      </div>
+      <div class="ar-mono" style="flex-shrink: 0; height: 52px; display: flex; align-items: center; padding: 0 14px; border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); background: {{ countBg }}; color: {{ countFg }}; font-size: 12px; font-weight: 500; letter-spacing: 0.06em; box-sizing: border-box;">OBSTACLES&nbsp;{{ countText }}</div>
+    </div>
+
+    <div style="flex-grow: 1; display: flex; gap: 12px; min-height: 0;">
+
+      <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0;">
+
+        <sc-if value="{{ hasSelection }}" hint-placeholder-val="{{ true }}">
+          <div style="flex-shrink: 0; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.68 0.20 5); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.68 0.20 5); padding: 10px 12px;">
+            <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px;">
+              <div class="ar-lbl">IMAGE FACE &middot; {{ selLabel }}</div>
+              <div class="ar-lbl" style="color: oklch(0.55 0.16 5);">{{ selFace }}</div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;">
+              <div></div>
+              <div onClick="{{ faceN }}" style="height: 50px; background: {{ faceNbg }}; border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800; cursor: pointer;">N</div>
+              <div></div>
+              <div onClick="{{ faceW }}" style="height: 50px; background: {{ faceWbg }}; border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800; cursor: pointer;">W</div>
+              <div onClick="{{ clearSel }}" style="height: 50px; background: oklch(0.72 0.19 145); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; display: flex; align-items: center; justify-content: center; cursor: pointer;"><svg viewBox="0 0 24 24" style="width: 24px; height: 24px; fill: none; stroke: oklch(0.18 0.02 280); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;"><path d="M5 13l5 5L19 6"></path></svg></div>
+              <div onClick="{{ faceE }}" style="height: 50px; background: {{ faceEbg }}; border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800; cursor: pointer;">E</div>
+              <div></div>
+              <div onClick="{{ faceS }}" style="height: 50px; background: {{ faceSbg }}; border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800; cursor: pointer;">S</div>
+              <div></div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ noSelection }}" hint-placeholder-val="{{ true }}">
+          <div style="flex-shrink: 0; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); padding: 10px 12px;">
+            <div class="ar-lbl" style="margin-bottom: 7px;">STATUS</div>
+            <div style="display: flex; gap: 9px; align-items: center; margin-bottom: 6px;">
+              <div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.68 0.20 5); flex-shrink: 0;"></div>
+              <div style="font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Scanning obstacle 2</div>
+            </div>
+            <div style="display: flex; gap: 9px; align-items: center;">
+              <div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.84 0.02 280); flex-shrink: 0;"></div>
+              <div style="font-size: 13px; color: oklch(0.42 0.03 280); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ targetLine }}</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <div style="flex-grow: 1; background: oklch(0.20 0.025 280); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow: hidden;">
+          <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; flex-shrink: 0;">
+            <div class="ar-lbl" style="color: oklch(0.75 0.03 280);">BLUETOOTH LOG &middot; RAW</div>
+            <div class="ar-lbl" style="color: oklch(0.55 0.03 280);">BOTH WAYS</div>
+          </div>
+          <sc-for list="{{ log }}" as="m" hint-placeholder-count="4">
+            <div style="display: flex; align-items: baseline; gap: 8px; flex-shrink: 0;">
+              <div class="ar-mono" style="font-size: 11px; font-weight: 500; color: {{ m.color }}; flex-shrink: 0;">{{ m.arrow }}</div>
+              <div class="ar-mono" style="font-size: 12px; font-weight: 500; color: {{ m.color }}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ m.text }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+      </div>
+
+      <div style="width: 330px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; min-height: 0;">
+
+        <div style="display: flex; gap: 10px; flex-shrink: 0;">
+          <div style="flex-grow: 1; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.72 0.19 145); padding: 8px 12px;">
+            <div class="ar-lbl" style="color: oklch(0.72 0.19 145); margin-bottom: 1px;">IMAGE REC</div>
+            <div class="ar-mono" style="font-size: 22px; font-weight: 700; color: oklch(0.72 0.19 145); line-height: 1.1;">02:47</div>
+          </div>
+          <div style="flex-grow: 1; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); padding: 8px 12px;">
+            <div class="ar-lbl" style="color: oklch(0.55 0.03 280); margin-bottom: 1px;">FASTEST</div>
+            <div class="ar-mono" style="font-size: 22px; font-weight: 500; color: oklch(0.20 0.025 280); line-height: 1.1;">00:00</div>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; flex-shrink: 0;">
+          <div style="height: 52px; background: oklch(0.72 0.19 145); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; letter-spacing: 0.06em;">IMAGE REC</div>
+          <div style="height: 52px; background: oklch(0.68 0.20 250); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; letter-spacing: 0.06em; color: oklch(1 0 0);">FASTEST</div>
+          <div style="height: 52px; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; letter-spacing: 0.06em;">SEND ARENA</div>
+          <div style="height: 52px; background: oklch(0.90 0.015 280); border: 3px dashed oklch(0.62 0.02 280); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; letter-spacing: 0.06em; color: oklch(0.62 0.02 280);">END RUN</div>
+        </div>
+
+        <div style="flex-grow: 1; min-height: 0; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 3px 3px 0 oklch(0.20 0.025 280); padding: 12px; display: flex; flex-direction: column; gap: 9px;">
+          <div style="flex-grow: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 9px; width: 100%; min-height: 0;">
+            <div class="ar-btn" style="background: oklch(0.94 0.03 95); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 8px; display: flex; align-items: center; justify-content: center;"><svg viewBox="0 0 24 24"><path d="M17 21v-8a6 6 0 0 0-6-6H5"></path><path d="M8 4L5 7l3 3"></path></svg></div>
+            <div class="ar-btn" style="background: oklch(0.86 0.17 95); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 8px; display: flex; align-items: center; justify-content: center;"><svg viewBox="0 0 24 24"><path d="M12 20V5"></path><path d="M6 11l6-6 6 6"></path></svg></div>
+            <div class="ar-btn" style="background: oklch(0.94 0.03 95); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 8px; display: flex; align-items: center; justify-content: center;"><svg viewBox="0 0 24 24"><path d="M7 21v-8a6 6 0 0 1 6-6h6"></path><path d="M16 4l3 3-3 3"></path></svg></div>
+            <div class="ar-btn" style="background: oklch(0.94 0.03 95); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 8px; display: flex; align-items: center; justify-content: center;"><svg viewBox="0 0 24 24"><path d="M17 3v8a6 6 0 0 1-6 6H5"></path><path d="M8 20l-3-3 3-3"></path></svg></div>
+            <div class="ar-btn" style="background: oklch(0.94 0.03 95); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 8px; display: flex; align-items: center; justify-content: center;"><svg viewBox="0 0 24 24"><path d="M12 4v15"></path><path d="M6 13l6 6 6-6"></path></svg></div>
+            <div class="ar-btn" style="background: oklch(0.94 0.03 95); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 8px; display: flex; align-items: center; justify-content: center;"><svg viewBox="0 0 24 24"><path d="M7 3v8a6 6 0 0 0 6 6h6"></path><path d="M16 20l3-3-3-3"></path></svg></div>
+          </div>
+          <div style="height: 56px; flex-shrink: 0; width: 100%; background: oklch(0.68 0.20 5); border: 2.5px solid oklch(0.20 0.025 280); border-radius: 8px; display: flex; align-items: center; justify-content: center; gap: 10px;">
+            <div style="width: 12px; height: 12px; background: oklch(1 0 0); border-radius: 2px;"></div>
+            <div style="font-size: 15px; font-weight: 800; letter-spacing: 0.06em; color: oklch(1 0 0);">STOP</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1340,"height":700}}'>
+var CELLS = 20;
+// 29px, down from 33. The tablet gives the app ~700px of height, not the 800px
+// of the panel — Android's status bar and taskbar take the rest — and the
+// toolbar this board now carries costs another 60. The grid is the only
+// element big enough to absorb that, and it stays square.
+var CELL_PX = 29;
+var BORDER = 3;
+var MAX_OBSTACLES = 8;
+var HIT_R = 24;   // scaled with CELL_PX; still ~48dp of finger at this size
+var FACE_STYLE = {
+  N: "left: 0; top: 0; width: 25px; height: 5px;",
+  S: "left: 0; bottom: 0; width: 25px; height: 5px;",
+  E: "right: 0; top: 0; width: 5px; height: 25px;",
+  W: "left: 0; top: 0; width: 5px; height: 25px;"
+};
+// Image pool, MDP briefing p.15. IDs 11-40; note the letters skip I-R.
+var IMAGE_LABEL = {
+  11: "digit 1", 12: "digit 2", 13: "digit 3", 14: "digit 4", 15: "digit 5",
+  16: "digit 6", 17: "digit 7", 18: "digit 8", 19: "digit 9",
+  20: "letter A", 21: "letter B", 22: "letter C", 23: "letter D",
+  24: "letter E", 25: "letter F", 26: "letter G", 27: "letter H",
+  28: "letter S", 29: "letter T", 30: "letter U", 31: "letter V",
+  32: "letter W", 33: "letter X", 34: "letter Y", 35: "letter Z",
+  36: "up arrow", 37: "down arrow", 38: "right arrow", 39: "left arrow",
+  40: "stop"
+};
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      obstacles: [
+        { id: 1, x: 4,  y: 13, face: null, target: null },
+        { id: 2, x: 9,  y: 7,  face: "N",  target: 11 },
+        { id: 3, x: 14, y: 15, face: null, target: null },
+        { id: 4, x: 16, y: 4,  face: "W",  target: null },
+        { id: 5, x: 7,  y: 2,  face: null, target: null }
+      ],
+      selected: null,
+      drag: null,
+      log: [
+        { out: true,  text: "FACE,B4,(16,4),W" },
+        { out: false, text: "MSG,[Scanning obstacle 2]" },
+        { out: false, text: "TARGET,B2,11,N" },
+        { out: true,  text: "ADD,B5,(7,2)" }
+      ]
+    };
+  }
+
+  cellFrom(e) {
+    // rect includes the 3px border, so unscale by the full outer box, then
+    // step inside it. Doing this by ratio keeps hit-testing correct at any
+    // canvas zoom level.
+    var r = e.currentTarget.getBoundingClientRect();
+    var inner = CELLS * CELL_PX;
+    var scale = r.width / (inner + BORDER * 2);
+    var px = (e.clientX - r.left) / scale - BORDER;
+    var py = (e.clientY - r.top) / scale - BORDER;
+    return {
+      cx: Math.max(0, Math.min(CELLS - 1, Math.floor(px / CELL_PX))),
+      cy: Math.max(0, Math.min(CELLS - 1, CELLS - 1 - Math.floor(py / CELL_PX))),
+      px: px,
+      py: py,
+      outside: px < 0 || py < 0 || px > inner || py > inner
+    };
+  }
+
+  // Lowest free id in 1..MAX. A removed obstacle's number returns to the pool,
+  // so the arena always shows B1..B8 rather than an ever-climbing sequence.
+  nextFreeId() {
+    var taken = this.state.obstacles.map(function (o) { return o.id; });
+    for (var i = 1; i <= MAX_OBSTACLES; i++) {
+      if (taken.indexOf(i) === -1) return i;
+    }
+    return null;
+  }
+
+  // A 29px cell is well below the 48dp touch floor, so hit area is decoupled
+  // from render size: each block claims a 48dp radius and the nearest wins.
+  hitAt(px, py) {
+    var best = null;
+    var bestD = HIT_R * HIT_R;
+    var obs = this.state.obstacles;
+    for (var i = 0; i < obs.length; i++) {
+      var o = obs[i];
+      var ox = o.x * CELL_PX + CELL_PX / 2;
+      var oy = (CELLS - 1 - o.y) * CELL_PX + CELL_PX / 2;
+      var dx = px - ox;
+      var dy = py - oy;
+      var d = dx * dx + dy * dy;
+      if (d <= bestD) { bestD = d; best = o; }
+    }
+    return best;
+  }
+
+  // Start zone is reserved, and two obstacles may not share a cell.
+  blocked(cx, cy, ignoreId) {
+    if (cx < 4 && cy < 4) return true;
+    return this.state.obstacles.some(function (o) {
+      return o.id !== ignoreId && o.x === cx && o.y === cy;
+    });
+  }
+
+  emit(msg) {
+    this.setState({ log: [{ out: true, text: msg }].concat(this.state.log).slice(0, 5) });
+  }
+
+  onDown(e) {
+    var p = this.cellFrom(e);
+    if (p.outside) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    var hit = this.hitAt(p.px, p.py);
+    if (hit) {
+      this.setState({
+        selected: hit.id,
+        drag: { id: hit.id, cx: hit.x, cy: hit.y, outside: false, isNew: false, fromX: hit.x, fromY: hit.y }
+      });
+      return;
+    }
+    if (this.blocked(p.cx, p.cy, null)) return;
+    var id = this.nextFreeId();
+    if (id === null) return;
+    // Nothing is transmitted here. C.6 requires the coordinates on finger-lift.
+    this.setState({
+      obstacles: this.state.obstacles.concat([{ id: id, x: p.cx, y: p.cy, face: null, target: null }]),
+      selected: id,
+      drag: { id: id, cx: p.cx, cy: p.cy, outside: false, isNew: true, fromX: p.cx, fromY: p.cy }
+    });
+  }
+
+  onMove(e) {
+    var d = this.state.drag;
+    if (!d) return;
+    var p = this.cellFrom(e);
+    if (!p.outside && this.blocked(p.cx, p.cy, d.id)) return;
+    this.setState({
+      obstacles: this.state.obstacles.map(function (o) {
+        if (o.id !== d.id || p.outside) return o;
+        return { id: o.id, x: p.cx, y: p.cy, face: o.face, target: o.target };
+      }),
+      drag: { id: d.id, cx: p.cx, cy: p.cy, outside: p.outside, isNew: d.isNew, fromX: d.fromX, fromY: d.fromY }
+    });
+  }
+
+  onUp(e) {
+    var d = this.state.drag;
+    if (!d) return;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+    if (d.outside) {
+      this.setState({
+        obstacles: this.state.obstacles.filter(function (o) { return o.id !== d.id; }),
+        selected: null,
+        drag: null
+      });
+      this.emit("SUB,B" + d.id);
+      return;
+    }
+    var o = this.state.obstacles.filter(function (x) { return x.id === d.id; })[0];
+    this.setState({ drag: null });
+    // Transmit on lift, and only when the position actually changed. A bare tap
+    // to open the face compass must not re-announce an obstacle that never moved.
+    if (o && (d.isNew || o.x !== d.fromX || o.y !== d.fromY)) {
+      this.emit("ADD,B" + o.id + ",(" + o.x + "," + o.y + ")");
+    }
+  }
+
+  setFace(face) {
+    var sel = this.state.selected;
+    if (!sel) return;
+    var cur = this.state.obstacles.filter(function (o) { return o.id === sel; })[0];
+    if (!cur) return;
+    var next = cur.face === face ? null : face;
+    this.setState({
+      obstacles: this.state.obstacles.map(function (o) {
+        if (o.id !== sel) return o;
+        return { id: o.id, x: o.x, y: o.y, face: next, target: o.target };
+      })
+    });
+    // C.7 requires the face AND the obstacle coordinate to be communicated,
+    // so the coordinate rides along even though the briefing slide omits it.
+    this.emit("FACE,B" + sel + ",(" + cur.x + "," + cur.y + ")," + (next === null ? "NONE" : next));
+  }
+
+  renderVals() {
+    var self = this;
+    var sel = this.state.selected;
+    var drag = this.state.drag;
+    var selObj = this.state.obstacles.filter(function (o) { return o.id === sel; })[0] || null;
+    var pick = function (f) { return selObj && selObj.face === f ? "oklch(0.86 0.17 95)" : "oklch(0.94 0.03 95)"; };
+
+    // Block shows the ID, as C.9 requires. The symbol goes here instead, so a
+    // supervisor can tell whether the recognition was right without a lookup table.
+    var found = this.state.obstacles.filter(function (o) { return o.target != null; })[0] || null;
+    var targetLine = "No target reported yet";
+    if (found) {
+      var word = IMAGE_LABEL[found.target] || "unrecognised id";
+      targetLine = "Target " + found.target + " · " + word + " · at B" + found.id;
+    }
+
+    var xs = [];
+    var ys = [];
+    for (var i = 0; i < CELLS; i++) {
+      xs.push({ n: String(i) });
+      ys.push({ n: String(CELLS - 1 - i) });
+    }
+
+    var placed = this.state.obstacles.length;
+    var full = placed >= MAX_OBSTACLES;
+
+    return {
+      xLabels: xs,
+      yLabels: ys,
+      targetLine: targetLine,
+      countText: placed + " / " + MAX_OBSTACLES,
+      countBg: full ? "oklch(0.68 0.20 5)" : "oklch(0.99 0.005 95)",
+      countFg: full ? "oklch(1 0 0)" : "oklch(0.20 0.025 280)",
+      obstacles: this.state.obstacles.map(function (o) {
+        return {
+          id: o.id,
+          num: String(o.id),
+          target: o.target == null ? "" : String(o.target),
+          hasTarget: o.target != null,
+          noTarget: o.target == null,
+          hasFace: !!o.face,
+          faceStyle: FACE_STYLE[o.face] || "",
+          left: o.x * CELL_PX,
+          bottom: o.y * CELL_PX,
+          bg: o.target != null ? "oklch(0.68 0.20 5)" : "oklch(0.68 0.20 250)",
+          ring: o.id === sel ? "0 0 0 4px oklch(0.86 0.17 95)" : "none",
+          z: o.id === sel ? 4 : 2
+        };
+      }),
+      dragging: !!drag,
+      dragOutside: !!(drag && drag.outside),
+      dragLabel: drag ? "(" + drag.cx + ", " + drag.cy + ")" : "",
+      dragBadgeLeft: drag ? Math.max(0, Math.min(drag.cx * CELL_PX - 22, CELLS * CELL_PX - 92)) : 0,
+      dragBadgeBottom: drag ? Math.min(drag.cy * CELL_PX + 38, CELLS * CELL_PX - 36) : 0,
+      hasSelection: !!selObj,
+      noSelection: !selObj,
+      selLabel: selObj ? "B" + selObj.id : "",
+      selFace: selObj && selObj.face ? selObj.face : "none",
+      faceNbg: pick("N"),
+      faceEbg: pick("E"),
+      faceSbg: pick("S"),
+      faceWbg: pick("W"),
+      log: this.state.log.map(function (m) {
+        return {
+          text: m.text,
+          arrow: m.out ? "TX" : "RX",
+          color: m.out ? "oklch(0.86 0.17 95)" : "oklch(0.78 0.16 145)"
+        };
+      }),
+      onDown: function (e) { self.onDown(e); },
+      onMove: function (e) { self.onMove(e); },
+      onUp: function (e) { self.onUp(e); },
+      faceN: function () { self.setFace("N"); },
+      faceE: function () { self.setFace("E"); },
+      faceS: function () { self.setFace("S"); },
+      faceW: function () { self.setFace("W"); },
+      clearSel: function () { self.setState({ selected: null }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

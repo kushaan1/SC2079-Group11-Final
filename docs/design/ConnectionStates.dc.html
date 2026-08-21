@@ -1,0 +1,106 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: "Bricolage Grotesque", "Trebuchet MS", sans-serif; }
+    a { color: oklch(0.68 0.20 250); } a:hover { color: oklch(0.55 0.20 250); }
+    .cs-mono { font-family: "DM Mono", ui-monospace, monospace; }
+    .cs-cap { font-family: "DM Mono", ui-monospace, monospace; font-size: 11px; letter-spacing: 0.1em; color: oklch(0.50 0.03 280); }
+    .cs-card { background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280); padding: 16px 14px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .cs-bar { width: 100%; height: 44px; background: oklch(0.20 0.025 280); border-radius: 6px; display: flex; align-items: center; justify-content: center; }
+    .cs-chip { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border: 2px solid oklch(0.20 0.025 280); border-radius: 999px; }
+    .cs-dot { width: 9px; height: 9px; border-radius: 50%; background: oklch(0.20 0.025 280); flex-shrink: 0; }
+    .cs-txt { font-family: "DM Mono", ui-monospace, monospace; font-size: 11px; font-weight: 500; white-space: nowrap; }
+    .cs-note { font-size: 13px; color: oklch(0.42 0.03 280); line-height: 1.4; text-align: center; }
+  </style>
+</helmet>
+
+<div style="width: 1040px; height: 660px; background: oklch(0.94 0.03 95); color: oklch(0.20 0.025 280); display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="height: 64px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 24px; background: oklch(0.20 0.025 280);">
+    <div style="font-size: 20px; font-weight: 800; color: oklch(0.86 0.17 95); letter-spacing: -0.02em;">C.8</div>
+    <div style="font-size: 20px; font-weight: 500; color: oklch(0.96 0.01 95); letter-spacing: -0.02em;">Connection states</div>
+  </div>
+
+  <div style="display: flex; gap: 14px; padding: 20px 24px 0;">
+
+    <div class="cs-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="cs-cap">IDLE</div>
+      <div class="cs-bar"><div class="cs-chip" style="background: oklch(0.94 0.03 95);"><div class="cs-dot" style="background: oklch(0.62 0.02 280);"></div><div class="cs-txt">NOT CONNECTED</div></div></div>
+      <div class="cs-note">Controls disabled. Picker is the only way forward.</div>
+    </div>
+
+    <div class="cs-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="cs-cap">CONNECTING</div>
+      <div class="cs-bar"><div class="cs-chip" style="background: oklch(0.86 0.17 95);"><div style="display: flex; gap: 3px;"><div class="cs-dot" style="width: 5px; height: 5px;"></div><div class="cs-dot" style="width: 5px; height: 5px; opacity: 0.55;"></div><div class="cs-dot" style="width: 5px; height: 5px; opacity: 0.25;"></div></div><div class="cs-txt">CONNECTING</div></div></div>
+      <div class="cs-note">Cancellable. The UI thread is never blocked on the socket.</div>
+    </div>
+
+    <div class="cs-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="cs-cap">CONNECTED</div>
+      <div class="cs-bar"><div class="cs-chip" style="background: oklch(0.72 0.19 145);"><div class="cs-dot"></div><div class="cs-txt">RPI-GRP11</div></div></div>
+      <div class="cs-note">Peer name shown, not just a green light.</div>
+    </div>
+
+    <div class="cs-card" style="flex: 1 1 0; min-width: 0; border-color: oklch(0.68 0.20 5); box-shadow: 4px 4px 0 oklch(0.68 0.20 5);">
+      <div class="cs-cap" style="color: oklch(0.55 0.16 5);">RECONNECTING</div>
+      <div class="cs-bar"><div class="cs-chip" style="background: oklch(0.68 0.20 5);"><div class="cs-dot" style="background: oklch(1 0 0);"></div><div class="cs-txt" style="color: oklch(1 0 0);">RETRY 3</div></div></div>
+      <div class="cs-note">Arena keeps its state. Attempt count is visible so a stall is obvious.</div>
+    </div>
+
+    <div class="cs-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="cs-cap">ADAPTER OFF</div>
+      <div class="cs-bar"><div class="cs-chip" style="background: oklch(0.94 0.03 95); border-style: dashed;"><div class="cs-dot" style="background: oklch(0.62 0.02 280);"></div><div class="cs-txt">BLUETOOTH OFF</div></div></div>
+      <div class="cs-note">The one state retrying cannot fix &mdash; so it asks instead.</div>
+    </div>
+
+  </div>
+
+  <div style="display: flex; gap: 16px; padding: 22px 24px 0;">
+
+    <div style="flex: 1 1 0; background: oklch(0.20 0.025 280); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.68 0.20 250); padding: 18px 22px;">
+      <div class="cs-cap" style="color: oklch(0.75 0.03 280); margin-bottom: 10px;">WHAT C.8 ACTUALLY TESTS</div>
+      <div style="font-size: 15px; color: oklch(0.94 0.01 95); line-height: 1.5;">A supervisor hits <strong style="color: oklch(0.86 0.17 95);">Disconnect</strong> on the AMD tool, then <strong style="color: oklch(0.86 0.17 95);">Connect</strong> again. The app must not hang in between, and must come back on its own &mdash; no taps.</div>
+      <div style="margin-top: 12px; font-size: 15px; color: oklch(0.94 0.01 95); line-height: 1.5;">Because the <em>peer</em> initiates the second connection, a client-only retry loop fails this. We have to be listening.</div>
+    </div>
+
+    <div style="flex: 1 1 0; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280); padding: 18px 22px;">
+      <div class="cs-cap" style="margin-bottom: 12px;">SO BOTH ROLES RUN AT ONCE</div>
+
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <div class="cs-mono" style="font-size: 11px; font-weight: 500; padding: 5px 9px; background: oklch(0.68 0.20 250); color: oklch(1 0 0); border-radius: 5px; white-space: nowrap;">CLIENT</div>
+        <div style="flex-grow: 1; height: 2px; background: oklch(0.80 0.02 280);"></div>
+        <div class="cs-mono" style="font-size: 12px; white-space: nowrap;">connect() &rarr; RPi</div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
+        <div class="cs-mono" style="font-size: 11px; font-weight: 500; padding: 5px 9px; background: oklch(0.72 0.19 145); color: oklch(0.20 0.025 280); border-radius: 5px; white-space: nowrap;">SERVER</div>
+        <div style="flex-grow: 1; height: 2px; background: oklch(0.80 0.02 280);"></div>
+        <div class="cs-mono" style="font-size: 12px; white-space: nowrap;">accept() &larr; AMD</div>
+      </div>
+
+      <div style="font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.45;">First to establish wins; the loser is cancelled. Client retries back off 1s &rarr; 2s &rarr; 4s &rarr; 5s and never give up.</div>
+    </div>
+
+  </div>
+
+  <div style="padding: 20px 24px 0;">
+    <div style="font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.45;">Every state above is a value of one <span class="cs-mono">StateFlow&lt;ConnectionState&gt;</span> that outlives the screen &mdash; so rotating the tablet mid-reconnect changes nothing.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1040,"height":660}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

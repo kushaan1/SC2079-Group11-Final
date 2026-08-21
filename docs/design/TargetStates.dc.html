@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: "Bricolage Grotesque", "Trebuchet MS", sans-serif; }
+    a { color: oklch(0.68 0.20 250); } a:hover { color: oklch(0.55 0.20 250); }
+    .ts-mono { font-family: "DM Mono", ui-monospace, monospace; }
+    .ts-cap { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: 0.08em; color: oklch(0.50 0.03 280); }
+    .ts-card { background: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280); padding: 18px 16px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .ts-block { position: relative; box-sizing: border-box; width: 112px; height: 112px; border: 4px solid oklch(0.20 0.025 280); border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+    .ts-chip { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; font-weight: 500; padding: 7px 10px; border-radius: 6px; white-space: nowrap; }
+  </style>
+</helmet>
+
+<div style="width: 1040px; height: 560px; background: oklch(0.94 0.03 95); color: oklch(0.20 0.025 280); display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="height: 64px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 24px; background: oklch(0.20 0.025 280);">
+    <div style="font-size: 20px; font-weight: 800; color: oklch(0.86 0.17 95); letter-spacing: -0.02em;">C.9</div>
+    <div style="font-size: 20px; font-weight: 500; color: oklch(0.96 0.01 95); letter-spacing: -0.02em;">Obstacle block states</div>
+  </div>
+
+  <div style="display: flex; gap: 16px; padding: 20px 24px 0;">
+
+    <div class="ts-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="ts-cap">PLACED</div>
+      <div class="ts-block" style="background: oklch(0.68 0.20 250);">
+        <div class="ts-mono" style="position: absolute; top: 2px; right: 6px; font-size: 16px; font-weight: 500; color: oklch(1 0 0);">3</div>
+      </div>
+      <div class="ts-chip" style="background: oklch(0.86 0.17 95); border: 2px solid oklch(0.20 0.025 280);">&uarr; ADD,B3,(14,15)</div>
+    </div>
+
+    <div class="ts-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="ts-cap">FACE MARKED</div>
+      <div class="ts-block" style="background: oklch(0.68 0.20 250);">
+        <div style="position: absolute; right: 0; top: 0; width: 16px; height: 104px; background: oklch(0.86 0.17 95);"></div>
+        <div class="ts-mono" style="position: absolute; top: 2px; left: 8px; font-size: 16px; font-weight: 500; color: oklch(1 0 0);">3</div>
+      </div>
+      <div class="ts-chip" style="background: oklch(0.86 0.17 95); border: 2px solid oklch(0.20 0.025 280);">&uarr; FACE,B3,(14,15),E</div>
+    </div>
+
+    <div class="ts-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="ts-cap">TARGET FOUND</div>
+      <div class="ts-block" style="background: oklch(0.68 0.20 5);">
+        <div style="font-size: 52px; font-weight: 800; color: oklch(1 0 0); line-height: 1; letter-spacing: -0.03em;">11</div>
+      </div>
+      <div class="ts-chip" style="background: oklch(0.72 0.19 145); border: 2px solid oklch(0.20 0.025 280);">&darr; TARGET,B3,11</div>
+    </div>
+
+    <div class="ts-card" style="flex: 1 1 0; min-width: 0;">
+      <div class="ts-cap">TARGET + FACE</div>
+      <div class="ts-block" style="background: oklch(0.68 0.20 5);">
+        <div style="position: absolute; left: 0; top: 0; width: 104px; height: 16px; background: oklch(0.86 0.17 95);"></div>
+        <div style="font-size: 52px; font-weight: 800; color: oklch(1 0 0); line-height: 1; letter-spacing: -0.03em; margin-top: 12px;">11</div>
+      </div>
+      <div class="ts-chip" style="background: oklch(0.72 0.19 145); border: 2px solid oklch(0.20 0.025 280);">&darr; TARGET,B3,11,N</div>
+    </div>
+
+  </div>
+
+  <div style="margin: 20px 24px 0; background: oklch(0.20 0.025 280); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.68 0.20 250); padding: 18px 22px; display: flex; gap: 32px;">
+    <div style="flex: 1 1 0;">
+      <div class="ts-cap" style="color: oklch(0.75 0.03 280); margin-bottom: 8px;">THE PARSER MUST BE TOLERANT</div>
+      <div style="font-size: 15px; color: oklch(0.94 0.01 95); line-height: 1.5;">The briefing slides show <span class="ts-mono" style="color: oklch(0.86 0.17 95);">TARGET,B2,11</span> and a 4-argument <span class="ts-mono" style="color: oklch(0.86 0.17 95);">TARGET,B2,11,N</span>. The checklist PDF documents only the 3-argument form, writes the id as a bare number, and puts spaces after its commas.</div>
+    </div>
+    <div style="flex: 1 1 0;">
+      <div class="ts-cap" style="color: oklch(0.75 0.03 280); margin-bottom: 8px;">SO WE ACCEPT ALL OF</div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div class="ts-mono" style="font-size: 13px; color: oklch(0.86 0.17 95);">TARGET,B2,11</div>
+        <div class="ts-mono" style="font-size: 13px; color: oklch(0.86 0.17 95);">TARGET,B2,11,N</div>
+        <div class="ts-mono" style="font-size: 13px; color: oklch(0.86 0.17 95);">TARGET, 2, 11</div>
+        <div class="ts-mono" style="font-size: 13px; color: oklch(0.68 0.20 5);">TARGET,B2,4</div>
+      </div>
+      <div style="margin-top: 10px; font-size: 13px; color: oklch(0.75 0.03 280); line-height: 1.45;">That last one is out of the 11&ndash;40 pool &mdash; and it is the checklist&rsquo;s <em>own</em> example. Never range-reject: render it, flag it in the log.</div>
+    </div>
+  </div>
+
+  <div style="padding: 14px 24px 0;">
+    <div style="font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.45;">Blocks are drawn at more than 3&times; here. On the tablet each is 33px, so the target ID gets the whole block and the obstacle number moves aside.</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1040,"height":560}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

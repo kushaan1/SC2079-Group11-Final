@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: "Bricolage Grotesque", "Trebuchet MS", sans-serif; }
+    a { color: oklch(0.68 0.20 250); } a:hover { color: oklch(0.55 0.20 250); }
+    .fs-mono { font-family: "DM Mono", ui-monospace, monospace; }
+    .fs-cap { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: 0.08em; color: oklch(0.50 0.03 280); }
+    .fs-grid {
+      background-image:
+        repeating-linear-gradient(to right, oklch(0.87 0.025 280) 0 1px, transparent 1px 46px),
+        repeating-linear-gradient(to top,   oklch(0.87 0.025 280) 0 1px, transparent 1px 46px);
+    }
+    .fs-key { border: 2.5px solid oklch(0.20 0.025 280); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 800; height: 56px; }
+  </style>
+</helmet>
+
+<div style="width: 1040px; height: 720px; background: oklch(0.94 0.03 95); color: oklch(0.20 0.025 280); display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="height: 64px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 24px; background: oklch(0.20 0.025 280);">
+    <div style="font-size: 20px; font-weight: 800; color: oklch(0.86 0.17 95); letter-spacing: -0.02em;">C.7</div>
+    <div style="font-size: 20px; font-weight: 500; color: oklch(0.96 0.01 95); letter-spacing: -0.02em;">Annotating the image face</div>
+  </div>
+
+  <div style="display: flex; gap: 18px; padding: 20px 24px 0; align-items: stretch;">
+
+    <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;">
+      <div class="fs-cap" style="margin-bottom: 8px;">1 &middot; TAP THE BLOCK</div>
+      <div class="fs-grid" style="position: relative; height: 276px; background-color: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280);">
+        <div style="position: absolute; left: 92px; bottom: 115px; box-sizing: border-box; width: 46px; height: 46px; background: oklch(0.68 0.20 250); border: 3px solid oklch(0.20 0.025 280); border-radius: 6px; box-shadow: 0 0 0 4px oklch(0.86 0.17 95); display: flex; align-items: flex-start; justify-content: flex-end;">
+          <div class="fs-mono" style="font-size: 11px; font-weight: 500; color: oklch(1 0 0); padding: 1px 4px;">3</div>
+        </div>
+        <div style="position: absolute; left: 82px; bottom: 105px; width: 66px; height: 66px; border: 2px dashed oklch(0.68 0.20 5); border-radius: 50%;"></div>
+      </div>
+      <div style="margin-top: 10px; font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.4;">Selection ring, not a menu. The block stays where it is.</div>
+    </div>
+
+    <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;">
+      <div class="fs-cap" style="margin-bottom: 8px;">2 &middot; COMPASS OPENS IN THE PANEL</div>
+      <div style="height: 276px; box-sizing: border-box; background: oklch(0.99 0.005 95); border: 3px solid oklch(0.68 0.20 5); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.68 0.20 5); padding: 14px;">
+        <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px;">
+          <div class="fs-cap">IMAGE FACE &middot; B3</div>
+          <div class="fs-cap" style="color: oklch(0.55 0.16 5);">none</div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;">
+          <div></div>
+          <div class="fs-key" style="background: oklch(0.94 0.03 95);">N</div>
+          <div></div>
+          <div class="fs-key" style="background: oklch(0.94 0.03 95);">W</div>
+          <div class="fs-key" style="background: oklch(0.72 0.19 145);"><svg viewBox="0 0 24 24" style="width: 26px; height: 26px; fill: none; stroke: oklch(0.18 0.02 280); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;"><path d="M5 13l5 5L19 6"></path></svg></div>
+          <div class="fs-key" style="background: oklch(0.86 0.17 95);">E</div>
+          <div></div>
+          <div class="fs-key" style="background: oklch(0.94 0.03 95);">S</div>
+          <div></div>
+        </div>
+      </div>
+      <div style="margin-top: 10px; font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.4;">Every key is 56px &mdash; 7.9 mm, clear of the 48dp floor.</div>
+    </div>
+
+    <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;">
+      <div class="fs-cap" style="margin-bottom: 8px;">3 &middot; FACE MARKED, MESSAGE SENT</div>
+      <div class="fs-grid" style="position: relative; height: 276px; background-color: oklch(0.99 0.005 95); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.20 0.025 280);">
+        <div style="position: absolute; left: 92px; bottom: 115px; box-sizing: border-box; width: 46px; height: 46px; background: oklch(0.68 0.20 250); border: 3px solid oklch(0.20 0.025 280); border-radius: 6px;">
+          <div style="position: absolute; right: 0; top: 0; width: 7px; height: 40px; background: oklch(0.86 0.17 95);"></div>
+          <div class="fs-mono" style="position: absolute; top: 0; left: 3px; font-size: 11px; font-weight: 500; color: oklch(1 0 0);">3</div>
+        </div>
+        <div class="fs-mono" style="position: absolute; left: 20px; bottom: 20px; font-size: 13px; font-weight: 500; padding: 8px 12px; background: oklch(0.20 0.025 280); color: oklch(0.86 0.17 95); border-radius: 6px;">FACE,B3,(14,15),E</div>
+      </div>
+      <div style="margin-top: 10px; font-size: 14px; color: oklch(0.42 0.03 280); line-height: 1.4;">Carries the coordinate as well as the face &mdash; C.7 asks for both, though the slide format omits it. Tapping E again clears it.</div>
+    </div>
+
+  </div>
+
+  <div style="margin: 22px 24px 0; background: oklch(0.20 0.025 280); border: 3px solid oklch(0.20 0.025 280); border-radius: 8px; box-shadow: 4px 4px 0 oklch(0.68 0.20 250); padding: 18px 22px; display: flex; gap: 26px; align-items: center;">
+    <div style="flex-grow: 1;">
+      <div class="fs-cap" style="color: oklch(0.75 0.03 280); margin-bottom: 8px;">WHY NOT JUST TAP THE EDGE OF THE BLOCK</div>
+      <div style="font-size: 16px; color: oklch(0.94 0.01 95); line-height: 1.5;">A block face on this screen is <strong style="color: oklch(0.86 0.17 95);">4.7 mm &times; 1 mm</strong>. Nobody hits that reliably. The checklist anticipates it: any alternative must still be a touch interaction &mdash; which a compass is.</div>
+    </div>
+    <div style="flex-shrink: 0; display: flex; align-items: center; gap: 16px;">
+      <div style="position: relative; width: 70px; height: 70px; box-sizing: border-box; background: oklch(0.30 0.03 280); border: 2px solid oklch(0.55 0.03 280); border-radius: 6px;">
+        <div style="position: absolute; right: 0; top: 0; width: 4px; height: 66px; background: oklch(0.68 0.20 5);"></div>
+        <div class="fs-mono" style="position: absolute; left: 50%; bottom: -22px; transform: translateX(-50%); font-size: 10px; color: oklch(0.68 0.20 5); white-space: nowrap;">1 mm</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1040,"height":720}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
