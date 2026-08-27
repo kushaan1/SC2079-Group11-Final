@@ -41,7 +41,7 @@ with schemas under `schemas/`.
 
 ## Task 1 host setup
 
-Use Python 3.8 or newer on the host PC. From this directory:
+Use Python 3.9 or newer on the host PC. From this directory:
 
 ```powershell
 py -m venv .venv-pc

@@ -1,4 +1,4 @@
-# Host PC only (Python 3.8+). Do not install on the Raspberry Pi.
+# Host PC only (Python 3.9+). Do not install on the Raspberry Pi.
 Flask>=3.0,<4
 numpy>=1.24,<3
 opencv-python-headless>=4.8,<5
