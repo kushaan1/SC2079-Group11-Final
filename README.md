@@ -10,7 +10,8 @@ Five subsystems: **STM32 firmware**, **Raspberry Pi** (central hub), **image rec
 
 The standalone computer-vision foundation is implemented in **`image-rec/`**. Task 1 uses a host-PC
 Flask/Ultralytics service; Task 2 uses a Python 3.7-compatible TFLite pipeline on Raspberry Pi OS
-Buster. Model weights and physical calibration are still required before hardware deployment.
+Buster. Reproducible annotation, class-covered splitting, training, and INT8 export tooling is also
+included. Model weights and physical calibration are still required before hardware deployment.
 
 ## What's here
 

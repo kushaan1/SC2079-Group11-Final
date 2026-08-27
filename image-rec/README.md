@@ -16,6 +16,7 @@ to run its unit tests.
 ```text
 image-rec/
 |-- config/                     environment-variable examples
+|-- training/                   annotation, split, training, and export pipeline
 |-- pc_server/
 |   |-- app.py                  Flask API on port 4000
 |   |-- detector.py             thread-safe Ultralytics adapter
@@ -34,6 +35,10 @@ image-rec/
 |-- test2_runner_rpi.py
 `-- tests/
 ```
+
+The complete dataset and model-training workflow is documented in
+[`training/README.md`](training/README.md). Images and weights remain local; annotations, class
+registries, task configuration, tests, and generated split manifests are versioned.
 
 Cross-subsystem contracts live in [`../docs/protocols`](../docs/protocols). The Task 1 HTTP API is
 defined by `image-recognition-openapi.yaml`; STM and Android messages are newline-delimited JSON

@@ -33,3 +33,19 @@ For each exported model and competition-speed camera setup, record:
 Turning radii, S-curve speeds, and standoff distance belong to the robot/algorithm calibration
 sections when those subsystems are added. The computer-vision runners intentionally do not define
 them.
+
+## Model-training provenance
+
+No model training or TFLite export had been executed when the training scaffold was added on
+2026-08-27. For every accepted Task 1 and Task 2 checkpoint, attach or record:
+
+| Field | Required value |
+|---|---|
+| Dataset identity | Committed split-manifest path and Git commit |
+| Source integrity | Image and annotation SHA-256 checks passing against the manifest |
+| Class contract | Class-registry path and SHA-256 |
+| Training environment | `run-metadata.json` from the Ultralytics run |
+| Validation results | Per-class precision, recall, confusion matrix, and background false positives |
+| Deployment model | Weight/export SHA-256 and exact class-index order |
+| Task 2 compatibility | Successful load/invoke with `tflite-runtime==2.5.0` on the actual Buster Pi |
+| Task 2 performance | Median, p95, worst-case inference latency, and stable-arrow error rate |
