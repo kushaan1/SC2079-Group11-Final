@@ -1,0 +1,4 @@
+# Reproducible host training environment. Python 3.10 is recommended for DirectML wheel support.
+-r requirements-pc.txt
+ultralytics==8.4.115
+torch-directml==0.2.5.dev240914; sys_platform == "win32"
