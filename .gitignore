@@ -1,2 +1,15 @@
 # macOS
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+
+# Computer-vision runtime artifacts and private model weights
+image-rec/captures/
+image-rec/**/models/*
+!image-rec/**/models/.gitkeep

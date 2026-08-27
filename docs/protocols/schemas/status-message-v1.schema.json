@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sc2079-group11.local/schemas/status-message-v1.schema.json",
+  "title": "RPi status message",
+  "type": "object",
+  "required": ["version", "type", "timestamp", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": "1.0"},
+    "type": {"enum": ["status", "detection", "error", "ack"]},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "payload": {"type": "object"}
+  }
+}

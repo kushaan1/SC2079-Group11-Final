@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sc2079-group11.local/schemas/stm-command-v1.schema.json",
+  "title": "RPi to STM32 command",
+  "type": "object",
+  "required": ["version", "message_id", "action"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": "1.0"},
+    "message_id": {"type": "string", "minLength": 1},
+    "action": {
+      "enum": ["stop", "move", "turn_left", "turn_right", "capture_ready"]
+    },
+    "distance_cm": {"type": "number", "minimum": 0},
+    "angle_deg": {"type": "number", "minimum": 0, "maximum": 180},
+    "speed": {"type": "number", "minimum": 0}
+  }
+}
