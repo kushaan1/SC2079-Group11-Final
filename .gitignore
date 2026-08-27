@@ -13,3 +13,4 @@ htmlcov/
 image-rec/captures/
 image-rec/**/models/*
 !image-rec/**/models/.gitkeep
+!image-rec/**/models/*.json

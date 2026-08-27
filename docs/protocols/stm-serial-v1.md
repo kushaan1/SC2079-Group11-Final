@@ -20,3 +20,5 @@ STM32 acknowledgement example:
 The machine-checkable RPi command schema is
 [`schemas/stm-command-v1.schema.json`](schemas/stm-command-v1.schema.json). Motion values are supplied
 by the STM subsystem's calibrated configuration; this protocol does not define physical constants.
+For Task 2, `execute_left_route` and `execute_right_route` select calibrated S-curve macros on the
+STM32. The vision module never supplies an uncalibrated steering angle or speed.

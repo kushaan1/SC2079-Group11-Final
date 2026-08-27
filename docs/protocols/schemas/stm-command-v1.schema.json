@@ -9,7 +9,15 @@
     "version": {"const": "1.0"},
     "message_id": {"type": "string", "minLength": 1},
     "action": {
-      "enum": ["stop", "move", "turn_left", "turn_right", "capture_ready"]
+      "enum": [
+        "stop",
+        "move",
+        "turn_left",
+        "turn_right",
+        "capture_ready",
+        "execute_left_route",
+        "execute_right_route"
+      ]
     },
     "distance_cm": {"type": "number", "minimum": 0},
     "angle_deg": {"type": "number", "minimum": 0, "maximum": 180},

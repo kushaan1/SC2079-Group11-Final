@@ -1,0 +1,7 @@
+# Raspberry Pi OS Buster, CPython 3.7, 32-bit armv7l.
+# OpenCV and picamera come from apt; see README.md.
+--extra-index-url https://google-coral.github.io/py-repo/
+numpy==1.19.5
+requests==2.31.0
+pyserial==3.5
+tflite-runtime==2.5.0
