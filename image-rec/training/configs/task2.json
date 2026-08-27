@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "task": "task2",
+  "classes": "training/classes/task2.json",
+  "dataset": {
+    "source_images": "training/task2_training_set",
+    "annotations": "training/annotations/task2",
+    "workspace": "training/.generated/task2",
+    "manifest": "training/manifests/task2-split.json",
+    "ratios": {"train": 0.7, "val": 0.2, "test": 0.1},
+    "seed": 2079,
+    "required_class_splits": ["train", "val", "test"],
+    "allow_empty_labels": false
+  },
+  "training": {
+    "checkpoint": "yolov8n.pt",
+    "epochs": 100,
+    "image_size": 320,
+    "batch_size": 16,
+    "patience": 20,
+    "workers": 0,
+    "project": "training/runs/task2",
+    "run_name": "yolov8n-arrows",
+    "backend_preference": ["directml", "mps", "cpu"]
+  },
+  "export": {
+    "enabled": true,
+    "image_size": 320,
+    "calibration_fraction": 1.0,
+    "output_name": "best_arrows.tflite"
+  }
+}

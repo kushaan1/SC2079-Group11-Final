@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "provisional": true,
+  "note": "Four directions are included as hard negatives even though the current Task 2 route consumes only left/right.",
+  "classes": [
+    {"name": "Up Arrow", "competition_id": 36},
+    {"name": "Down Arrow", "competition_id": 37},
+    {"name": "Right Arrow", "competition_id": 38},
+    {"name": "Left Arrow", "competition_id": 39}
+  ]
+}

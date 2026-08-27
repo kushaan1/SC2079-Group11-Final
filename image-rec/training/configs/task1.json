@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "task": "task1",
+  "classes": "training/classes/task1.json",
+  "dataset": {
+    "source_images": "training/training_set",
+    "annotations": "training/annotations/task1",
+    "workspace": "training/.generated/task1",
+    "manifest": "training/manifests/task1-split.json",
+    "ratios": {"train": 0.7, "val": 0.2, "test": 0.1},
+    "seed": 2079,
+    "required_class_splits": ["train", "val", "test"],
+    "allow_empty_labels": false
+  },
+  "training": {
+    "checkpoint": "yolov8n.pt",
+    "epochs": 100,
+    "image_size": 640,
+    "batch_size": 8,
+    "patience": 25,
+    "workers": 0,
+    "project": "training/runs/task1",
+    "run_name": "yolov8n-targets",
+    "backend_preference": ["directml", "mps", "cpu"]
+  },
+  "export": {
+    "enabled": false,
+    "image_size": 640,
+    "calibration_fraction": 1.0,
+    "output_name": "task1.tflite"
+  }
+}
