@@ -1,0 +1,12 @@
+{
+  "verbose": false,
+  "robot": {
+    "direction": "NORTH",
+    "south_west": {"x": 0, "y": 0},
+    "north_east": {"x": 30, "y": 30}
+  },
+  "obstacles": [
+    {"image_id": 11, "direction": "SOUTH", "south_west": {"x": 50, "y": 90},  "north_east": {"x": 59, "y": 99}},
+    {"image_id": 13, "direction": "NORTH", "south_west": {"x": 90, "y": 150}, "north_east": {"x": 99, "y": 159}}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "verbose": false,
+  "robot": {
+    "direction": "NORTH",
+    "south_west": {"x": 0, "y": 0},
+    "north_east": {"x": 30, "y": 30}
+  },
+  "obstacles": [
+    {"image_id": 11, "direction": "SOUTH", "south_west": {"x": 50,  "y": 90},  "north_east": {"x": 59,  "y": 99}},
+    {"image_id": 12, "direction": "WEST",  "south_west": {"x": 120, "y": 60},  "north_east": {"x": 129, "y": 69}},
+    {"image_id": 13, "direction": "WEST",  "south_west": {"x": 150, "y": 150}, "north_east": {"x": 159, "y": 159}},
+    {"image_id": 14, "direction": "EAST",  "south_west": {"x": 60,  "y": 150}, "north_east": {"x": 69,  "y": 159}}
+  ]
+}
