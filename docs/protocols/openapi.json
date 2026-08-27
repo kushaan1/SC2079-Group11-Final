@@ -1,0 +1,414 @@
+{
+    "components": {
+        "schemas": {
+            "Direction": {
+                "enum": [
+                    "NORTH",
+                    "EAST",
+                    "SOUTH",
+                    "WEST"
+                ],
+                "title": "Direction",
+                "type": "string"
+            },
+            "MiscInstruction": {
+                "enum": [
+                    "CAPTURE_IMAGE"
+                ],
+                "title": "MiscInstruction",
+                "type": "string"
+            },
+            "MoveInstruction": {
+                "properties": {
+                    "amount": {
+                        "description": "The amount to move the robot in centimetres.",
+                        "minimum": 1.0,
+                        "title": "Amount",
+                        "type": "integer"
+                    },
+                    "move": {
+                        "$ref": "#/components/schemas/Straight"
+                    }
+                },
+                "required": [
+                    "move",
+                    "amount"
+                ],
+                "title": "MoveInstruction",
+                "type": "object"
+            },
+            "PathfindingPoint": {
+                "properties": {
+                    "x": {
+                        "minimum": 0.0,
+                        "title": "X",
+                        "type": "integer"
+                    },
+                    "y": {
+                        "minimum": 0.0,
+                        "title": "Y",
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "x",
+                    "y"
+                ],
+                "title": "PathfindingPoint",
+                "type": "object"
+            },
+            "PathfindingRequest": {
+                "properties": {
+                    "obstacles": {
+                        "items": {
+                            "$ref": "#/components/schemas/PathfindingRequestObstacle"
+                        },
+                        "minItems": 1,
+                        "title": "Obstacles",
+                        "type": "array"
+                    },
+                    "robot": {
+                        "$ref": "#/components/schemas/PathfindingRequestRobot",
+                        "description": "The initial position of the robot."
+                    },
+                    "verbose": {
+                        "default": true,
+                        "description": "Whether to attach the path and cost alongside the movement instructions in the response.",
+                        "title": "Verbose",
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "robot",
+                    "obstacles"
+                ],
+                "title": "PathfindingRequest",
+                "type": "object"
+            },
+            "PathfindingRequestObstacle": {
+                "properties": {
+                    "direction": {
+                        "$ref": "#/components/schemas/Direction",
+                        "description": "The direction of the image."
+                    },
+                    "image_id": {
+                        "description": "The image ID.",
+                        "minimum": 1.0,
+                        "title": "Image Id",
+                        "type": "integer"
+                    },
+                    "north_east": {
+                        "$ref": "#/components/schemas/PathfindingPoint",
+                        "description": "The north-east corner of the obstacle."
+                    },
+                    "south_west": {
+                        "$ref": "#/components/schemas/PathfindingPoint",
+                        "description": "The south-west corner of the obstacle."
+                    }
+                },
+                "required": [
+                    "image_id",
+                    "direction",
+                    "south_west",
+                    "north_east"
+                ],
+                "title": "PathfindingRequestObstacle",
+                "type": "object"
+            },
+            "PathfindingRequestRobot": {
+                "properties": {
+                    "direction": {
+                        "$ref": "#/components/schemas/Direction",
+                        "description": "The direction of the robot."
+                    },
+                    "north_east": {
+                        "$ref": "#/components/schemas/PathfindingPoint",
+                        "description": "The north-east corner of the robot."
+                    },
+                    "south_west": {
+                        "$ref": "#/components/schemas/PathfindingPoint",
+                        "description": "The south-west corner of the robot."
+                    }
+                },
+                "required": [
+                    "direction",
+                    "south_west",
+                    "north_east"
+                ],
+                "title": "PathfindingRequestRobot",
+                "type": "object"
+            },
+            "PathfindingResponse": {
+                "properties": {
+                    "segments": {
+                        "description": "The data for moving the robot from the start/objective to another objective.",
+                        "items": {
+                            "$ref": "#/components/schemas/PathfindingResponseSegment"
+                        },
+                        "title": "Segments",
+                        "type": "array"
+                    },
+                    "unreachable": {
+                        "description": "Obstacles the robot will NOT visit, with the reason for each. Additive field, absent from openapi.json. Together with `segments` this accounts for every obstacle in the request exactly once, so `len(segments) + len(unreachable)` always equals the number of obstacles sent.",
+                        "items": {
+                            "$ref": "#/components/schemas/PathfindingResponseUnreachable"
+                        },
+                        "title": "Unreachable",
+                        "type": "array"
+                    }
+                },
+                "required": [
+                    "segments"
+                ],
+                "title": "PathfindingResponse",
+                "type": "object"
+            },
+            "PathfindingResponseSegment": {
+                "properties": {
+                    "cost": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "The cost, included only if verbose is true.",
+                        "title": "Cost"
+                    },
+                    "image_id": {
+                        "title": "Image Id",
+                        "type": "integer"
+                    },
+                    "instructions": {
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "$ref": "#/components/schemas/MiscInstruction"
+                                },
+                                {
+                                    "$ref": "#/components/schemas/TurnInstruction"
+                                },
+                                {
+                                    "$ref": "#/components/schemas/MoveInstruction"
+                                }
+                            ]
+                        },
+                        "title": "Instructions",
+                        "type": "array"
+                    },
+                    "path": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "$ref": "#/components/schemas/PathfindingVector"
+                                },
+                                "type": "array"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "The path (unordered), included only if verbose is true.",
+                        "title": "Path"
+                    }
+                },
+                "required": [
+                    "image_id",
+                    "cost",
+                    "instructions",
+                    "path"
+                ],
+                "title": "PathfindingResponseSegment",
+                "type": "object"
+            },
+            "PathfindingResponseUnreachable": {
+                "description": "One obstacle the plan does not visit, and why. Additive \u2014 see this module's docstring.\n\nThe two reasons are NOT interchangeable and the RPi should not collapse them: see\n:class:`~pathfinding.report.UnreachableReason`. ``NO_OBJECTIVES`` means no photographable\npose exists (a geometry problem, usually the obstacle sitting too close to the wall it\nfaces); ``NO_PATH`` means poses exist but this plan could not reach them from where it left\nthe robot standing.",
+                "properties": {
+                    "image_id": {
+                        "title": "Image Id",
+                        "type": "integer"
+                    },
+                    "reason": {
+                        "$ref": "#/components/schemas/UnreachableReason",
+                        "description": "Why the obstacle was dropped: NO_OBJECTIVES (no valid camera pose exists) or NO_PATH (poses exist, none reachable on this route)."
+                    }
+                },
+                "required": [
+                    "image_id",
+                    "reason"
+                ],
+                "title": "PathfindingResponseUnreachable",
+                "type": "object"
+            },
+            "PathfindingVector": {
+                "properties": {
+                    "direction": {
+                        "$ref": "#/components/schemas/Direction",
+                        "description": "The direction"
+                    },
+                    "x": {
+                        "minimum": 0.0,
+                        "title": "X",
+                        "type": "integer"
+                    },
+                    "y": {
+                        "minimum": 0.0,
+                        "title": "Y",
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "direction",
+                    "x",
+                    "y"
+                ],
+                "title": "PathfindingVector",
+                "type": "object"
+            },
+            "Straight": {
+                "enum": [
+                    "FORWARD",
+                    "BACKWARD"
+                ],
+                "title": "Straight",
+                "type": "string"
+            },
+            "TurnInstruction": {
+                "enum": [
+                    "FORWARD_LEFT",
+                    "FORWARD_RIGHT",
+                    "BACKWARD_LEFT",
+                    "BACKWARD_RIGHT"
+                ],
+                "title": "TurnInstruction",
+                "type": "string"
+            },
+            "UnreachableReason": {
+                "description": "Why the planner produced no path to an obstacle.\n\nThere are exactly two reasons, and they are NOT interchangeable \u2014 they point at\ndifferent problems and at different fixes:\n\n- :attr:`NO_OBJECTIVES` \u2014 goal-pose generation produced nothing. Every candidate pose in\n  the standoff band was rejected by ``World.contains()``, so the search was never given a\n  target. This is a *geometry* failure, not a routing one.\n\n  **It does not say WHICH geometry, and you must not guess.** ``World.contains()``\n  rejects a pose for either of two unrelated reasons \u2014 it lies outside the arena's free\n  band, or inside another obstacle's inflated keep-out \u2014 and reports neither. The two\n  have opposite remedies, so this reason code alone is not enough to tune on:\n\n  * *Wall clearance* \u2014 the obstacle faces a wall it sits too close to, and its poses are\n    already beyond the boundary. Widening the standoff band pushes them further out and\n    never helps; only LOWERING ``config.STANDOFF_MIN_CM`` brings them back inside.\n  * *Neighbour crowding* \u2014 a nearby obstacle's keep-out swallows the poses. Here\n    widening ``config.LATERAL_TOLERANCE_CM``, or pushing the band out far enough to\n    clear the neighbour entirely, is what helps.\n\n  To tell them apart, plan the obstacle ON ITS OWN: still no pose means the wall; poses\n  alone but none in company means a neighbour. Both modes occur in the pathological\n  arena in ``smoke.py``, one obstacle each. A coverage tool would quantify the\n  wall-clearance mode across the arena; it does not measure the crowding mode.\n- :attr:`NO_PATH` \u2014 goal poses exist, but the search reached none of them from where the\n  robot stood. This is a *reachability* failure: the target is fine, the route is not\n  (boxed in by other obstacles, or the turning primitives cannot thread the gap).\n\nA ``str`` enum, so ``json.dumps`` and pydantic both emit the bare name and a client can\ncompare against the literal string.",
+                "enum": [
+                    "NO_OBJECTIVES",
+                    "NO_PATH"
+                ],
+                "title": "UnreachableReason",
+                "type": "string"
+            },
+            "ValidationErrorModel": {
+                "properties": {
+                    "ctx": {
+                        "anyOf": [
+                            {
+                                "additionalProperties": true,
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "default": null,
+                        "description": "An optional object which contains values required to render the error message.",
+                        "title": "Error context"
+                    },
+                    "input": {
+                        "description": "The input provided for validation.",
+                        "title": "Input"
+                    },
+                    "loc": {
+                        "description": "The error's location as a list.",
+                        "items": {},
+                        "title": "Location",
+                        "type": "array"
+                    },
+                    "msg": {
+                        "description": "A human readable explanation of the error.",
+                        "title": "Message",
+                        "type": "string"
+                    },
+                    "type": {
+                        "description": "A computer-readable identifier of the error type.",
+                        "title": "Error Type",
+                        "type": "string"
+                    },
+                    "url": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "default": null,
+                        "description": "The URL to further information about the error.",
+                        "title": "URL"
+                    }
+                },
+                "required": [
+                    "type",
+                    "loc",
+                    "msg",
+                    "input"
+                ],
+                "title": "ValidationErrorModel",
+                "type": "object"
+            }
+        },
+        "securitySchemes": null
+    },
+    "info": {
+        "title": "MDP API",
+        "version": "1.0.0"
+    },
+    "openapi": "3.1.0",
+    "paths": {
+        "/pathfinding/": {
+            "post": {
+                "operationId": "_pathfinding_pathfinding__post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PathfindingRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PathfindingResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "422": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/ValidationErrorModel"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "description": "Unprocessable Entity"
+                    }
+                },
+                "tags": [
+                    "Pathfinding"
+                ]
+            }
+        }
+    },
+    "tags": [
+        {
+            "name": "Pathfinding"
+        }
+    ]
+}

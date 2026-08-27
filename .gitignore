@@ -1,2 +1,16 @@
 # macOS
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Algorithm service diagnostics (algorithm/README.md, "Diagnostics"). Regenerated every request;
+# useful locally, noise in git.
+.replay/
+dump.txt
+
+# pytest
+.pytest_cache/
