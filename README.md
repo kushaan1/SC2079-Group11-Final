@@ -8,7 +8,9 @@ Five subsystems: **STM32 firmware**, **Raspberry Pi** (central hub), **image rec
 
 ## Status
 
-Planning stage — no implementation code yet.
+The standalone computer-vision foundation is implemented in **`image-rec/`**. Task 1 uses a host-PC
+Flask/Ultralytics service; Task 2 uses a Python 3.7-compatible TFLite pipeline on Raspberry Pi OS
+Buster. Model weights and physical calibration are still required before hardware deployment.
 
 ## What's here
 
@@ -17,6 +19,8 @@ Planning stage — no implementation code yet.
 - **`docs/`** — official course PDFs: MDP and algorithms briefings, the assessment checklist, RPi
   setup and image recognition guides, robot car layout, multithreading lab manuals, and a path
   planning reference.
+- **`image-rec/`** — standalone computer-vision service, Buster camera/comms adapters, TFLite local
+  inference, runners, tests, and setup instructions.
 
 ## Graded tasks
 
