@@ -22,7 +22,7 @@ def run_once(
     _, frame = camera.read(timeout=3.0)
     result = pc_client.detect_frame(frame, object_id)
     if stm is not None:
-        stm.send_command("capture_ready", message_id="capture-{}".format(object_id))
+        stm.send_and_wait("capture_ready", message_id="capture-{}".format(object_id))
     if android is not None:
         android.send("detection", result)
     return result

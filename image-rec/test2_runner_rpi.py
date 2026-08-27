@@ -71,7 +71,7 @@ def main() -> None:
             direction = wait_for_arrow(camera, detector, consensus, args.decision_timeout)
         payload = {"status": "target", "direction": direction, "competition_id": 39 if direction == "left" else 38}
         if stm is not None:
-            stm.send_command("execute_{}_route".format(direction))
+            stm.send_and_wait("execute_{}_route".format(direction))
         if android is not None:
             android.send("detection", payload)
         print(json.dumps(payload, sort_keys=True))

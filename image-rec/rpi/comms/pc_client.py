@@ -41,8 +41,17 @@ class PCDetectionClient:
             raise ValueError("unsupported image-recognition schema version")
         if payload.get("status") not in ("target", "bullseye", "no_detection"):
             raise ValueError("invalid image-recognition status")
+        status = payload["status"]
         detection = payload.get("detection")
+        if status in ("target", "bullseye") and detection is None:
+            raise ValueError("{} status requires a detection".format(status))
+        if status == "no_detection" and detection is not None:
+            raise ValueError("no_detection status cannot contain a chosen detection")
         if detection is not None:
             competition_id = detection.get("competition_id")
             if competition_id is not None and competition_id not in range(11, 41):
                 raise ValueError("competition ID outside the supported 11-40 range")
+            if status == "target" and competition_id is None:
+                raise ValueError("target status requires a competition ID")
+            if status == "bullseye" and competition_id is not None:
+                raise ValueError("bullseye status cannot contain a competition ID")
