@@ -224,6 +224,22 @@ planner cost of 1083, a ratio of **1.06**. Turn arcs are the 6% discrepancy — 
 `radius × π/2` for an arc while the midpoint-circle generator emits marginally fewer cells. **The
 timer must be labelled an estimate**; do not present it as exact.
 
+**Dwell at each capture.** After a segment's last frame, repeat that frame `CAPTURE_DWELL_FRAMES`
+times (start at 10; at 20 ms that is a 0.2 s pause). Without it the robot arrives, the Recognised
+panel updates, and the animation moves on within one frame — so the moment B.2 is graded on is
+invisible at normal speed.
+
+Do it by **duplicating frames, not by varying the delay**. Two independent prior implementations
+landed on this — a React simulator using `ARTIFICAL_DELAY_SCAN`, and a matplotlib dashboard using 5
+dwell frames — because it keeps the timer loop a single fixed interval and keeps a step slider linear
+in real time. Varying the delay per frame means the animation speed and the pause length stop being
+independent.
+
+Consequence for `distance_cm`: **dwell frames must not count as travel.** Either exclude duplicates
+from the distance total, or track distance separately from frame index. State which in the
+implementation and test it — the naive `distance_cm == index` identity breaks the moment dwell frames
+exist, and the timer would over-report by 10 cm per obstacle.
+
 Edge cases that must be handled and tested:
 
 - An empty route (every obstacle unreachable) — `frames == []`, `current is None`, `finished` is
@@ -247,12 +263,17 @@ class ArenaView:
         checklist's 'grid map' requirement. Heavier line every 50 cm for readability."""
 
     def draw_start_zone(self) -> None:
-        """The 40 x 40 cm start zone at the origin, per AGENTS.md 3.1. Tinted fill plus a label."""
+        """The start zone at the origin: config.START_ZONE_CM square. Tinted fill plus a label."""
 
     def draw_obstacle(self, obstacle: Obstacle, *, unreachable_reason: str | None = None) -> None:
-        """A 10 x 10 cm filled square, the image_id centred on it, and a THICK COLOURED EDGE on the
-        face carrying the image (obstacle.direction). The image face is a checklist requirement in
-        its own right - B.1 asks for 'the positions of the images', not just the obstacles.
+        """A filled square of `obstacle.clearance` cm - READ FROM THE OBSTACLE, not hardcoded to 10.
+        Obstacles are 10 cm per the rules, but the size is a property of the entity's own corners
+        and a request could legally send another size; drawing a 10 cm box around a 20 cm obstacle
+        would be a silent lie. Same reasoning as draw_robot below.
+
+        Then the image_id centred on it, and a THICK COLOURED EDGE on the face carrying the image
+        (obstacle.direction). The image face is a checklist requirement in its own right - B.1 asks
+        for 'the positions of the images', not just the obstacles.
 
         When unreachable_reason is given, draw the square in a warning style and append the reason.
         This makes a skipped obstacle visible rather than absent, which is the same honesty the
@@ -263,12 +284,23 @@ class ArenaView:
         robot's centre may not go. Not required by any checklist item; included because it makes the
         oversized-clearance problem (README limitation 1) visible instead of theoretical."""
 
-    def draw_robot(self, vector: Vector) -> None:
-        """The robot at `vector`, which is its CENTRE - not a corner. A footprint square of
-        config.ROBOT_FOOTPRINT_CM plus a heading indicator (a line or triangle from the centre
-        toward `vector.direction`) so that TURNS ARE VISIBLE. B.1 requires showing the robot 'as it
-        moves forward/backward and turns'; a plain square rotating through 90 degrees looks
-        identical at every heading, so the heading indicator is a requirement, not decoration."""
+    def draw_robot(self, vector: Vector, robot: Robot) -> None:
+        """The robot at `vector`, which is its CENTRE - NOT a corner. Verified: World passes
+        `world.robot.vector`, and Entity.vector is built from `centre`. Drawing it as a corner puts
+        the robot half a footprint off in both axes.
+
+        The footprint square is sized from `robot`'s OWN extents (north_length/east_length/
+        south_length/west_length, or `robot.clearance` for the square case) - NOT from
+        config.ROBOT_FOOTPRINT_CM. Those two disagree whenever a request supplies a different-sized
+        robot: Robot(Point(100,100), Point(120,120)) has clearance 21 while config says 31. The
+        config value is the DEFAULT the planner reserves, not a description of whatever robot is
+        currently in the world. Passing the Robot in keeps the drawing honest about what was
+        actually planned.
+
+        Plus a heading indicator (a line or triangle from the centre toward `vector.direction`) so
+        that TURNS ARE VISIBLE. B.1 requires showing the robot 'as it moves forward/backward and
+        turns'; a plain square rotated through 90 degrees looks identical at every heading, so the
+        heading indicator is a requirement, not decoration."""
 
     def draw_trail(self, trail: list[tuple[Vector, int]]) -> None:
         """The path already driven, as a thin line. Each entry is (vector, segment_index);
@@ -366,6 +398,19 @@ Also add, in the same section:
 TASK_1_TIME_LIMIT_S = 360
 ```
 
+And one under **Arena**, because the simulator must draw the start zone and there is currently no
+constant for it — only `START_POSE`, which is the robot's pose *within* the zone, not the zone:
+
+```python
+# Edge length of the square start zone at the arena's origin, in centimetres.
+# SOURCE: RULES | measured | 40 x 40 cm in the bottom-left corner at (0, 0). AGENTS.md 3.1.
+START_ZONE_CM = 40
+```
+
+Without this the simulator would hardcode 40, which breaks `AGENTS.md` §9.2 rule 1. The planner does
+not use it — the start zone is not a keep-out, just a marked region — so it is display-only today,
+but it is a rules-derived physical measurement and belongs in `config.py` regardless.
+
 At the placeholder 30 cm/s the reference 4-obstacle arena estimates **34 s against the 360 s budget**
 — comfortable, and consistent with the measured 2.2 s planning latency being irrelevant.
 
@@ -444,12 +489,15 @@ ones.
 Before anything else, on the machine that will run the demo:
 
 ```sh
-./.venv/bin/python -c "import tkinter; r=tkinter.Tk(); tkinter.Label(r, text='it works').pack(); r.mainloop()"
+./.venv/bin/python -c "import tkinter;tkinter.Tk().mainloop()"
 ```
 
-A window must appear. `import tkinter` succeeding is **not** sufficient evidence — a process without
-window-server access imports fine and then dies with an `NSInternalInconsistencyException` on
-`Tk()`. This bit during spec writing, from an agent shell with no GUI session.
+An empty window must appear. `import tkinter` succeeding is **not** sufficient evidence — a process
+without window-server access imports fine and then dies with an `NSInternalInconsistencyException`
+on `Tk()`. This bit during spec writing, from an agent shell with no GUI session.
+
+**Status: PASSED** on the algorithms laptop, 2026-08-27 — Tk 8.6, window rendered from
+`algorithm/.venv`. Re-run this on any new machine before starting work.
 
 Consequence for whoever implements this: **an automated agent cannot verify any of the visual
 behaviour in §6.2.** Every manual check must be run by a human at the keyboard. Write the code so
