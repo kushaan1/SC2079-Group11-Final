@@ -16,6 +16,9 @@ def test_task1_registry_covers_targets_and_bullseye_without_reordering_ids():
 def test_task_datasets_are_separate_and_task2_labels_match_pi_metadata():
     task1 = load_task_config("task1")
     task2 = load_task_config("task2")
+    expected_backends = ("cuda", "rocm", "directml", "mps", "cpu")
+    assert task1.training.backend_preference == expected_backends
+    assert task2.training.backend_preference == expected_backends
     assert task1.dataset.source_images != task2.dataset.source_images
     with (task2.root / "rpi/models/arrow-labels.json").open("r", encoding="utf-8") as handle:
         deployed_labels = json.load(handle)
