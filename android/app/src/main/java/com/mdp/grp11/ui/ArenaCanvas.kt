@@ -81,18 +81,16 @@ private const val AXIS_LABEL_SIZE_RATIO = 0.3f
 private const val AXIS_LABEL_INSET_RATIO = 0.08f
 
 /**
- * Obstacle id badge size as a fraction of the cell, with no target found. The
- * badge is the block's only label then, so it takes a readable share of it.
+ * Obstacle id badge size as a fraction of the cell. One size in every state:
+ * a label that resizes when a target arrives is one the operator has to
+ * re-find, and the badge answers "which block is this" either way.
+ *
+ * KNOWN COST: [TARGET_LABEL_SIZE_RATIO] centres two digits across half the
+ * cell, leaving about a fifth either side, so at this size the badge clips the
+ * corner of those digits once a target is found. Accepted in favour of a
+ * constant size.
  */
 private const val OBSTACLE_ID_SIZE_RATIO = 0.34f
-
-/**
- * And the size once a target is found. Target ids are always TWO digits and
- * [TARGET_LABEL_SIZE_RATIO] centres them across half the cell, leaving about a
- * fifth either side - anything larger overlaps those digits rather than sitting
- * beside them, which is why this cannot be a single ratio.
- */
-private const val OBSTACLE_ID_SIZE_RATIO_WITH_TARGET = 0.20f
 
 /** Gap between the obstacle id badge and the cell corner it sits in. */
 private const val OBSTACLE_ID_INSET_RATIO = 0.06f
@@ -488,11 +486,16 @@ private fun DrawScope.drawTargetLabel(
  * is found the target id takes the middle and this moves aside, rather than
  * the two competing for the same centred space.
  *
- * Always top-right; a fixed position beats one that moves with state. Only two
- * face bars can reach that corner - N and E - and either paints Yellow under
- * the badge, where Paper text measures about 1.6:1 against a 4.5:1 floor, so
- * it is invisible rather than merely crowded. Switching to Ink whenever N or E
- * is active covers every face that can geometrically touch the corner.
+ * Always top-right, always Paper, always the same size. A fixed position,
+ * colour and size beat ones that move with state - the operator learns to look
+ * in one place for one thing.
+ *
+ * KNOWN COST: an N or E face bar paints Yellow under this corner, and Paper on
+ * Yellow measures 1.62:1 against a 4.5:1 floor, so the badge is close to
+ * invisible on those two faces. Accepted deliberately in favour of one
+ * consistent colour. If it needs fixing, inset the badge past
+ * FACE_BAR_THICKNESS_RATIO so it clears the bar entirely, rather than
+ * reintroducing a colour that changes underneath the operator.
  */
 private fun DrawScope.drawObstacleIdLabel(
     o: Obstacle,
@@ -501,13 +504,9 @@ private fun DrawScope.drawObstacleIdLabel(
     cell: Float,
     textMeasurer: TextMeasurer,
 ) {
-    val barFaces = setOfNotNull(o.imageFace, o.target?.face)
-    val onFaceBar = Face.N in barFaces || Face.E in barFaces
-    val ratio =
-        if (o.target == null) OBSTACLE_ID_SIZE_RATIO else OBSTACLE_ID_SIZE_RATIO_WITH_TARGET
     val style = TextStyle(
-        color = if (onFaceBar) MdpTokens.Ink else MdpTokens.Paper,
-        fontSize = (cell * ratio).toDp().toSp(),
+        color = MdpTokens.Paper,
+        fontSize = (cell * OBSTACLE_ID_SIZE_RATIO).toDp().toSp(),
         // Bold, not Medium. This is a small glyph on a saturated fill, and at
         // this size weight buys more legibility than another point of size
         // would - size is what runs into the target digits.
