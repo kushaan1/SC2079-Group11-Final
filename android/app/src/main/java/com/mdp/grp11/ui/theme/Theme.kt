@@ -147,6 +147,9 @@ private val Scheme = lightColorScheme(
 private val Display = BricolageGrotesque
 private val Mono = DmMono
 
+/** Tracking for every body style. See the note at the body styles below. */
+private val BodyTracking = 0.03.em
+
 private val MdpTypography = Typography(
     // Run clocks and any other large numeral. 800 weight with negative
     // tracking, per the artboards' 26px/800/-0.02em.
@@ -168,10 +171,33 @@ private val MdpTypography = Typography(
         fontSize = 22.sp,
         letterSpacing = (-0.02).em,
     ),
-    // Body text: the status line, device names, dialog copy.
-    bodyLarge = TextStyle(fontFamily = Display, fontWeight = FontWeight.Normal, fontSize = 16.sp),
-    bodyMedium = TextStyle(fontFamily = Display, fontWeight = FontWeight.Normal, fontSize = 14.sp),
-    bodySmall = TextStyle(fontFamily = Display, fontWeight = FontWeight.Normal, fontSize = 13.sp),
+    // Body text: the status line, the raw Bluetooth log, device names, dialog
+    // copy. The only styles here that carried no tracking at all - headings
+    // tighten, labels open up, and body sat at a bare 0, which read cramped on
+    // the two panels that are nothing but small text.
+    //
+    // Expressed in em so it scales with each size rather than needing a value
+    // per style. 0.03em lands within a hundredth of Material's own body
+    // tracking at both 16sp and 13sp, so it is a defensible number rather than
+    // a taste call.
+    bodyLarge = TextStyle(
+        fontFamily = Display,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        letterSpacing = BodyTracking,
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = Display,
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp,
+        letterSpacing = BodyTracking,
+    ),
+    bodySmall = TextStyle(
+        fontFamily = Display,
+        fontWeight = FontWeight.Normal,
+        fontSize = 13.sp,
+        letterSpacing = BodyTracking,
+    ),
     // Every button in the app. Wide tracking, since they are all short caps.
     labelLarge = TextStyle(
         fontFamily = Display,
