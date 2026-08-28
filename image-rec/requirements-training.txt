@@ -1,4 +1,6 @@
-# Reproducible host training environment. Python 3.10 is recommended for DirectML wheel support.
+# Reproducible host training environment. Python 3.10 is recommended for the pinned stack.
+# This profile includes the optional Windows DirectML wheel. For an AMD ROCm host, use
+# requirements-training-rocm.txt so DirectML cannot replace the ROCm PyTorch build.
 -r requirements-pc.txt
 ultralytics==8.4.115
 torch-directml==0.2.5.dev240914; sys_platform == "win32"

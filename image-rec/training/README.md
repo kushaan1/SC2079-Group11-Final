@@ -88,23 +88,43 @@ instead of weakening this safeguard without review.
 
 ## Training environment
 
-Use Python 3.10 on the training PC. From `image-rec/`:
+Use Python 3.10 on the training PC. Install the accelerator-specific PyTorch build before the
+remaining training packages. From `image-rec/`:
 
 ```powershell
 py -3.10 -m venv .venv-training
 .\.venv-training\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements-training.txt
 ```
 
-The top-level training packages are pinned. `torch-directml` is installed only on Windows and is
-probed first. MPS is tried next on Apple silicon, then CPU. Ultralytics does not document DirectML as
-a native trainer device, so `training.backend` performs a real tensor smoke test and the trainer
-falls back only for clearly device/operator-related failures. Dataset, download, and configuration
-errors are not hidden by fallback.
+Choose the requirements profile that matches the PyTorch build installed in that environment. For
+the assumed Radeon RX 9070 XT, select the supported ROCm PyTorch command for the host OS and Python
+version from [AMD's ROCm PyTorch guide](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html),
+then install the ROCm profile:
+
+```powershell
+python -m pip install -r requirements-training-rocm.txt
+```
+
+Verify the GPU environment before training:
+
+```powershell
+python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0)); print(torch.version.hip)"
+```
+
+The expected output is `True`, the RX 9070 XT device name, and a non-empty HIP version.
+
+The ROCm build is exposed by PyTorch through `torch.cuda`; the trainer probes `torch.version.hip`
+to distinguish it from CUDA, runs a real allocation/operator smoke test, and passes `cuda:0` to
+Ultralytics. The automatic order is **CUDA → ROCm → DirectML → MPS → CPU**. The standard
+`requirements-training.txt` profile retains the optional Windows `torch-directml` dependency for
+DirectML fallback environments; do not install that profile into the ROCm environment. Ultralytics
+does not document DirectML as a native trainer device, so DirectML is only advertised after its own
+smoke test. Dataset, download, and configuration errors are not hidden by fallback.
 
 Inspect selection without training by using the unit tests or importing `resolve_backends`. To force
-a supported backend during a real run, pass `--backend cpu` or `--backend mps`.
+a supported backend during a real run, pass `--backend rocm`, `--backend cuda`, or another backend
+name. For the RX 9070 XT, `--backend rocm` is a useful smoke test before a long run.
 
 ## Validate and prepare
 
@@ -192,6 +212,6 @@ dtypes, quantization scales, latency, and model checksum in `docs/calibration.md
 - No training starts while validation or split coverage fails.
 - Placeholder labels are never interpreted as empty/background images.
 - Duplicate images cannot leak across train and test under different filenames.
-- DirectML/MPS failures fall back only when the error is device-related.
+- CUDA/ROCm/DirectML/MPS failures fall back only when the error is device-related.
 - Ambiguous or stale multiple TFLite outputs stop export rather than publishing an arbitrary file.
 - Weights, datasets, and generated workspaces are never committed by the supplied ignore rules.

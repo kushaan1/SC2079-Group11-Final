@@ -1,0 +1,9 @@
+# AMD ROCm training profile (for example, Radeon RX 9070 XT).
+#
+# Install the ROCm-enabled torch/torchvision wheels selected for the host OS and Python version
+# from AMD's ROCm or PyTorch installation guide before installing this file. ROCm is not a
+# separate Python package and its PyTorch wheels are version/platform-specific, so they are
+# intentionally not pinned here. This profile omits torch-directml, which is incompatible with
+# using the ROCm build in the same environment.
+-r requirements-pc.txt
+ultralytics==8.4.115
