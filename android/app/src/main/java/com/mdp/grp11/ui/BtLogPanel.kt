@@ -14,7 +14,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mdp.grp11.connection.TrafficLine
 import com.mdp.grp11.ui.theme.DmMono
@@ -89,12 +88,16 @@ fun BtLogPanel(lines: List<TrafficLine>, modifier: Modifier = Modifier) {
                         // so the theme's dark-on-light body colour would be
                         // invisible here.
                         color = MdpTokens.Paper,
-                        // Ellipsised rather than wrapped: wrapped entries push
-                        // the newest traffic off the bottom of a panel whose
-                        // whole job is showing the newest traffic.
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        // Wrapped, not ellipsised. A truncated line is useless
+                        // for the one job this panel has - a long ADD or FACE
+                        // loses its coordinates to the ellipsis, which is
+                        // exactly the part being debugged.
+                        //
+                        // Safe because of reverseLayout: the newest line is
+                        // anchored at the BOTTOM, so a taller entry pushes
+                        // older lines off the top, never the newest off the
+                        // bottom.
+                        modifier = Modifier.weight(1f),
                     )
                     if (!line.delivered) {
                         Text(

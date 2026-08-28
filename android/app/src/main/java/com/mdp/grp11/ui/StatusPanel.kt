@@ -12,12 +12,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mdp.grp11.arena.RobotPose
 import com.mdp.grp11.protocol.Face
@@ -81,17 +85,18 @@ fun StatusPanel(
         // A dot per line, and not decoration: the two lines come from DIFFERENT
         // sources - the live status the robot relays, and the last target it
         // reported - and otherwise read as one paragraph of robot output.
+        // weight(1f) so this takes whatever the card has left: the status is
+        // a raw payload off the link and the only line here whose length this
+        // app does not control, so it gets the room to wrap, and the two short
+        // lines below stay pinned to the card's bottom edge whether it wraps
+        // or not.
         DotLine(
             dot = MdpTokens.Pink,
             text = status ?: "Idle",
-            // A raw payload off the link, so its length is not this app's to
-            // bound at the source. Being selective includes truncating a
-            // pathological line rather than letting it overflow the slot.
             style = MaterialTheme.typography.bodyLarge,
             color = MdpTokens.Ink,
+            modifier = Modifier.weight(1f),
         )
-        // Bounded for the same reason, and because a wrap here would push the
-        // card past the height its slot was proportioned for.
         if (targetLine != null) {
             DotLine(
                 dot = MdpTokens.Muted,
@@ -113,18 +118,58 @@ fun StatusPanel(
     }
 }
 
+/** Diameter of the leading dot on each status line. */
+private val DotSize = 8.dp
+
+/**
+ * One status line: a coloured dot, then the text.
+ *
+ * The dot is centred on the text's FIRST line, measured rather than assumed.
+ * These lines wrap, so aligning the whole row centrally would put the dot
+ * opposite the middle line instead of the one it marks - and a hardcoded
+ * offset cannot work either, because [MdpTypography] sets `fontSize` without
+ * `lineHeight`, so the real line height comes from the font's own metrics and
+ * is not the Material default. `onTextLayout` reports what was actually laid
+ * out, and stays right if the type scale changes.
+ */
 @Composable
 private fun DotLine(
     dot: Color,
     text: String,
     style: TextStyle,
     color: Color,
+    modifier: Modifier = Modifier,
 ) {
+    val density = LocalDensity.current
+    // Starts centred on nothing and corrects on the first layout pass. One
+    // extra recomposition, on a panel that redraws far less often than the
+    // arena does.
+    var dotTop by remember { mutableStateOf(0.dp) }
+
     Row(
+        modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
-        Text(text, style = style, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Box(
+            Modifier
+                .padding(top = dotTop)
+                .size(DotSize)
+                .clip(CircleShape)
+                .background(dot)
+        )
+        Text(
+            text,
+            style = style,
+            color = color,
+            onTextLayout = { layout ->
+                if (layout.lineCount > 0) {
+                    val centre = (layout.getLineTop(0) + layout.getLineBottom(0)) / 2f
+                    dotTop = with(density) {
+                        (centre.toDp() - DotSize / 2).coerceAtLeast(0.dp)
+                    }
+                }
+            },
+        )
     }
 }
