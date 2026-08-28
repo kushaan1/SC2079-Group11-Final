@@ -21,7 +21,7 @@
     "workers": 0,
     "project": "training/runs/task2",
     "run_name": "yolov8n-arrows",
-    "backend_preference": ["directml", "mps", "cpu"]
+    "backend_preference": ["cuda", "rocm", "directml", "mps", "cpu"]
   },
   "export": {
     "enabled": true,

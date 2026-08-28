@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from .backend import DEFAULT_BACKEND_PREFERENCE, SUPPORTED_BACKENDS
+
 
 IMAGE_REC_ROOT = Path(__file__).resolve().parents[1]
 SPLIT_NAMES = ("train", "val", "test")
@@ -105,7 +107,9 @@ def load_config_path(path: Path, root: Optional[Path] = None) -> TaskConfig:
         workers=int(train_raw["workers"]),
         project=_resolve(resolved_root, train_raw["project"]),
         run_name=str(train_raw["run_name"]),
-        backend_preference=tuple(train_raw.get("backend_preference", ("directml", "mps", "cpu"))),
+        backend_preference=tuple(
+            train_raw.get("backend_preference", DEFAULT_BACKEND_PREFERENCE)
+        ),
     )
     export_raw = raw.get("export", {})
     export = ExportSettings(
@@ -182,9 +186,13 @@ def _validate(config: TaskConfig) -> None:
     if config.training.workers < 0:
         raise ValueError("training workers cannot be negative")
     if not config.training.backend_preference or any(
-        item not in ("directml", "mps", "cpu") for item in config.training.backend_preference
+        item not in SUPPORTED_BACKENDS for item in config.training.backend_preference
     ):
-        raise ValueError("backend_preference may contain only directml, mps, and cpu")
+        raise ValueError(
+            "backend_preference may contain only {}".format(
+                ", ".join(SUPPORTED_BACKENDS)
+            )
+        )
     if not 0.0 < config.export.calibration_fraction <= 1.0:
         raise ValueError("export calibration_fraction must be in (0, 1]")
     generated_root = (config.root / "training" / ".generated").resolve()

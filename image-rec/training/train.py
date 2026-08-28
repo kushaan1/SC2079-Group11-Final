@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
-from .backend import BackendChoice, backend_error_allows_fallback, resolve_backends
+from .backend import (
+    SUPPORTED_BACKENDS,
+    BackendChoice,
+    backend_error_allows_fallback,
+    resolve_backends,
+)
 from .config import TaskConfig, load_task_config
 from .metadata import environment_metadata, file_sha256, write_metadata
 from .prepare import prepare_dataset
@@ -113,7 +118,9 @@ def train_task(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", choices=("task1", "task2"), required=True)
-    parser.add_argument("--backend", choices=("auto", "directml", "mps", "cpu"), default="auto")
+    parser.add_argument(
+        "--backend", choices=("auto",) + SUPPORTED_BACKENDS, default="auto"
+    )
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--image-size", type=int)
