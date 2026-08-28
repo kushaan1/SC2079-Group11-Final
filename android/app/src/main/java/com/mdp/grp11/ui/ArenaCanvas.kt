@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -433,10 +434,10 @@ private fun DrawScope.drawObstacle(
         )
     }
     // What WE annotated (C.7), outbound.
-    o.imageFace?.let { face -> drawFaceBar(face, left, top, cell) }
+    o.imageFace?.let { face -> drawFaceBar(face, left, top, cell, MdpTokens.Yellow) }
     o.target?.let { target ->
         // What the ROBOT reported (C.9), inbound - distinct from imageFace above.
-        target.face?.let { face -> drawFaceBar(face, left, top, cell) }
+        target.face?.let { face -> drawFaceBar(face, left, top, cell, MdpTokens.Green) }
         // C.9: the recognised numeric target id must appear on its block.
         drawTargetLabel(target.id, left, top, cell, textMeasurer)
     }
@@ -446,7 +447,25 @@ private fun DrawScope.drawObstacle(
     drawObstacleIdLabel(o, left, top, cell, textMeasurer)
 }
 
-private fun DrawScope.drawFaceBar(face: Face, left: Float, top: Float, cell: Float) {
+/**
+ * One edge of a block, coloured by WHO said so: Yellow for the face the
+ * operator annotated, Green for the one the robot reported alongside a target.
+ *
+ * Two facts that look alike and are not - the whole point of keeping
+ * `imageFace` and `target.face` as separate fields - so drawing both in one
+ * colour made the block claim agreement it might not have. When the two
+ * disagree, two differently coloured edges now say so at a glance.
+ *
+ * If they name the SAME face, Green lands on top: the robot's own report is
+ * the one that matters once it exists.
+ */
+private fun DrawScope.drawFaceBar(
+    face: Face,
+    left: Float,
+    top: Float,
+    cell: Float,
+    colour: Color,
+) {
     val t = cell * FACE_BAR_THICKNESS_RATIO
     val (offset, s) = when (face) {
         Face.N -> Offset(left, top) to Size(cell, t)
@@ -454,7 +473,7 @@ private fun DrawScope.drawFaceBar(face: Face, left: Float, top: Float, cell: Flo
         Face.W -> Offset(left, top) to Size(t, cell)
         Face.E -> Offset(left + cell - t, top) to Size(t, cell)
     }
-    drawRect(MdpTokens.Yellow, offset, s)
+    drawRect(colour, offset, s)
 }
 
 private fun DrawScope.drawTargetLabel(
@@ -490,12 +509,12 @@ private fun DrawScope.drawTargetLabel(
  * colour and size beat ones that move with state - the operator learns to look
  * in one place for one thing.
  *
- * KNOWN COST: an N or E face bar paints Yellow under this corner, and Paper on
- * Yellow measures 1.62:1 against a 4.5:1 floor, so the badge is close to
- * invisible on those two faces. Accepted deliberately in favour of one
- * consistent colour. If it needs fixing, inset the badge past
- * FACE_BAR_THICKNESS_RATIO so it clears the bar entirely, rather than
- * reintroducing a colour that changes underneath the operator.
+ * KNOWN COST: an N or E face bar paints under this corner, and Paper measures
+ * 1.62:1 on Yellow and 2.42:1 on Green against a 4.5:1 floor, so the badge is
+ * faint on those two faces. Accepted deliberately in favour of one consistent
+ * colour. If it needs fixing, inset the badge past FACE_BAR_THICKNESS_RATIO so
+ * it clears the bar entirely, rather than reintroducing a colour that changes
+ * underneath the operator.
  */
 private fun DrawScope.drawObstacleIdLabel(
     o: Obstacle,
