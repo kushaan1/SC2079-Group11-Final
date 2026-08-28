@@ -3,18 +3,17 @@ namespace ScriptNs
 {
     public class ScriptContainer
     {
-        // Robot footprint size in cells. AMD reports the robot's TOP-LEFT
-        // cell (the natural anchor for its own top-left-origin coordinate
-        // system); the app anchors and draws the robot at its BOTTOM-LEFT
-        // cell, extending the footprint up-and-right
-        // (ArenaCanvas.drawRobot). Converting a top-left anchor into a
-        // bottom-left-origin system has to subtract the block's own height,
-        // not just flip the point - see the y calculation below. This value
-        // must agree with THREE places: AMD's Settings -> Default Arena
-        // Settings -> Robot size, this constant, and Config.ROBOT_SIZE_CELLS
-        // in the Android app. If any of the three disagree, every drawn
-        // robot position is off by rows equal to the difference.
-        private const int ROBOT_SIZE = 3;
+        // AMD's robot size in cells, from Settings -> Default Arena Settings
+        // -> Robot size. AMD reports the robot's TOP-LEFT cell, the natural
+        // anchor for its own top-left-origin system, and the app wants the
+        // footprint's CENTRE - so half of this is added before the flip.
+        //
+        // This must match AMD'S setting. It no longer has to match
+        // Config.ROBOT_SIZE_CELLS in the app: under centre anchoring a size
+        // mismatch changes how big the box is DRAWN and never where it sits.
+        // That used to be a three-way coupling where any disagreement shifted
+        // every robot position.
+        private const double ROBOT_SIZE = 3;
 
         // Emits the checklist's own formats so the Android app needs no
         // AMD-specific parsing.
@@ -35,16 +34,24 @@ namespace ScriptNs
 
             if (posTgridF)
             {
-                int x = robotPosition[0];
-                // A *point* flip (height - 1 - y) is wrong here: it flips
-                // where the reported row sits, but the reported row is the
-                // block's TOP-LEFT, not a dimensionless point. Flipping a
-                // top-left anchor into a bottom-left-origin system must also
-                // subtract the block's own height so the anchor ends up at
-                // the footprint's bottom-left, matching how the app draws it.
-                int y = height - ROBOT_SIZE - robotPosition[1];
-                string dir = HeadingLetter(robotPosition[2]);
-                return "ROBOT," + x + "," + y + "," + dir;
+                // AMD reports the footprint's TOP-LEFT cell index; the app
+                // wants the cell it is CENTRED on, in the same units an
+                // obstacle coordinate uses. That is half a footprint further
+                // in - a whole number for an odd robot size, so a 3-cell robot
+                // still emits plain integers.
+                //
+                // The y flip is then the ordinary point flip, height - 1 - y,
+                // because a centre IS a point: the footprint's own height has
+                // already been accounted for by the offset above.
+                double offset = (ROBOT_SIZE - 1) / 2.0;
+                double x = robotPosition[0] + offset;
+                double y = (height - 1) - (robotPosition[1] + offset);
+                // Degrees, raw. AMD already gives an angle - North = 0,
+                // increasing clockwise, the same convention the app uses - and
+                // the old HeadingLetter() bucketed it into one of four letters,
+                // throwing away every heading an arcing car actually holds.
+                int deg = ((robotPosition[2] % 360) + 360) % 360;
+                return "ROBOT," + Fmt(x) + "," + Fmt(y) + "," + deg;
             }
 
             int ox = obstaclePosition[0];
@@ -58,13 +65,12 @@ namespace ScriptNs
             return (addObstacle ? "AMDADD," : "AMDSUB,") + "(" + ox + "," + oy + ")";
         }
 
-        private static string HeadingLetter(int degrees)
+        // InvariantCulture, not the default: on a machine set to a
+        // comma-decimal locale, "6.5" would be written "6,5" and split the
+        // message into an extra field on the way through the parser.
+        private static string Fmt(double v)
         {
-            int d = ((degrees % 360) + 360) % 360;
-            if (d >= 315 || d < 45) return "N";
-            if (d < 135) return "E";
-            if (d < 225) return "S";
-            return "W";
+            return v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
         }
     }
 }

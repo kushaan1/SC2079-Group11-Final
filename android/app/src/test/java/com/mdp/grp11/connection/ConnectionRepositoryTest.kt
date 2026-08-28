@@ -48,7 +48,7 @@ class ConnectionRepositoryTest {
         job.cancel()
 
         assertTrue(got[0] is Inbound.Unknown)
-        assertEquals(Inbound.Pose(3, 4, Face.E), got[1])
+        assertEquals(Inbound.Pose(3f, 4f, 90f), got[1])
     }
 
     @Test fun `send records an outbound traffic line`() = runTest {

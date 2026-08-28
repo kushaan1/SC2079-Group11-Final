@@ -48,6 +48,12 @@ fun FaceCompass(
     onPick: (Face) -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * What the four keys mean here. The same compass drives two different
+     * things - a block's image face and the robot's heading - and the operator
+     * has to be able to tell which one a tap is about to move.
+     */
+    title: String = "IMAGE FACE",
 ) {
     // Pink border and pink shadow, unlike every other card on the screen.
     // This one is modal in spirit - it replaces the status panel only while a
@@ -63,7 +69,7 @@ fun FaceCompass(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            "IMAGE FACE · $label",
+            "$title · $label",
             style = MaterialTheme.typography.labelMedium,
             color = MdpTokens.Muted,
         )

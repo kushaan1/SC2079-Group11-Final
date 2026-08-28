@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextMeasurer
@@ -61,6 +62,13 @@ private const val MINOR_GRIDLINE_ALPHA = 0.25f
 
 /** Start zone tint alpha over its base colour. */
 private const val START_ZONE_ALPHA = 0.3f
+
+/**
+ * T1 START label size as a fraction of the cell. Sits in the one-cell band
+ * between the top of the robot's starting footprint and the top of the zone,
+ * so it cannot grow much.
+ */
+private const val START_ZONE_LABEL_SIZE_RATIO = 0.3f
 
 /**
  * Axis label size as a fraction of the cell. Smaller than the target label -
@@ -118,27 +126,91 @@ fun hitTest(arena: Arena, px: Float, py: Float, gridPx: Float): Obstacle? {
 }
 
 /**
+ * Canvas pixels of the robot footprint's top-left corner. Shared by the
+ * drawing and the hit test on purpose - two copies of this arithmetic would
+ * drift, and the failure mode is a robot you can see but cannot grab.
+ */
+private fun robotTopLeft(pose: RobotPose, gridPx: Float): Offset {
+    // The pose names the footprint's CENTRE, so back off half a footprint in
+    // each direction. Going through Grid keeps the y-flip in the one place
+    // that is allowed to know about it.
+    val half = Config.ROBOT_SIZE_CELLS / 2f
+    return Offset(
+        Grid.toCanvasX(pose.x - half, gridPx),
+        Grid.toCanvasY(pose.y + half, gridPx),
+    )
+}
+
+/**
+ * Whether a touch lands on the robot. Plain rectangle containment, with none
+ * of [hitTest]'s generous radius: the footprint is 3x3 cells - about 14mm
+ * square, comfortably past Material's touch minimum - so nothing needs to
+ * reach beyond it, and a radius would let the robot steal taps meant for the
+ * ground beside it.
+ *
+ * Stays AXIS-ALIGNED even though the body is drawn rotated. A rotated square's
+ * corner tips fall outside this box, so at a diagonal heading the very tips
+ * are not grabbable - a few pixels on a 99px target, and not worth the
+ * arithmetic.
+ */
+fun hitsRobot(pose: RobotPose, px: Float, py: Float, gridPx: Float): Boolean {
+    val (left, top) = robotTopLeft(pose, gridPx)
+    val side = gridPx / Config.CELLS * Config.ROBOT_SIZE_CELLS
+    return px >= left && px < left + side && py >= top && py < top + side
+}
+
+/** What a touch landed on. Null is bare ground. */
+sealed interface ArenaHit {
+    data class Block(val id: Int) : ArenaHit
+    data object Robot : ArenaHit
+}
+
+/**
+ * Resolves a touch against everything drawn on the arena, obstacles first.
+ *
+ * A block is one cell against the robot's nine, so ranking the robot higher
+ * would make any block beneath it unreachable, while ranking it lower costs
+ * the robot eight-ninths of a grab area it has in abundance.
+ *
+ * Both gestures go through here rather than each ranking for itself - a tap
+ * and a drag that disagreed about what is under the finger would be a very
+ * confusing thing to debug.
+ */
+fun hitArena(arena: Arena, px: Float, py: Float, gridPx: Float): ArenaHit? {
+    hitTest(arena, px, py, gridPx)?.let { return ArenaHit.Block(it.id) }
+    if (hitsRobot(arena.robot, px, py, gridPx)) return ArenaHit.Robot
+    return null
+}
+
+/**
  * The arena. A tap on empty ground places a new block; a tap on a block
  * selects it (opening the face compass, C.7) without transmitting anything.
  * Dragging moves a block locally; [onCommit] fires only on finger-lift,
  * which is the sole place C.6's coordinates are sent - never mid-drag.
+ *
+ * The robot is draggable on the same terms, and [onSelectRobot] binds the
+ * compass to its heading. What a touch lands on is decided by [hitArena],
+ * which both gestures share.
  */
 @Composable
 fun ArenaCanvas(
     arena: Arena,
-    selectedId: Int?,
+    selection: Selection?,
     onPlace: (Cell) -> Unit,
     onSelect: (Int) -> Unit,
     onDragTo: (Int, Cell) -> Unit,
     onDropOutside: (Int) -> Unit,
     onCommit: (Int) -> Unit,
+    onSelectRobot: () -> Unit,
+    onDragRobotTo: (Float, Float) -> Unit,
+    onCommitRobot: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Captured in onSizeChanged, not the draw lambda: pointerInput reads this
     // to hit-test taps, and it runs at a different time than drawing does. A
     // value assigned during drawing would be stale/uninitialised on first touch.
     var gridPx by remember { mutableStateOf(0f) }
-    var draggingId by remember { mutableStateOf<Int?>(null) }
+    var dragging by remember { mutableStateOf<ArenaHit?>(null) }
     var outside by remember { mutableStateOf(false) }
     val textMeasurer = rememberTextMeasurer()
 
@@ -158,39 +230,63 @@ fun ArenaCanvas(
                 .onSizeChanged { gridPx = min(it.width, it.height).toFloat() }
                 .pointerInput(gridPx) {
                     detectTapGestures { pos ->
-                        val hit = hitTest(currentArena, pos.x, pos.y, gridPx)
-                        if (hit != null) onSelect(hit.id)
-                        else onPlace(cellOf(pos, gridPx))
+                        when (val hit = hitArena(currentArena, pos.x, pos.y, gridPx)) {
+                            is ArenaHit.Block -> onSelect(hit.id)
+                            ArenaHit.Robot -> onSelectRobot()
+                            null -> onPlace(cellOf(pos, gridPx))
+                        }
                     }
                 }
                 .pointerInput(gridPx) {
                     detectDragGestures(
                         onDragStart = { pos ->
-                            draggingId = hitTest(currentArena, pos.x, pos.y, gridPx)?.id
+                            dragging = hitArena(currentArena, pos.x, pos.y, gridPx)
                             outside = false
                         },
                         onDrag = { change, _ ->
-                            val id = draggingId ?: return@detectDragGestures
                             val p = change.position
-                            outside = p.x < 0 || p.y < 0 || p.x > gridPx || p.y > gridPx
-                            if (!outside) onDragTo(id, cellOf(p, gridPx))
+                            when (val t = dragging) {
+                                null -> Unit
+                                is ArenaHit.Block -> {
+                                    outside = p.x < 0 || p.y < 0 || p.x > gridPx || p.y > gridPx
+                                    if (!outside) onDragTo(t.id, cellOf(p, gridPx))
+                                }
+                                // No drag-out for the robot: there is no such
+                                // thing as removing it, so a finger past the
+                                // edge parks it against the wall instead
+                                // (Arena.moveRobot clamps the footprint).
+                                ArenaHit.Robot -> {
+                                    // A continuous point, not a cell: the robot
+                                    // is drawn at fractional positions, so
+                                    // snapping the drag would make it stutter
+                                    // between cells for no reason.
+                                    val (rx, ry) = Grid.pointAt(p.x, p.y, gridPx)
+                                    onDragRobotTo(rx, ry)
+                                }
+                            }
                         },
                         onDragEnd = {
-                            val id = draggingId ?: return@detectDragGestures
-                            if (outside) onDropOutside(id) else onCommit(id)
-                            draggingId = null
+                            when (val t = dragging) {
+                                null -> Unit
+                                is ArenaHit.Block ->
+                                    if (outside) onDropOutside(t.id) else onCommit(t.id)
+                                ArenaHit.Robot -> onCommitRobot()
+                            }
+                            dragging = null
                             outside = false
                         },
-                        onDragCancel = { draggingId = null; outside = false },
+                        onDragCancel = { dragging = null; outside = false },
                     )
                 }
         ) {
             val g = min(size.width, size.height)
             drawGrid(g)
-            drawStartZone(g)
+            drawStartZone(g, textMeasurer)
             drawAxisLabels(g, textMeasurer)
-            arena.obstacles.forEach { drawObstacle(it, g, it.id == selectedId, textMeasurer) }
-            arena.robot?.let { drawRobot(it, g) }
+            arena.obstacles.forEach {
+                drawObstacle(it, g, selection == Selection.Obstacle(it.id), textMeasurer)
+            }
+            drawRobot(arena.robot, g, selection == Selection.Robot)
             // Signalled arena-wide on purpose: a ~33px block is far too
             // small an affordance, so this flags the whole square the operator
             // is already looking at rather than the dragged block.
@@ -229,9 +325,9 @@ private fun DrawScope.drawGrid(gridPx: Float) {
     )
 }
 
-private fun DrawScope.drawStartZone(gridPx: Float) {
+private fun DrawScope.drawStartZone(gridPx: Float, textMeasurer: TextMeasurer) {
     val cell = gridPx / Config.CELLS
-    val side = cell * Config.START_ZONE_CELLS
+    val side = cell * Config.TASK1_START_ZONE_CELLS
     val top = gridPx - side
     drawRect(
         MdpTokens.Yellow.copy(alpha = START_ZONE_ALPHA),
@@ -252,6 +348,21 @@ private fun DrawScope.drawStartZone(gridPx: Float) {
         MdpTokens.Ink, Offset(side, top), Offset(side, gridPx),
         strokeWidth = stroke, pathEffect = dash,
     )
+
+    // Labelled because this square is TASK 1's 40cm start zone specifically.
+    // Task 2 starts in a carpark with no arena position at all, so during a
+    // fastest-car run an unlabelled shaded corner would read as "the start is
+    // here" - a claim nothing in the briefing supports.
+    val label = textMeasurer.measure(
+        "Task 1",
+        TextStyle(
+            color = MdpTokens.Muted,
+            fontSize = (cell * START_ZONE_LABEL_SIZE_RATIO).toDp().toSp(),
+            fontWeight = FontWeight.Normal,
+        ),
+    )
+    val inset = cell * AXIS_LABEL_INSET_RATIO
+    drawText(label, topLeft = Offset(inset, top + inset))
 }
 
 /**
@@ -373,9 +484,9 @@ private fun DrawScope.drawTargetLabel(
 /**
  * C.5: the obstacle's OWN id (1..MAX_OBSTACLES), always drawn - distinct
  * from [drawTargetLabel]'s recognised image id (11..40), which only exists
- * once a TARGET arrives. Small and cornered rather than centred: per
- * once a target is found the target id takes the middle and this moves aside,
- * rather than the two competing for the same centred space.
+ * once a TARGET arrives. Small and cornered rather than centred: once a target
+ * is found the target id takes the middle and this moves aside, rather than
+ * the two competing for the same centred space.
  *
  * Always top-right; a fixed position beats one that moves with state. Only two
  * face bars can reach that corner - N and E - and either paints Yellow under
@@ -407,50 +518,73 @@ private fun DrawScope.drawObstacleIdLabel(
     drawText(layout, topLeft = Offset(left + cell - layout.size.width - inset, top + inset))
 }
 
-private fun DrawScope.drawRobot(pose: RobotPose, gridPx: Float) {
+private fun DrawScope.drawRobot(
+    pose: RobotPose,
+    gridPx: Float,
+    selected: Boolean,
+) {
     val c = gridPx / Config.CELLS
-    val left = pose.cell.x * c
-    // Anchored at its bottom-left cell; the footprint extends up-and-right.
-    val top = (Grid.toCanvasRow(pose.cell.y) - (Config.ROBOT_SIZE_CELLS - 1)) * c
+    val (left, top) = robotTopLeft(pose, gridPx)
     val side = c * Config.ROBOT_SIZE_CELLS
-    // Hard offset shadow, then fill, then outline - the same three-part
-    // treatment every surface off-canvas gets from Modifier.hardSurface,
-    // hand-drawn here because this is inside a Canvas.
-    val lift = MdpTokens.HardShadowSmall.toPx()
-    drawRect(MdpTokens.Ink, Offset(left + lift, top + lift), Size(side, side))
-    drawRect(MdpTokens.Yellow, Offset(left, top), Size(side, side))
     val edge = MdpTokens.BorderHeavy.toPx()
-    drawRect(
-        MdpTokens.Ink,
-        Offset(left + edge / 2, top + edge / 2),
-        Size(side - edge, side - edge),
-        style = Stroke(edge),
-    )
-    // The arrow spans the whole 3x3 footprint rather than sitting inside it,
-    // so the heading reads across a room on a projector. Do not shrink it.
-    drawHeadingArrow(pose.heading, left, top, side)
+    val pivot = Offset(left + side / 2f, top + side / 2f)
+    val deg = pose.headingDegrees
+
+    // No drop shadow, unlike every card off-canvas and unlike the blocks: a
+    // rotating shadow reads as the robot lifting off the arena rather than
+    // driving on it, and the heavy Ink outline already separates it from the
+    // grid underneath.
+    //
+    // Body, arrow and selection ring turn as one, so they cannot drift apart.
+    rotate(deg, pivot = pivot) {
+        drawRect(MdpTokens.Yellow, Offset(left, top), Size(side, side))
+        drawRect(
+            MdpTokens.Ink,
+            Offset(left + edge / 2, top + edge / 2),
+            Size(side - edge, side - edge),
+            style = Stroke(edge),
+        )
+        drawHeadingArrow(left, top, side)
+
+        // Pink, where a selected block gets Yellow: the robot's own fill IS
+        // Yellow, so that ring would be invisible on it. Pink also matches the
+        // compass card the selection opens.
+        if (selected) {
+            val sel = MdpTokens.SelectionStroke.toPx()
+            drawRect(
+                MdpTokens.Pink,
+                Offset(left - sel, top - sel),
+                Size(side + 2 * sel, side + 2 * sel),
+                style = Stroke(sel),
+            )
+        }
+    }
 }
 
 /**
- * The heading must be visible, not just the position. A filled arrowhead
- * spanning the footprint reads unambiguously where a small icon would not.
+ * The heading arrow, drawn pointing NORTH. Its caller rotates it along with
+ * the body, so this never needs to know the angle.
  *
- * Canvas pixels only flip on y, and that flip already happened wherever [top]
- * came from - so N/S/E/W line up with up/down/left/right here exactly as they
- * do in [drawFaceBar].
+ * One triangle rather than four hardcoded paths: a car mid-arc is at an
+ * arbitrary angle, and four cases could only round it. It spans the whole
+ * footprint rather than sitting inside it, so the heading reads across a room
+ * on a projector - do not shrink it.
+ *
+ * The rotation at the call site needs no y-flip correction, which is worth
+ * stating because it looks like an omission: arena headings run clockwise from
+ * north, and Compose rotates clockwise on a y-down canvas, so the two senses
+ * already agree.
+ *
+ * NOT covered by a unit test - it is a claim about Compose's rotation sense
+ * inside a DrawScope, and there is no Compose test harness in this module. It
+ * fails invisibly, being correct at 0/90/180/270 and mirrored everywhere
+ * between, so the on-device script checks 45 degrees specifically.
  */
-private fun DrawScope.drawHeadingArrow(heading: Face, left: Float, top: Float, side: Float) {
-    val right = left + side
-    val bottom = top + side
-    val midX = left + side / 2f
-    val midY = top + side / 2f
+private fun DrawScope.drawHeadingArrow(left: Float, top: Float, side: Float) {
     val path = Path().apply {
-        when (heading) {
-            Face.N -> { moveTo(midX, top); lineTo(right, bottom); lineTo(left, bottom) }
-            Face.S -> { moveTo(midX, bottom); lineTo(right, top); lineTo(left, top) }
-            Face.W -> { moveTo(left, midY); lineTo(right, bottom); lineTo(right, top) }
-            Face.E -> { moveTo(right, midY); lineTo(left, top); lineTo(left, bottom) }
-        }
+        moveTo(left + side / 2f, top)
+        lineTo(left + side, top + side)
+        lineTo(left, top + side)
         close()
     }
     drawPath(path, MdpTokens.Ink)

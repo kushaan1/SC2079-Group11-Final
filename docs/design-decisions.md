@@ -18,19 +18,20 @@ That has consequences the RPi owner needs to know about.
 
 ### The outbound line terminator
 
-`Config.OUTBOUND_TERMINATOR` is currently `""`. **The RPi needs `"\n"`.**
+`Config.OUTBOUND_TERMINATOR` is `"\n"`. RFCOMM is a byte stream with no message
+boundaries of its own, so without a delimiter consecutive sends concatenate on
+the wire - `ADD,B1,(5,5)` followed by `f` arrives as `ADD,B1,(5,5)f`, which a
+newline-framing parser reads as one malformed line rather than two good ones.
 
-RFCOMM is a byte stream with no message boundaries, so a delimiter is required
-for any peer that frames on newlines. AMD is not such a peer: on hardware it
-compares each received chunk against its configured command strings verbatim,
-so a trailing newline makes every token mismatch. AMD's own unmodified
-`sendArena` token appeared in its RECEIVED TEXT panel and never matched in its
-COMMAND LOG until the terminator was dropped.
+It was `""` for most of development, because the **AMD debug tool** compares each
+received chunk against its configured command strings verbatim: a trailing
+newline makes every token mismatch. AMD's own unmodified `sendArena` token
+appeared in its RECEIVED TEXT panel and never matched in its COMMAND LOG until
+the terminator was dropped.
 
-With `""`, back-to-back sends concatenate on the wire. Harmless for AMD's
-whole-chunk matching; wrong for anything else. **This is one line to change
-before the first RPi session, and it is the highest-consequence open item in
-the module.**
+So the two peers want opposite values, and the RPi's is now the default.
+**Set it back to `""` before any session that drives AMD**, or AMD will display
+everything and act on nothing.
 
 ### Inbound framing and the idle flush
 
@@ -91,6 +92,94 @@ Obstacles go tablet → robot. Dragging AMD's virtual obstacle emits
 as unparsed lines and never touch the arena. AMD's virtual *robot* drag is
 different: it emits `ROBOT,<x>,<y>,<letter>`, which is understood.
 
+### The robot travels both ways, under two different names
+
+The robot is the one thing on the arena both sides can move, so it has a verb
+each: inbound `ROBOT` for what the robot reports, outbound `MOVEROBOT` for what
+the operator drags. Reusing one name would echo on any RPi that re-broadcasts
+what it receives, and a log line would no longer say which side moved it.
+
+An inbound `ROBOT` always wins — the robot knows where it is better than the
+tablet does. `MOVEROBOT` is for setting a start pose or correcting a drawing
+that has drifted, and it never starts motion.
+
+### The pose is continuous, and anchored at the centre
+
+The car is Ackermann — it cannot turn on the spot, so mid-arc it is genuinely
+at 47° somewhere between two cells. An integer cell index plus four cardinal
+letters cannot say that. `RobotPose` therefore carries **decimals and degrees**
+(0 = north, clockwise, normalised to `[0,360)`), and the arrow is one triangle
+rotated rather than four hardcoded paths.
+
+**It counts in the same units an obstacle does.** `ROBOT,5,5` names the cell an
+obstacle at `(5,5)` occupies; decimals interpolate between cell centres. An
+earlier version measured the robot as a point from the arena corner instead,
+which made `ROBOT,5,5` and `ADD,B1,(5,5)` half a cell apart — 5 cm, diagonal,
+and entirely plausible on screen. `Grid.centreOf(i,j)` and the continuous
+conversion at `(i,j)` are now the same point, and a test asserts it across all
+400 cells.
+
+The coordinate names the footprint's **centre**, not a corner. Three reasons,
+in order of weight:
+
+1. Continuous odometry naturally produces the robot's centre or axle midpoint.
+   Asking the RPi for a footprint corner is asking for a conversion it has no
+   reason to compute.
+2. A non-square body — and the real chassis is ~18.7 × 23 cm — must rotate with
+   the heading, and a corner anchor swings the whole body as it turns while a
+   centre anchor holds it still.
+3. It decouples the drawn footprint size from position. Under a corner anchor,
+   `Config.ROBOT_SIZE_CELLS`, AMD's *Robot size* setting and the AMD script's
+   own constant all had to agree or every position shifted. Now a mismatch only
+   changes how big the box looks.
+
+The legacy `ROBOT,7,2,N` form still parses, because AMD's virtual-robot drag
+emits it and that is the only way to demonstrate the arena without hardware.
+**Both forms mean the centre** — the anchor is a property of the message, not
+of the number format. Had they differed, the same robot in the same place would
+draw a cell and a half apart depending on which form arrived.
+
+### The start pose, and what the shaded square means
+
+Nothing specifies where in the start zone the robot begins or which way it
+faces. §4.1 of the briefing notes says only that it starts "in the 40×40 cm
+start zone", and Task 2's starting orientation is listed as an open item.
+
+So the app parks it on **cell (1, 1)** — its 3-cell body covering cells 0–2 on
+both axes, flush into the arena's bottom-left corner, which is also
+`moveRobot`'s clamp floor. Still a choice rather than a specified position, but
+a corner is at least a definite one.
+
+The shaded square is labelled `T1 START`. It is Task 1's
+40 cm zone specifically; Task 2 starts in a 60 cm carpark whose position in the
+arena is **never given** — its layout is defined relative to the goal
+obstacles, at a distance unknown until the run. There is no defensible place to
+draw it, so the app draws nothing and says which task the square belongs to.
+
+### Local moves clamp; reported poses do not
+
+`Arena.moveRobot` clamps the centre to cells 1–18, one cell in from the
+outermost, which keeps the *axis-aligned* footprint on the board. The body is
+drawn rotated to the heading, so at a diagonal its corners reach 1.5 × √2 and
+can overhang — left alone, because a real car nosed into a corner at an angle
+overhangs too, and clamping for the worst case would stop it short of walls it
+can actually reach. `Arena.applyPose` ignores an
+out-of-range coordinate outright rather than clamping it, and checks only the
+centre — a robot genuinely half off the board is drawn half off the board. The
+asymmetry is deliberate and worth keeping.
+
+A finger dragged past the edge means "as far as it goes", so stopping against
+the wall is the honest reading. A malformed `ROBOT,25,25` means something is
+wrong upstream, and clamping it to (17,17) would draw a plausible-looking
+position that hides the bug — where a robot that visibly refuses to move does
+not. Same reasoning as C.10's demo step: an unmoved robot is obviously wrong,
+which is the point.
+
+The robot is also **not** collision-checked against obstacles, in either
+direction, unlike `Arena.place`. Obstacle placement is a layout being authored,
+so the app validates it; the robot's position is a physical fact being stated,
+and the app has no standing to refuse it.
+
 ---
 
 ## 2. Coordinate conventions
@@ -107,10 +196,12 @@ Four systems are in play, and mixing them mirrors the grid:
 `Grid.kt` is the **only** place the arena↔canvas flip happens, and
 `toCanvasRow` is its own inverse. Everything else stays in arena space.
 
-The robot is drawn anchored at its **bottom-left cell** with the 3×3 footprint
-extending up and right. Whether `ROBOT,7,2` names that cell or the robot's
-centre is still unconfirmed with the RPi owner; if it is the centre, every
-drawn position is off by one cell diagonally.
+The robot is positioned by the cell its footprint is **centred** on, decimals
+allowed, and the 3 × 3 box is drawn around that centre. Note that 3 × 3 is the
+algorithms deck's 30 cm *planning* footprint, not the car — the real chassis is
+~18.7 × 23 cm, so the box on screen is about 60% wider than the thing it
+represents. Under centre anchoring that is purely cosmetic and can be corrected
+locally whenever someone measures the car.
 
 ---
 
@@ -239,6 +330,16 @@ glyph is drawn — and this runs on a lab tablet that may be in aeroplane mode
 during a timed assessment. Bricolage Grotesque is a variable font with `wght`
 pinned per weight; DM Mono ships only the two weights the design uses. Licences
 are in [`licenses/`](licenses/).
+
+### The two face bars are different colours
+
+`Obstacle.imageFace` (what the operator annotated, outbound) draws **yellow**;
+`Target.face` (what the robot reported alongside an image id, inbound) draws
+**green**. They are deliberately separate fields in the model, and drawing both
+in one colour made a block claim an agreement it might not have — when the two
+disagree, the operator now sees it at a glance rather than by opening the
+compass. If both name the same face, green lands on top: once the robot has
+reported, its own reading is the one that matters.
 
 ---
 

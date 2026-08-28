@@ -3,7 +3,9 @@ package com.mdp.grp11.ui
 import com.mdp.grp11.arena.Arena
 import com.mdp.grp11.arena.Cell
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HitTestTest {
@@ -47,9 +49,51 @@ class HitTestTest {
         assertNull(hitTest(Arena(), 300f, 300f, gridPx))
     }
 
+    // --- The robot, and how it ranks against a block
+    //
+    // At gridPx=660 the default pose centres the robot on cell (1,1), so its
+    // 3x3 footprint covers cells 0..2 on both axes - canvas x 0..99 and
+    // y 561..660, flush into the bottom-left corner, since arena y counts up
+    // and canvas y counts down.
+
+    @Test fun `a tap inside the robot footprint hits it`() {
+        val robot = Arena().robot
+        assertTrue(hitsRobot(robot, 50f, 600f, gridPx))
+        assertTrue("the top-left corner is inside", hitsRobot(robot, 0f, 561f, gridPx))
+        assertTrue("and so is the far edge, just", hitsRobot(robot, 98f, 659f, gridPx))
+    }
+
+    /** No generous radius here, unlike [hitTest] - 3x3 cells is already ~14mm. */
+    @Test fun `a tap outside the robot footprint misses it`() {
+        val robot = Arena().robot
+        assertFalse("one px above", hitsRobot(robot, 50f, 560f, gridPx))
+        assertFalse("one px right", hitsRobot(robot, 99f, 600f, gridPx))
+        assertFalse("well clear", hitsRobot(robot, 130f, 600f, gridPx))
+    }
+
+    /**
+     * The ranking that keeps a block reachable when the robot is parked over
+     * it. If this ever inverts, eight of the robot's nine cells still grab the
+     * robot - so the bug reads as "that one block cannot be selected any more"
+     * rather than as anything to do with the robot.
+     */
+    @Test fun `an obstacle under the robot outranks it`() {
+        // Centred on cell (11,11), the robot covers cells 10..12 on both
+        // axes, putting its corner over a block at (10,10).
+        val a = arenaWith(Cell(10, 10)).moveRobot(11f, 11f)
+        assertEquals(ArenaHit.Block(1), hitArena(a, 346.5f, 313.5f, gridPx))
+        // Two cells right: still the robot, but 66px clear of the block's
+        // centre and so outside its 27px radius.
+        assertEquals(ArenaHit.Robot, hitArena(a, 346.5f + 66f, 313.5f, gridPx))
+    }
+
+    @Test fun `a tap on bare ground hits nothing`() {
+        assertNull(hitArena(Arena(), 300f, 300f, gridPx))
+    }
+
     @Test fun `a tap just off the grid edge still grabs the adjacent block`() {
         // (0,0) is inside the start zone and place() refuses it, so use the
-        // nearest left-edge cell outside it: x=0, y=4 (START_ZONE_CELLS=4
+        // nearest left-edge cell outside it: x=0, y=4 (TASK1_START_ZONE_CELLS=4
         // only blocks cells where BOTH x<4 and y<4).
         val a = arenaWith(Cell(0, 4))
         // centre is (16.5, 511.5): x = 0*33+16.5, y = (19-4)*33+16.5. This

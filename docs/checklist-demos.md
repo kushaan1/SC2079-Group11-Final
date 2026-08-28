@@ -20,7 +20,7 @@ it, not just C.1–C.10, before Week 7.
 
 ## 0. Read this first
 
-### 0.1 Three protocol questions — get a yes/no from the RPi owner before this demo runs
+### 0.1 Four protocol questions — get a yes/no from the RPi owner before this demo runs
 
 These are unresolved as of this writing (`docs/superpowers/specs/2026-08-21-android-controller-design.md`
 §11). Getting any of them wrong is a silent, plausible-looking failure, not a crash — exactly the
@@ -28,13 +28,15 @@ kind of thing that looks fine to a supervisor watching from across the table.
 
 | # | Question | What we currently do | Risk if the answer is different | RPi owner's answer |
 |---|---|---|---|---|
-| 1 | Does `ROBOT,7,2` name the robot's **bottom-left cell** or its **centre**? The robot is 3×3 cells. | We draw it as bottom-left (`ArenaCanvas.drawRobot`: anchored at `cell`, footprint extends up-and-right). | Every drawn robot position is off by one cell, diagonally, for the rest of the demo. | Y / N — bottom-left ⬜ / centre ⬜ |
+| 1 | ~~Anchor: bottom-left cell or centre?~~ **SETTLED — centre.** | The pose names the footprint's **centre**, in decimal cells, heading in degrees clockwise from north. Both `ROBOT,5.55,6.55,20` and legacy `ROBOT,7,2,N` parse, and both mean the centre. | — the RPi team is matching our format | ✅ decided |
 | 2 | Should `FACE` carry the obstacle coordinate? The checklist text demands "target face **and** obstacle coordinate"; the briefing slide shows a format without it. | We send the superset: `FACE,B3,(14,15),E`. | If the RPi parser is written against the slide's shorter format, it may reject or mis-parse every `FACE` line we send. | Y / N — accepts the superset ⬜ |
 | 3 | Must the stitched verification image (Task 1) display **on the Android tablet**, or is the **PC display** sufficient? | This app was built assuming PC. There is no stitched-image screen in the Android module. | If the answer is "must be on Android," that is new scope, not a bug in what exists today — it will not appear in any of the sections below. | Y (PC is fine) / N (needs Android) ⬜ |
+| 4 | **Does the RPi parser actually speak our command vocabulary at all?** | `f`/`r`/`tl`/`tr`/`sl`/`sr`, `beginExplore`, `beginFastest`, `sendArena` were all taken from the **AMD debug tool's** fixed slot names, not from the RPi. Nobody has confirmed the RPi side recognises any of them. | Every outbound command is ignored. The tablet looks fine and the robot does nothing — the single worst failure on this list. | Y / N — confirmed ⬜ |
 
 None of these block running the demo below — they change what "correct" looks like for C.10 (#1),
-for whether the RPi actually acts on our `FACE` messages (#2), and for whether Task 1's stitched
-image belongs in this app at all (#3). Get answers before the supervisor sees this, not during.
+for whether the RPi actually acts on our `FACE` messages (#2), for whether Task 1's stitched
+image belongs in this app at all (#3), and — #4 — for whether *any* command we send is understood.
+Get answers before the supervisor sees this, not during.
 
 ### 0.2 Known limitations — do not walk into these live
 
@@ -57,6 +59,13 @@ image belongs in this app at all (#3). Get answers before the supervisor sees th
   scenario 1 below for why that specifically matters.
 
 ### 0.3 One-time AMD tool setup (do this before any item below)
+
+> **Rebuild with `OUTBOUND_TERMINATOR = ""` first.** `Config.kt` now ships the RPi's
+> value, `"\n"`, and AMD matches each received chunk verbatim - so with a newline
+> attached every command below appears in AMD's RECEIVED TEXT panel and fires
+> **nothing** in its COMMAND LOG. The robot will not move, and it will look
+> like a broken app rather than a one-character setting. Set it back to `"\n"`
+> before any RPi session.
 
 1. **Settings → Default Arena Settings** → Arena width **20**, Arena height **20**, Robot size **3**.
    AMD ships pointed at a 15×20 legacy arena; every coordinate checked against the default is checked
@@ -238,6 +247,12 @@ status view.
 **Failure signature:** STATUS panel showing `MSG,[Ready]` verbatim, or changing on a `TARGET`/`ROBOT`
 line, is exactly the failure this item checks for.
 
+**Also verify — the pose line.** The STATUS card's bottom line reads `Robot (x, y) · <deg>°`, always
+present, and updates on every inbound `ROBOT`. A whole-cell position shows as `(7, 2)`, not
+`(7.0, 2.0)`; a cardinal heading appends its letter (`0° N`), a heading between two shows degrees
+only. This is the only place the operator reads the position as numbers rather than as a block, so
+it is what they would quote to the robot side when something looks wrong.
+
 **Contributor:** ______________________
 
 ---
@@ -257,14 +272,24 @@ panel, which is hidden behind the compass while a block is selected.
    outside the 11–40 pool, not a bug).
 3. Send `ROBOT,5,5,N` (or drag AMD's virtual robot to a known cell so its script emits the
    equivalent `ROBOT,<x>,<y>,N`).
-4. Confirm the yellow 3×3 robot block appears anchored with its bottom-left corner at (5,5), **and**
-   a filled dark triangle inside it points toward the top of the grid.
+4. Confirm the robot block **relocates** to sit **centred** on (5,5) — its 3×3 footprint covering
+   3.5–6.5 on both axes — **and** that a filled dark triangle inside it points toward the top of the
+   grid. It starts the session on cell (1,1), flush in the start-zone corner, so this is a move.
 5. **Check the heading against something you know is true, not by eye.** If a real robot is on hand
    and physically facing away from the start zone (i.e. north in arena terms), confirm the triangle
    on screen also points away from the start-zone corner. If no robot is on hand, send each of
    `ROBOT,5,5,E`, `ROBOT,5,5,S`, `ROBOT,5,5,W` in turn and confirm the triangle rotates to point
    right, down, and left respectively, in that order, using the axis labels (now on both edges) to
    confirm "up" on screen is the higher-numbered row.
+6. **Then send `ROBOT,5,5,45` and confirm the block sits as a DIAMOND with its triangle pointing
+   up-and-RIGHT, not up-and-left.** The whole body rotates, not just the arrow. This is the one step
+   that catches a mirrored rotation: degrees run clockwise from north, so 45° is north-east. The four
+   cardinal checks above all pass either way, so they cannot catch it. There is no unit test for this
+   — it is a claim about Compose's rotation sense inside a `Canvas`, and this module has no Compose
+   test harness. Check the drop shadow too: it must stay down-and-right, like every other card on
+   screen, rather than swinging round with the body.
+7. Send `ROBOT,5.55,6.55,20` and confirm the robot sits visibly **between** cells rather than
+   snapping to one, with the triangle tilted slightly clockwise of north.
 
 **Expected:** the target id is visible on the block, and the robot's position **and** heading are
 both visible — a filled triangle spanning most of the 3×3 footprint, pointing in the reported
@@ -341,7 +366,7 @@ proof in a single unbroken shot.
 - Step 4/5: the bar disappears; raw log shows `TX FACE,B1,(x,y),NONE`. Tapping an already-active face
   again is the deliberate way back for an operator who mis-tapped on a 4.7 mm block — it is not a
   toggle bug.
-- The block's face bar (what we annotated) is a different fact from any face a `TARGET,...,<face>`
+- The block's face bar (what we annotated, drawn **yellow**) is a different fact from any face a `TARGET,...,<face>`
   message later reports (what the robot found) — both can be shown on the same block at once and are
   not the same field.
 
@@ -391,7 +416,7 @@ one more now gets you `B2` directly.
 2. Confirm `B2`'s block now shows `11`, and (with nothing selected) the STATUS panel's target line
    reads `Target 11 · digit 1 · at B2`.
 3. Send `TARGET,B2,11,N`.
-4. Confirm `B2` additionally shows a face bar on its north edge — this is the *robot's* reported
+4. Confirm `B2` additionally shows a **green** face bar on its north edge — green because this is the *robot's* reported
    face, kept separate from anything set via the C.7 compass.
 5. Send `TARGET,B9,20` (an obstacle id that does not exist — only `B1`/`B2` are placed).
 6. Confirm nothing changes on the canvas and no phantom block appears; the raw log shows the line
@@ -410,22 +435,26 @@ is logged and ignored, never auto-created.
 
 **Steps:**
 1. Send `ROBOT,7,2,E`.
-2. Confirm the yellow 3×3 block appears anchored with its bottom-left corner at (7,2).
+2. Confirm the 3×3 block moves to sit **centred** on (7,2). It is already on screen before step 1,
+   at the start pose (1,1) in the bottom-left corner — this item is about it relocating.
 3. Send `ROBOT,10,10,N` and confirm the block relocates.
-4. Send an out-of-range pose, e.g. `ROBOT,25,25,N` (outside 0..19).
+4. Send an out-of-range pose, e.g. `ROBOT,25,25,N` (the centre must be a cell within 0..19).
 5. Confirm the robot does **not** move or disappear — the previous, in-range position is retained.
+6. Send `ROBOT,19,19,0` and confirm the robot IS drawn, hanging partly off the top-right corner.
+   The centre is a valid cell even though the footprint is not fully on the board: what the robot reports is shown as
+   reported, and only [moveRobot] (the operator's own drag) clamps.
 
 **Expected:** every valid pose relocates the robot; an out-of-range pose is logged in the raw log but
 otherwise ignored (never clamped to the nearest valid cell — a clamped position looks plausible and
 would be wrong; an unmoved robot is obviously wrong, which is the point).
 
-**Reminder — open question #1 (§0.1):** if the RPi owner confirms `ROBOT,x,y` names the robot's
-*centre* rather than its bottom-left cell, every position drawn in this item is one cell off,
-diagonally. Re-run this section once that answer lands.
+**Note:** `ROBOT,x,y` names the robot's **centre** — settled, and the RPi team is matching it. If a
+position looks one and a half cells off, that convention is the first thing to check.
 
 **Failure signature (from the AMD integration script, if driving the virtual robot instead of typing
-`ROBOT,...` by hand):** dragging AMD's virtual robot to AMD's top-left corner should draw the robot in
-the arena's top-left corner too (arena "up" is the higher-y direction in both views, even though the
+`ROBOT,...` by hand):** AMD's robot snaps to its own grid, so with a 3-cell robot its drags produce
+whole cell indices with an arbitrary angle, like `ROBOT,6,7,143` — never a cardinal letter. Dragging AMD's
+virtual robot to AMD's top-left corner should draw the robot in the arena's top-left corner too (arena "up" is the higher-y direction in both views, even though the
 underlying y numbers differ after the script's coordinate re-indexing). If the two displays instead
 agree on left/right but disagree on top/bottom — an AMD-top drag lands the app's robot at the
 bottom — the y-flip is inverted somewhere. That is a vertical-mirror bug, not a rounding error, and it
@@ -515,6 +544,62 @@ service visibility survive every cycle.
 
 ---
 
+## Robot placement — on-device scenario
+
+Supports **C.5/C.10** as evidence. Not a checklist item in its own right: the checklist only asks
+that an inbound `ROBOT` message move the robot, which C.10 covers. This is the reverse direction,
+added so an operator can set a start pose or correct a drifted drawing, and it is the only part of
+the arena that both sides can move.
+
+**Setup:** connected, arena reset.
+
+**Steps:**
+1. Before touching anything, confirm the robot sits centred on cell (1,1) — covering cells 0–2 on
+   both axes, flush into the arena's bottom-left corner — and that the shaded square it sits in is
+   labelled `T1 START`. Nothing in the briefing states where in that zone the robot begins; the corner is the
+   app's choice.
+2. Drag the robot to roughly the middle of the board. Watch the raw log **during** the drag — nothing
+   may appear until you lift your finger.
+3. On finger-lift, confirm exactly one `TX MOVEROBOT,<x>,<y>,0.0` line appeared, with decimal
+   coordinates naming the **centre** of the footprint. Check the centre against the axis rulers, not
+   the corner.
+4. Lift and re-drag the robot back to the exact position it started this drag from. Confirm **no**
+   new `MOVEROBOT` line — an unchanged position is not re-announced.
+5. Tap the robot. Confirm the compass card opens reading `HEADING · ROBOT` (not `IMAGE FACE`), with
+   the current heading key lit.
+6. Tap `E`. Confirm the whole block rotates a quarter turn (the triangle now points right) and one
+   `TX MOVEROBOT,<x>,<y>,90.0` goes out.
+   Tap `E` again — nothing new in the log, and the heading stays `E`. A robot always faces
+   somewhere, so there is nothing to clear.
+7. Send `ROBOT,10,10,47` from AMD, then tap the robot again. Confirm **no compass key is lit**: the
+   robot is between headings, and lighting the nearest would claim a direction it is not at.
+8. Drag the robot hard against the top-right corner and past it. Confirm it stops with the whole 3×3
+   on the board and the log reads `MOVEROBOT,18.0,18.0,...` — **not** 19,19, and not a footprint
+   hanging off the edge. Then drag it hard into the bottom-left: it should stop at `1.0,1.0`, exactly
+   where it started the session.
+9. Place an obstacle, then drag the robot on top of it. Confirm the robot is allowed to sit there,
+   and that tapping that obstacle's cell still selects the **block** (compass reads `IMAGE FACE`),
+   not the robot.
+10. Now send `ROBOT,3.25,3.75,143` from AMD. Confirm the robot jumps there, sits between cells, and
+    points down-and-right — the robot's own report overrides whatever was dragged.
+
+**Expected:** one `MOVEROBOT` per completed drag or heading pick, never mid-drag and never for a
+no-op; the footprint never leaves the board; a block under the robot stays selectable; and an
+inbound `ROBOT` always wins.
+
+**Failure signature:** a `TX MOVEROBOT` line for every position crossed mid-drag is the same flooding
+bug C.6 guards against, in the other gesture. A robot drawn half off the grid edge after a *drag*
+means the centre clamp is not accounting for the footprint — note that a rotated body at a diagonal
+heading DOES overhang slightly at the clamp limit, and that is expected.
+
+**Also verify — the pose survives save and load.** Drag the robot somewhere obvious, `SAVE` the
+layout, drag it elsewhere, then `LOAD` it back. The robot must return to the saved position and
+heading, and one `MOVEROBOT` must go out on the load so the robot side hears about it too.
+
+**Contributor:** ______________________
+
+---
+
 ## Arena persistence — on-device save/load scenario
 
 Supports **C.6/C.7** as evidence, and is the **only verification `PreferencesArenaStore` will ever
@@ -555,8 +640,8 @@ have), so every line below is unverified until someone runs it on the actual And
 landscape.
 
 1. **Launch.** App opens in landscape without crashing. The arena renders square, with axis labels
-   0..19 along the bottom and left edges (0 at the start-zone corner, 19 at the far edge), and the
-   start zone is shaded.
+   0..19 along the bottom and left edges (0 at the start-zone corner, 19 at the far edge), the
+   start zone is shaded, and the robot is parked inside it at (0,0) facing north.
 2. **Bluetooth permission.** On first launch the runtime permission prompt appears
    (`BLUETOOTH_CONNECT`/`BLUETOOTH_SCAN` on Android 12+). Deny it once, deliberately: the device
    picker must show an actionable explanation, not an empty list (see C.2's "also verify").

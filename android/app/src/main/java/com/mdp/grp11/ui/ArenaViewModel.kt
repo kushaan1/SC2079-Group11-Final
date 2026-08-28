@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import com.mdp.grp11.arena.Arena
 import com.mdp.grp11.arena.ArenaStore
 import com.mdp.grp11.arena.Cell
+import com.mdp.grp11.arena.RobotPose
 import com.mdp.grp11.config.Config
 import com.mdp.grp11.connection.ConnectionRepository
 import com.mdp.grp11.connection.TrafficLine
@@ -22,6 +23,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+/**
+ * What the compass slot is currently editing. One field rather than an
+ * obstacle id beside a robot flag: the two are mutually exclusive, and a pair
+ * of fields that must agree eventually will not.
+ */
+sealed interface Selection {
+    data class Obstacle(val id: Int) : Selection
+    data object Robot : Selection
+}
 
 /**
  * Where operator gestures become transmitted messages, and inbound robot
@@ -47,8 +58,8 @@ class ArenaViewModel(
     private val _arena = MutableStateFlow(Arena())
     val arena: StateFlow<Arena> = _arena.asStateFlow()
 
-    private val _selectedId = MutableStateFlow<Int?>(null)
-    val selectedId: StateFlow<Int?> = _selectedId.asStateFlow()
+    private val _selection = MutableStateFlow<Selection?>(null)
+    val selection: StateFlow<Selection?> = _selection.asStateFlow()
 
     private val _statusText = MutableStateFlow<String?>(null)
     val statusText: StateFlow<String?> = _statusText.asStateFlow()
@@ -130,7 +141,8 @@ class ArenaViewModel(
                 _targetLine.value =
                     "Target ${msg.targetId} · ${imageLabel(msg.targetId)} · at B${msg.obstacle}"
             }
-            is Inbound.Pose -> _arena.value = _arena.value.applyPose(msg.x, msg.y, msg.heading)
+            is Inbound.Pose -> _arena.value =
+                _arena.value.applyPose(msg.x, msg.y, msg.headingDegrees)
             is Inbound.Unknown -> Unit   // already in the raw log
         }
     }
@@ -143,14 +155,14 @@ class ArenaViewModel(
         val (next, placed) = _arena.value.place(cell)
         _arena.value = next
         if (placed != null) {
-            _selectedId.value = placed.id
+            _selection.value = Selection.Obstacle(placed.id)
             dragOrigin[placed.id] = placed.cell
             scope.launch { repo.send(Outbound.AddObstacle(placed.id, placed.cell.x, placed.cell.y)) }
         }
     }
 
     fun select(id: Int) {
-        _selectedId.value = id
+        _selection.value = Selection.Obstacle(id)
     }
 
     fun dragTo(id: Int, cell: Cell) {
@@ -176,21 +188,67 @@ class ArenaViewModel(
 
     fun dropOutside(id: Int) {
         _arena.value = _arena.value.remove(id)
-        if (_selectedId.value == id) _selectedId.value = null
+        if (_selection.value == Selection.Obstacle(id)) _selection.value = null
         dragOrigin.remove(id)
         scope.launch { repo.send(Outbound.RemoveObstacle(id)) }
     }
 
     /** Tapping the active face again clears it, which is how a mis-tap is undone. */
     fun pickFace(face: Face) {
-        val id = _selectedId.value ?: return
+        val id = (_selection.value as? Selection.Obstacle)?.id ?: return
         val o = _arena.value.obstacle(id) ?: return
         val next = if (o.imageFace == face) null else face
         _arena.value = _arena.value.setFace(id, next)
         scope.launch { repo.send(Outbound.SetFace(id, o.cell.x, o.cell.y, next)) }
     }
 
-    fun clearSelection() { _selectedId.value = null }
+    fun clearSelection() { _selection.value = null }
+
+    /**
+     * Pose the robot held when the current drag began. Same contract as
+     * [dragOrigin]: seeded by the drag itself, consumed by [commitRobot], and
+     * deliberately not written by [selectRobot], so a cancelled drag cannot
+     * get a position the robot was never told about adopted as one it knows.
+     */
+    private var robotDragOrigin: RobotPose? = null
+
+    fun selectRobot() {
+        _selection.value = Selection.Robot
+    }
+
+    fun dragRobotTo(x: Float, y: Float) {
+        if (robotDragOrigin == null) robotDragOrigin = _arena.value.robot
+        _arena.value = _arena.value.moveRobot(x, y)
+    }
+
+    /**
+     * MOVEROBOT for the drag path. Finger-lift only, and only when the cell
+     * actually changed - the same rule [commit] follows, for the same reason.
+     */
+    fun commitRobot() {
+        val origin = robotDragOrigin ?: return
+        robotDragOrigin = null
+        val pose = _arena.value.robot
+        if (origin.x == pose.x && origin.y == pose.y) return
+        sendPose(pose)
+    }
+
+    /**
+     * The compass, bound to the robot instead of a block. Unlike [pickFace]
+     * there is no tap-again-to-clear: an obstacle may carry no annotated face,
+     * but a robot always points somewhere.
+     */
+    fun turnRobot(heading: Face) {
+        val before = _arena.value
+        val next = before.turnRobot(heading.degrees)
+        if (next == before) return
+        _arena.value = next
+        sendPose(next.robot)
+    }
+
+    private fun sendPose(pose: RobotPose) {
+        scope.launch { repo.send(Outbound.MoveRobot(pose.x, pose.y, pose.headingDegrees)) }
+    }
 
     fun move(token: String) {
         scope.launch { repo.send(Outbound.Move(token)) }
@@ -331,14 +389,19 @@ class ArenaViewModel(
 
             val stale = _arena.value.obstacles
             _arena.value = loaded
-            _selectedId.value = null
+            _selection.value = null
             dragOrigin.clear()
+            robotDragOrigin = null
 
             stale.forEach { o -> repo.send(Outbound.RemoveObstacle(o.id)) }
             loaded.obstacles.forEach { o ->
                 repo.send(Outbound.AddObstacle(o.id, o.cell.x, o.cell.y))
                 o.imageFace?.let { face -> repo.send(Outbound.SetFace(o.id, o.cell.x, o.cell.y, face)) }
             }
+            // A layout carries a robot pose as well as obstacles, and a load
+            // has no gestures following it for the robot to learn one from.
+            val pose = loaded.robot
+            repo.send(Outbound.MoveRobot(pose.x, pose.y, pose.headingDegrees))
         }
     }
 
@@ -353,10 +416,18 @@ class ArenaViewModel(
      */
     fun resetArena() {
         val stale = _arena.value.obstacles
-        _arena.value = Arena()
-        _selectedId.value = null
+        val fresh = Arena()
+        _arena.value = fresh
+        _selection.value = null
         dragOrigin.clear()
-        scope.launch { stale.forEach { o -> repo.send(Outbound.RemoveObstacle(o.id)) } }
+        robotDragOrigin = null
+        scope.launch {
+            stale.forEach { o -> repo.send(Outbound.RemoveObstacle(o.id)) }
+            // The robot goes home too, for the same reason the obstacles are
+            // retracted: the screen has moved and nothing else would say so.
+            val pose = fresh.robot
+            repo.send(Outbound.MoveRobot(pose.x, pose.y, pose.headingDegrees))
+        }
     }
 
     /**

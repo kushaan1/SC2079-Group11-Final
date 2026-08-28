@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.mdp.grp11.config.Config
 import com.mdp.grp11.connection.ConnectionState
+import com.mdp.grp11.protocol.Face
 import com.mdp.grp11.session.RunKind
 import com.mdp.grp11.session.RunTimes
 import com.mdp.grp11.ui.theme.DmMono
@@ -97,7 +98,7 @@ fun MainScreen(
     modifier: Modifier = Modifier,
 ) {
     val arena by vm.arena.collectAsState()
-    val selected by vm.selectedId.collectAsState()
+    val selection by vm.selection.collectAsState()
     val status by vm.statusText.collectAsState()
     val targetLine by vm.targetLine.collectAsState()
     val traffic by vm.traffic.collectAsState()
@@ -173,12 +174,15 @@ fun MainScreen(
                 // would silently place a block against the edge.
                 ArenaCanvas(
                     arena = arena,
-                    selectedId = selected,
+                    selection = selection,
                     onPlace = vm::place,
                     onSelect = vm::select,
                     onDragTo = vm::dragTo,
                     onDropOutside = vm::dropOutside,
                     onCommit = vm::commit,
+                    onSelectRobot = vm::selectRobot,
+                    onDragRobotTo = vm::dragRobotTo,
+                    onCommitRobot = vm::commitRobot,
                     modifier = Modifier.size(side),
                 )
             }
@@ -210,19 +214,34 @@ fun MainScreen(
                     // The compass replaces the status card rather than stacking
                     // with it - a permanent slot would cost the log a third of
                     // its height for something visible seconds at a time.
-                    val sel = selected?.let { arena.obstacle(it) }
-                    if (sel != null) {
-                        FaceCompass(
-                            label = "B${sel.id}",
-                            current = sel.imageFace,
+                    val sel = selection
+                    // A selected block that no longer exists - dragged off the
+                    // grid while selected - falls through to the status panel
+                    // rather than showing a compass bound to nothing.
+                    val block = (sel as? Selection.Obstacle)?.let { arena.obstacle(it.id) }
+                    when {
+                        block != null -> FaceCompass(
+                            label = "B${block.id}",
+                            current = block.imageFace,
                             onPick = vm::pickFace,
                             onDone = vm::clearSelection,
                             modifier = Modifier.fillMaxWidth().weight(STATUS_SLOT_WEIGHT),
                         )
-                    } else {
-                        StatusPanel(
+                        sel is Selection.Robot -> FaceCompass(
+                            title = "HEADING",
+                            label = "ROBOT",
+                            // Exact match only - a robot mid-arc lights no
+                            // key, which is the honest reading. Rounding 47
+                            // degrees to N would claim a heading it is not at.
+                            current = Face.atDegrees(arena.robot.headingDegrees),
+                            onPick = vm::turnRobot,
+                            onDone = vm::clearSelection,
+                            modifier = Modifier.fillMaxWidth().weight(STATUS_SLOT_WEIGHT),
+                        )
+                        else -> StatusPanel(
                             status,
                             targetLine,
+                            arena.robot,
                             Modifier.fillMaxWidth().weight(STATUS_SLOT_WEIGHT),
                         )
                     }

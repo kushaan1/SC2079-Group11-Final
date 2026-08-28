@@ -1,6 +1,7 @@
 package com.mdp.grp11.config
 
 import android.Manifest
+import com.mdp.grp11.protocol.Face
 import java.util.UUID
 
 /**
@@ -12,10 +13,51 @@ import java.util.UUID
 object Config {
     const val CELLS = 20
     const val MAX_OBSTACLES = 8
-    const val START_ZONE_CELLS = 4
 
-    /** Robot footprint, in cells, for drawing its position on the arena. */
+    /**
+     * Task 1's start zone: 40cm square at the arena's bottom-left corner
+     * (AGENTS.md 3.1), so 4 cells on a 10cm grid.
+     *
+     * Task 1 ONLY. Task 2 starts in a 60cm carpark whose position in the arena
+     * is never given - its layout is defined relative to the goal obstacles,
+     * at a distance unknown until the run (AGENTS.md 5.1, 5.4). There is no
+     * defensible place to draw it, so the app does not.
+     */
+    const val TASK1_START_ZONE_CELLS = 4
+
+    /**
+     * NOT the robot's size. This is the algorithms deck's 30cm x 30cm
+     * PLANNING footprint - an inflated safety margin. The real chassis is
+     * ~18.7cm x 23cm (AGENTS.md 3.1), nearer 2x2 cells, and not square.
+     *
+     * Held at the planning figure for now. Since the robot's coordinate names
+     * its CENTRE, this value only controls how big the box is drawn - it no
+     * longer has to agree with AMD's own robot size, because a mismatch can no
+     * longer shift where the robot sits. Changing it to the real chassis is
+     * therefore a local change, whenever someone measures the car.
+     *
+     * Consequence worth knowing until then: the box on screen is ~60% wider
+     * than the car it represents, which is visible in any photo of the tablet
+     * beside the robot.
+     */
     const val ROBOT_SIZE_CELLS = 3
+
+    /**
+     * Where a fresh arena parks the robot: the CELL its footprint is centred
+     * on, in the same units an obstacle's coordinate uses.
+     *
+     * Cell (1,1) puts a 3-cell robot flush into the arena's bottom-left corner,
+     * covering cells 0..2 on both axes. It is also [Arena.moveRobot]'s clamp
+     * floor, so a drag hard into that corner lands back here exactly.
+     *
+     * A choice, not a specified position. The briefing says only that the robot
+     * starts "in the 40x40cm start zone" (AGENTS.md 4.1) - never where in it or
+     * facing which way - and Task 2's starting orientation is still open
+     * (AGENTS.md 10).
+     */
+    const val ROBOT_START_X = 1f
+    const val ROBOT_START_Y = 1f
+    val ROBOT_START_HEADING: Float = Face.N.degrees
 
     /** Bluetooth Serial Port Profile. */
     val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -27,13 +69,18 @@ object Config {
     const val BOND_TIMEOUT_MS: Long = 30_000L
 
     /**
-     * Appended to every outbound line. **The RPi needs `"\n"`; the AMD debug
-     * tool needs `""`.** AMD compares each received chunk verbatim, so a
-     * trailing newline makes every token mismatch.
+     * Appended to every outbound line. `"\n"` is the RPi's framing and the
+     * project default: RFCOMM is a byte stream with no message boundaries, so
+     * without a delimiter consecutive sends concatenate on the wire.
      *
-     * Outbound only - inbound framing always splits on `"\n"`. Currently set
-     * for AMD; this is the one line to change before talking to the RPi.
+     * Set this to `""` to drive the **AMD debug tool** instead. AMD compares
+     * each received chunk against its configured command strings verbatim, so
+     * a trailing newline makes every token mismatch - the text still appears
+     * in its RECEIVED TEXT panel, but nothing fires in its COMMAND LOG.
+     *
+     * Outbound only. Inbound framing always splits on `"\n"` whatever this says.
      */
+    //const val OUTBOUND_TERMINATOR: String = "\n"
     const val OUTBOUND_TERMINATOR: String = ""
 
     /**

@@ -1,6 +1,7 @@
 package com.mdp.grp11.protocol
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EncoderTest {
@@ -23,5 +24,24 @@ class EncoderTest {
 
     @Test fun `move sends the bare configured token`() {
         assertEquals("f", encode(Outbound.Move("f")))
+    }
+
+    /**
+     * Bare coordinates, deliberately NOT parenthesised like ADD's: this
+     * answers the inbound `ROBOT,x,y,h` line rather than joining the family of
+     * obstacle commands. Decimal cells naming the robot's CENTRE, heading in
+     * degrees.
+     *
+     * The literal string matters: Float.toString is locale-independent, where
+     * String.format would emit "7,5" on a comma-decimal machine and split the
+     * message into an extra field.
+     */
+    @Test fun `move robot mirrors the inbound ROBOT line`() {
+        assertEquals("MOVEROBOT,7.5,2.25,20.0", encode(Outbound.MoveRobot(7.5f, 2.25f, 20f)))
+    }
+
+    /** The verb differs from inbound ROBOT so an RPi echo cannot be mistaken for a report. */
+    @Test fun `move robot does not reuse the inbound verb`() {
+        assertTrue(encode(Outbound.MoveRobot(0f, 0f, 0f)).startsWith("MOVEROBOT,"))
     }
 }

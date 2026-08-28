@@ -2,6 +2,7 @@ package com.mdp.grp11.arena
 
 import com.mdp.grp11.config.Config
 import com.mdp.grp11.protocol.Face
+import com.mdp.grp11.protocol.normaliseDegrees
 
 private val VERSION = Config.ARENA_FORMAT_VERSION
 private val ABSENT = Config.ARENA_FIELD_ABSENT
@@ -16,7 +17,7 @@ private val ABSENT = Config.ARENA_FIELD_ABSENT
  */
 fun encodeArena(arena: Arena): String = buildString {
     appendLine(VERSION)
-    arena.robot?.let { appendLine("R ${it.cell.x} ${it.cell.y} ${it.heading.name}") }
+    arena.robot.let { appendLine("R ${it.x} ${it.y} ${it.headingDegrees}") }
     arena.obstacles.sortedBy { it.id }.forEach { o ->
         append("O ${o.id} ${o.cell.x} ${o.cell.y} ")
         append(o.imageFace?.name ?: ABSENT)
@@ -45,10 +46,14 @@ fun decodeArena(text: String): Arena? {
         when (f.getOrNull(0)) {
             "R" -> {
                 if (f.size != 4) return null
-                val x = f[1].toIntOrNull() ?: return null
-                val y = f[2].toIntOrNull() ?: return null
-                val h = Face.parse(f[3]) ?: return null
-                robot = RobotPose(Cell(x, y), h)
+                // Both forms, exactly as the wire accepts them: files written
+                // before the pose went continuous carry "R 1 1 N".
+                val x = f[1].toFloatOrNull()?.takeIf { it.isFinite() } ?: return null
+                val y = f[2].toFloatOrNull()?.takeIf { it.isFinite() } ?: return null
+                val h = Face.parse(f[3])?.degrees
+                    ?: f[3].toFloatOrNull()?.takeIf { it.isFinite() }
+                    ?: return null
+                robot = RobotPose(x, y, normaliseDegrees(h))
             }
             "O" -> {
                 if (f.size != 7) return null
@@ -72,5 +77,8 @@ fun decodeArena(text: String): Arena? {
             else -> return null
         }
     }
-    return Arena(obstacles = obstacles, robot = robot)
+    // A layout saved before the robot was always present carries no R line.
+    // Falling back to the start pose keeps those files readable rather than
+    // making an old save look corrupt, which is what returning null would do.
+    return Arena(obstacles = obstacles, robot = robot ?: START_POSE)
 }

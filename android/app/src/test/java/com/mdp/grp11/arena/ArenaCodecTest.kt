@@ -2,6 +2,8 @@ package com.mdp.grp11.arena
 
 import com.mdp.grp11.protocol.Face
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -15,8 +17,45 @@ class ArenaCodecTest {
     @Test fun `obstacles and robot round-trip`() {
         var a = Arena().place(Cell(4, 13)).first
         a = a.place(Cell(9, 7)).first
-        a = a.applyPose(1, 1, Face.N)
+        a = a.applyPose(1f, 1f, Face.N.degrees)
         assertEquals(a, decodeArena(encodeArena(a)))
+    }
+
+    /**
+     * Files written before the robot was always present carry no `R` line.
+     * Falling back to the start pose keeps them loadable - returning null
+     * would make an old save look corrupt, and the operator would lose a
+     * layout that is perfectly readable.
+     */
+    @Test fun `a layout saved without a robot line loads at the start pose`() {
+        val back = decodeArena(
+            """
+            V1
+            O 1 5 5 - - -
+            """.trimIndent()
+        )!!
+        assertEquals(START_POSE, back.robot)
+        assertEquals(1, back.obstacles.size)
+    }
+
+    @Test fun `a fractional pose and an arbitrary heading round-trip`() {
+        val a = Arena().moveRobot(5.55f, 6.55f).turnRobot(20f)
+        assertEquals(a, decodeArena(encodeArena(a)))
+    }
+
+    /**
+     * The old integers-and-a-letter form, exactly as files written before the
+     * pose went continuous carry it. Losing these would lose saved layouts.
+     */
+    @Test fun `a legacy R line still loads`() {
+        val back = decodeArena(
+            """
+            V1
+            R 1 1 N
+            O 1 5 5 - - -
+            """.trimIndent()
+        )!!
+        assertEquals(RobotPose(1f, 1f, 0f), back.robot)
     }
 
     @Test fun `annotated face and reported target survive independently`() {

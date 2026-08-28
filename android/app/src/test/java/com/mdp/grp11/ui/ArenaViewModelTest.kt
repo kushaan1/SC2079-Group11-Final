@@ -19,6 +19,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -209,6 +210,126 @@ class ArenaViewModelTest {
         assertEquals(Face.S, o.target?.face)
     }
 
+    // --- The robot the OPERATOR moves (MOVEROBOT) ---------------------------
+
+    /**
+     * The same finger-lift rule [commit] follows, for the same reason: one
+     * message per position crossed would flood a link that also has to carry
+     * the status the operator is reading.
+     */
+    @Test fun `dragging the robot transmits once, on finger-lift`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.dragRobotTo(5f, 5f)
+        vm.dragRobotTo(6f, 5f)
+        vm.dragRobotTo(7.5f, 2.25f)
+        runCurrent()
+        assertEquals("nothing may go out mid-drag", emptyList<String>(), fake.sent)
+
+        vm.commitRobot()
+        runCurrent()
+        assertEquals(listOf("MOVEROBOT,7.5,2.25,0.0"), fake.sent)
+    }
+
+    @Test fun `a robot drag that ends where it started announces nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+        val home = vm.arena.value.robot
+
+        vm.dragRobotTo(5f, 5f)
+        vm.dragRobotTo(home.x, home.y)
+        vm.commitRobot()
+        runCurrent()
+
+        assertEquals(emptyList<String>(), fake.sent)
+    }
+
+    /** A lift with no drag at all - the operator changed their mind. */
+    @Test fun `commitRobot with no drag behind it transmits nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.commitRobot()
+        runCurrent()
+
+        assertEquals(emptyList<String>(), fake.sent)
+    }
+
+    /**
+     * The clamp is Arena's, but it has to survive the round trip to the wire:
+     * announcing a position the tablet is not drawing would be worse than
+     * either clamping or refusing.
+     */
+    @Test fun `dragging the robot off the board announces the wall, not the finger`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.dragRobotTo(25f, 25f)
+        vm.commitRobot()
+        runCurrent()
+
+        assertEquals(listOf("MOVEROBOT,18.0,18.0,0.0"), fake.sent)
+        assertEquals(18f, vm.arena.value.robot.x, 0f)
+    }
+
+    @Test fun `turnRobot transmits the new heading and ignores a re-pick`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.turnRobot(Face.E)
+        runCurrent()
+        assertEquals(listOf("MOVEROBOT,1.0,1.0,90.0"), fake.sent)
+
+        // Unlike pickFace, where tapping the active face clears it. A robot
+        // always points somewhere, so there is nothing to clear.
+        vm.turnRobot(Face.E)
+        runCurrent()
+        assertEquals("a re-pick must not re-announce", 1, fake.sent.size)
+        assertEquals(90f, vm.arena.value.robot.headingDegrees, 0f)
+    }
+
+    @Test fun `selecting the robot transmits nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.selectRobot()
+        runCurrent()
+
+        assertEquals(Selection.Robot, vm.selection.value)
+        assertEquals(emptyList<String>(), fake.sent)
+    }
+
+    /**
+     * Selecting the robot must not leave a block selected underneath it, or
+     * the compass would edit one thing while the ring marked another.
+     */
+    @Test fun `selecting the robot replaces a block selection`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))
+        vm.selectRobot()
+        runCurrent()
+
+        assertEquals(Selection.Robot, vm.selection.value)
+    }
+
+    /** An inbound report overrides whatever the operator dragged. */
+    @Test fun `an inbound pose wins over a locally dragged one`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.dragRobotTo(5f, 5f)
+        vm.commitRobot()
+        runCurrent()
+
+        fake.deliver("ROBOT,12.25,13.75,47")
+        runCurrent()
+
+        assertEquals(RobotPose(12.25f, 13.75f, 47f), vm.arena.value.robot)
+    }
+
     // --- Other inbound-driven state (C.4 status, C.9 target line, robot pose)
 
     @Test fun `an inbound MSG updates statusText`() = runTest {
@@ -228,7 +349,7 @@ class ArenaViewModelTest {
         fake.deliver("ROBOT,3,4,E")
         runCurrent()
 
-        assertEquals(RobotPose(Cell(3, 4), Face.E), vm.arena.value.robot)
+        assertEquals(RobotPose(3f, 4f, 90f), vm.arena.value.robot)
     }
 
     @Test fun `targetLine formats the target id, label and obstacle`() = runTest {
@@ -542,11 +663,12 @@ class ArenaViewModelTest {
         runCurrent()
 
         assertTrue(vm.arena.value.obstacles.isEmpty())
-        assertNull(vm.selectedId.value)
+        assertNull(vm.selection.value)
 
         assertEquals(
-            "reset must retract exactly the obstacles it cleared, one SUB each",
-            cleared.map { "SUB,B$it" },
+            "reset must retract every obstacle it cleared, one SUB each, then " +
+                "send the robot home - the screen moved it and nothing else would say so",
+            cleared.map { "SUB,B$it" } + "MOVEROBOT,1.0,1.0,0.0",
             fake.sent.drop(sentBeforeReset),
         )
     }
@@ -758,10 +880,11 @@ class ArenaViewModelTest {
         // resetArena's silence does not apply here - a load has no gestures
         // following it for the robot to learn the layout from, so every
         // restored obstacle must be announced, plus a FACE for the one
-        // carrying an operator annotation. The arena started empty, so there
-        // is nothing to retract (see the resync test below for that half).
+        // carrying an operator annotation and the pose the layout carries. The
+        // arena started empty, so there is nothing to retract (see the resync
+        // test below for that half).
         assertEquals(
-            listOf("ADD,B1,(2,3)", "FACE,B1,(2,3),N", "ADD,B2,(9,1)"),
+            listOf("ADD,B1,(2,3)", "FACE,B1,(2,3),N", "ADD,B2,(9,1)", "MOVEROBOT,1.0,1.0,0.0"),
             fake.sent,
         )
         assertEquals(setOf(1, 2), vm.arena.value.obstacles.map { it.id }.toSet())
@@ -786,7 +909,7 @@ class ArenaViewModelTest {
         runCurrent()
 
         assertEquals(
-            listOf("SUB,B1", "SUB,B2", "ADD,B1,(2,3)", "FACE,B1,(2,3),N"),
+            listOf("SUB,B1", "SUB,B2", "ADD,B1,(2,3)", "FACE,B1,(2,3),N", "MOVEROBOT,1.0,1.0,0.0"),
             fake.sent.drop(afterA),
         )
         assertEquals(listOf(Cell(2, 3)), vm.arena.value.obstacles.map { it.cell })

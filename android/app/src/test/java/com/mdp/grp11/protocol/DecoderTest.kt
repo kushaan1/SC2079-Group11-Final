@@ -31,9 +31,45 @@ class DecoderTest {
         assertEquals(Inbound.TargetFound(2, 4, null), decode("TARGET,B2,4"))
     }
 
-    @Test fun `ROBOT parses coordinates and heading`() {
-        assertEquals(Inbound.Pose(1, 1, Face.N), decode("ROBOT,1,1,N"))
-        assertEquals(Inbound.Pose(7, 2, Face.W), decode("ROBOT, 7, 2, w"))
+    @Test fun `ROBOT parses the legacy integers-and-a-letter form`() {
+        assertEquals(Inbound.Pose(1f, 1f, 0f), decode("ROBOT,1,1,N"))
+        assertEquals(Inbound.Pose(7f, 2f, 270f), decode("ROBOT, 7, 2, w"))
+    }
+
+    /**
+     * The continuous form an arcing car actually produces. Both forms name the
+     * footprint's CENTRE - the anchor is a property of the message, not of the
+     * number format, or the same robot would draw in two places depending on
+     * which form arrived.
+     */
+    @Test fun `ROBOT parses decimal cells and a heading in degrees`() {
+        assertEquals(Inbound.Pose(5.55f, 6.55f, 20f), decode("ROBOT,5.55,6.55,20"))
+    }
+
+    /** Each field decides for itself, so a mixed line needs no special case. */
+    @Test fun `ROBOT accepts a decimal position with a letter heading`() {
+        assertEquals(Inbound.Pose(7.5f, 2f, 0f), decode("ROBOT,7.5,2,N"))
+    }
+
+    /** A heading is periodic. 450 is 90, and -90 is 270 - neither is an error. */
+    @Test fun `ROBOT normalises the heading`() {
+        assertEquals(Inbound.Pose(1f, 1f, 90f), decode("ROBOT,1,1,450"))
+        assertEquals(Inbound.Pose(1f, 1f, 270f), decode("ROBOT,1,1,-90"))
+    }
+
+    /**
+     * toFloatOrNull accepts "NaN" and "Infinity". Left through, they would
+     * reach the renderer and draw nothing, which reads as a display bug rather
+     * than as the malformed message it is.
+     */
+    @Test fun `ROBOT rejects non-finite numbers`() {
+        assertTrue(decode("ROBOT,NaN,1,0") is Inbound.Unknown)
+        assertTrue(decode("ROBOT,1,Infinity,0") is Inbound.Unknown)
+        assertTrue(decode("ROBOT,1,1,NaN") is Inbound.Unknown)
+    }
+
+    @Test fun `ROBOT still rejects a heading that is neither letter nor number`() {
+        assertTrue(decode("ROBOT,1,1,NE") is Inbound.Unknown)
     }
 
     @Test fun `verbs are case insensitive`() {
