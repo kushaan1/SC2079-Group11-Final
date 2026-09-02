@@ -6,11 +6,23 @@ import os
 import random
 import shutil
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, MutableMapping, Sequence, Set, Tuple
 
 from .config import SPLIT_NAMES, TaskConfig, load_task_config
 from .dataset import DatasetValidationError, Sample, validate_dataset
+
+
+@dataclass(frozen=True)
+class _SplitUnit:
+    group_id: str
+    sample_indices: Tuple[int, ...]
+    class_ids: Tuple[int, ...]
+
+    @property
+    def size(self) -> int:
+        return len(self.sample_indices)
 
 
 def allocate_splits(
@@ -20,30 +32,31 @@ def allocate_splits(
     required_class_splits: Sequence[str],
     seed: int,
 ) -> Dict[int, str]:
-    """Assign sample indices while guaranteeing configured per-class coverage."""
+    """Assign source groups atomically while guaranteeing per-class coverage."""
 
     if not samples:
         raise DatasetValidationError("cannot split an empty dataset")
     required = tuple(required_class_splits)
-    class_to_indices: Dict[int, Set[int]] = {
-        class_id: {index for index, sample in enumerate(samples) if class_id in sample.class_ids}
+    units = _group_samples(samples)
+    class_to_units: Dict[int, Set[int]] = {
+        class_id: {index for index, unit in enumerate(units) if class_id in unit.class_ids}
         for class_id in range(class_count)
     }
-    for class_id, indices in class_to_indices.items():
-        if len(indices) < len(required):
+    for class_id, unit_indices in class_to_units.items():
+        if len(unit_indices) < len(required):
             raise DatasetValidationError(
-                "class {} has {} labelled image(s), but {} distinct images are required to cover {}".format(
+                "class {} has {} independent source group(s), but {} are required to cover {}".format(
                     class_id,
-                    len(indices),
+                    len(unit_indices),
                     len(required),
                     ", ".join(required),
                 )
             )
 
     rng = random.Random(seed)
-    tie_break = {index: rng.random() for index in range(len(samples))}
+    tie_break = {index: rng.random() for index in range(len(units))}
     split_tie = {name: rng.random() for name in SPLIT_NAMES}
-    assignments: Dict[int, str] = {}
+    unit_assignments: Dict[int, str] = {}
     covered: Dict[int, Set[str]] = {class_id: set() for class_id in range(class_count)}
 
     while True:
@@ -57,23 +70,23 @@ def allocate_splits(
             break
         missing.sort(
             key=lambda pair: (
-                len(class_to_indices[pair[0]] - set(assignments)),
+                len(class_to_units[pair[0]] - set(unit_assignments)),
                 ratios[pair[1]],
                 pair[0],
                 pair[1],
             )
         )
         class_id, split = missing[0]
-        candidates = class_to_indices[class_id] - set(assignments)
+        candidates = class_to_units[class_id] - set(unit_assignments)
         viable = [
             index
             for index in candidates
-            if _coverage_remains_feasible(
+            if _group_coverage_remains_feasible(
                 index,
                 split,
-                samples,
-                assignments,
-                class_to_indices,
+                units,
+                unit_assignments,
+                class_to_units,
                 covered,
                 required,
             )
@@ -81,78 +94,104 @@ def allocate_splits(
         if not viable:
             raise DatasetValidationError(
                 "could not allocate class {} to {} without breaking another class constraint; "
-                "add more independently captured images".format(class_id, split)
+                "add more independent source groups".format(class_id, split)
             )
         chosen = max(
             viable,
             key=lambda index: (
                 sum(
                     1
-                    for candidate_class in samples[index].class_ids
+                    for candidate_class in units[index].class_ids
                     if split not in covered[candidate_class]
                 ),
-                sum(1.0 / len(class_to_indices[item]) for item in samples[index].class_ids),
+                sum(1.0 / len(class_to_units[item]) for item in units[index].class_ids),
+                -units[index].size,
                 tie_break[index],
             ),
         )
-        assignments[chosen] = split
-        for candidate_class in samples[chosen].class_ids:
+        unit_assignments[chosen] = split
+        for candidate_class in units[chosen].class_ids:
             covered[candidate_class].add(split)
 
-    reserved_counts = Counter(assignments.values())
+    reserved_counts = Counter()
+    for index, split in unit_assignments.items():
+        reserved_counts[split] += units[index].size
     target_counts = _target_split_counts(len(samples), ratios, reserved_counts)
-    class_totals = {class_id: len(indices) for class_id, indices in class_to_indices.items()}
+    class_totals = {
+        class_id: sum(units[index].size for index in indices)
+        for class_id, indices in class_to_units.items()
+    }
     split_class_counts: Dict[str, Counter] = {name: Counter() for name in SPLIT_NAMES}
-    for index, split in assignments.items():
-        split_class_counts[split].update(samples[index].class_ids)
+    for index, split in unit_assignments.items():
+        for class_id in units[index].class_ids:
+            split_class_counts[split][class_id] += units[index].size
 
-    remaining = [index for index in range(len(samples)) if index not in assignments]
+    remaining = [index for index in range(len(units)) if index not in unit_assignments]
     remaining.sort(
         key=lambda index: (
-            -sum(1.0 / class_totals[class_id] for class_id in samples[index].class_ids),
+            -sum(1.0 / class_totals[class_id] for class_id in units[index].class_ids),
+            -units[index].size,
             tie_break[index],
         )
     )
-    split_counts = Counter(assignments.values())
+    split_counts = Counter(reserved_counts)
     for index in remaining:
-        available = [name for name in SPLIT_NAMES if split_counts[name] < target_counts[name]]
-        if not available:
-            raise AssertionError("split allocator exhausted all capacities")
-
-        def score(split: str) -> Tuple[float, float, float]:
+        def score(split: str) -> Tuple[float, float, float, float]:
             class_deficit = sum(
                 max(
                     0.0,
                     class_totals[class_id] * ratios[split] - split_class_counts[split][class_id],
                 )
                 / class_totals[class_id]
-                for class_id in samples[index].class_ids
+                for class_id in units[index].class_ids
             )
-            capacity = (target_counts[split] - split_counts[split]) / float(target_counts[split])
-            return class_deficit, capacity, split_tie[split]
+            before = abs(target_counts[split] - split_counts[split])
+            after = abs(target_counts[split] - (split_counts[split] + units[index].size))
+            fit_improvement = before - after
+            deficit = target_counts[split] - split_counts[split]
+            return class_deficit, fit_improvement, deficit, split_tie[split]
 
-        selected = max(available, key=score)
-        assignments[index] = selected
-        split_counts[selected] += 1
-        split_class_counts[selected].update(samples[index].class_ids)
+        selected = max(SPLIT_NAMES, key=score)
+        unit_assignments[index] = selected
+        split_counts[selected] += units[index].size
+        for class_id in units[index].class_ids:
+            split_class_counts[selected][class_id] += units[index].size
 
+    assignments = {
+        sample_index: split
+        for unit_index, split in unit_assignments.items()
+        for sample_index in units[unit_index].sample_indices
+    }
     _assert_coverage(samples, assignments, class_count, required)
     return assignments
 
 
-def _coverage_remains_feasible(
+def _group_samples(samples: Sequence[Sample]) -> Tuple[_SplitUnit, ...]:
+    grouped: MutableMapping[str, List[int]] = defaultdict(list)
+    for index, sample in enumerate(samples):
+        group_id = sample.source_group.strip() if sample.source_group else "sample:{}".format(index)
+        grouped[group_id].append(index)
+    units = []
+    for group_id in sorted(grouped, key=str.casefold):
+        indices = tuple(grouped[group_id])
+        classes = tuple(sorted({class_id for index in indices for class_id in samples[index].class_ids}))
+        units.append(_SplitUnit(group_id, indices, classes))
+    return tuple(units)
+
+
+def _group_coverage_remains_feasible(
     candidate: int,
     split: str,
-    samples: Sequence[Sample],
+    units: Sequence[_SplitUnit],
     assignments: Mapping[int, str],
-    class_to_indices: Mapping[int, Set[int]],
+    class_to_units: Mapping[int, Set[int]],
     covered: Mapping[int, Set[str]],
     required: Sequence[str],
 ) -> bool:
     assigned_after = set(assignments)
     assigned_after.add(candidate)
-    candidate_classes = set(samples[candidate].class_ids)
-    for class_id, indices in class_to_indices.items():
+    candidate_classes = set(units[candidate].class_ids)
+    for class_id, indices in class_to_units.items():
         covered_after = set(covered[class_id])
         if class_id in candidate_classes:
             covered_after.add(split)
@@ -243,6 +282,13 @@ def prepare_dataset(config: TaskConfig) -> Path:
                 "height": sample.height,
                 "image_sha256": sample.image_sha256,
                 "label_sha256": sample.label_sha256,
+                "source_group": sample.source_group,
+                "provenance": (
+                    sample.provenance_path.relative_to(config.dataset.annotations).as_posix()
+                    if sample.provenance_path is not None
+                    else None
+                ),
+                "provenance_sha256": sample.provenance_sha256,
             }
         )
 
@@ -256,7 +302,7 @@ def prepare_dataset(config: TaskConfig) -> Path:
     }
     data_path.write_text(json.dumps(data_contract, indent=2) + "\n", encoding="utf-8")
     manifest = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "task": config.task,
         "seed": config.dataset.seed,
         "ratios": dict(config.dataset.ratios),

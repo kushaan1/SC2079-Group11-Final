@@ -96,3 +96,23 @@ def test_rejects_duplicate_images_and_out_of_bounds_box(tmp_path):
     codes = [issue.code for issue in report.issues]
     assert codes.count("duplicate_image") == 2
     assert codes.count("invalid_box") == 2
+
+
+def test_reads_valid_source_group_and_rejects_bad_provenance(tmp_path):
+    config = build_config(tmp_path, classes=("left",))
+    write_image(config.dataset.source_images / "good.jpg", 10)
+    write_image(config.dataset.source_images / "bad.jpg", 20)
+    config.dataset.annotations.mkdir(parents=True)
+    for name in ("good.txt", "bad.txt"):
+        (config.dataset.annotations / name).write_text("0 0.5 0.5 0.4 0.4\n", encoding="utf-8")
+    (config.dataset.annotations / "good.meta.json").write_text(
+        json.dumps({"schema_version": "1.0", "source_group": "capture-a"}),
+        encoding="utf-8",
+    )
+    (config.dataset.annotations / "bad.meta.json").write_text(
+        json.dumps({"schema_version": "1.0", "source_group": ""}),
+        encoding="utf-8",
+    )
+    report = validate_dataset(config)
+    assert [sample.source_group for sample in report.samples] == ["capture-a"]
+    assert [issue.code for issue in report.issues] == ["invalid_provenance"]

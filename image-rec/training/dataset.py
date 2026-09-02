@@ -1,11 +1,12 @@
 """YOLO annotation discovery and fail-fast dataset validation."""
 
 import hashlib
+import json
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .config import TaskConfig
 
@@ -38,6 +39,9 @@ class Sample:
     label_sha256: str
     width: int
     height: int
+    source_group: str = ""
+    provenance_path: Optional[Path] = None
+    provenance_sha256: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +145,20 @@ def validate_dataset(config: TaskConfig) -> ValidationReport:
         if label_issues:
             continue
 
+        relative_path = image_path.relative_to(config.dataset.source_images)
+        provenance_path = label_path.with_suffix(".meta.json")
+        source_group = "image:{}".format(relative_path.as_posix())
+        provenance_hash: Optional[str] = None
+        if provenance_path.exists():
+            provenance, provenance_issues = _parse_provenance(provenance_path)
+            if not provenance_issues and provenance.get("synthetic") is True:
+                provenance_issues.extend(_validate_provenance_labels(provenance_path, provenance, parsed))
+            issues.extend(provenance_issues)
+            if provenance_issues:
+                continue
+            source_group = str(provenance["source_group"])
+            provenance_hash = _sha256(provenance_path)
+
         class_ids = tuple(sorted({item[0] for item in parsed}))
         for class_id in class_ids:
             class_image_counts[class_id] += 1
@@ -150,12 +168,15 @@ def validate_dataset(config: TaskConfig) -> ValidationReport:
             Sample(
                 image_path=image_path,
                 label_path=label_path,
-                relative_path=image_path.relative_to(config.dataset.source_images),
+                relative_path=relative_path,
                 class_ids=class_ids,
                 image_sha256=image_hash,
                 label_sha256=_sha256(label_path),
                 width=width,
                 height=height,
+                source_group=source_group,
+                provenance_path=provenance_path if provenance_path.exists() else None,
+                provenance_sha256=provenance_hash,
             )
         )
 
@@ -268,6 +289,50 @@ def _parse_label(
             )
         )
     return rows, issues
+
+
+def _parse_provenance(path: Path) -> Tuple[Mapping[str, object], List[DatasetIssue]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {}, [DatasetIssue("invalid_provenance", path, "could not parse JSON: {}".format(error))]
+    if not isinstance(payload, dict) or payload.get("schema_version") != "1.0":
+        return {}, [DatasetIssue("invalid_provenance", path, "schema_version must be 1.0")]
+    source_group = payload.get("source_group")
+    if not isinstance(source_group, str) or not source_group.strip():
+        return {}, [DatasetIssue("invalid_provenance", path, "source_group must be a non-empty string")]
+    if payload.get("synthetic") is True:
+        if not isinstance(payload.get("recipe_sha256"), str) or len(str(payload["recipe_sha256"])) != 64:
+            return {}, [DatasetIssue("invalid_provenance", path, "synthetic samples require a SHA-256 recipe hash")]
+        if not isinstance(payload.get("objects"), list) or not payload["objects"]:
+            return {}, [DatasetIssue("invalid_provenance", path, "synthetic samples require object provenance")]
+    return payload, []
+
+
+def _validate_provenance_labels(
+    path: Path,
+    payload: Mapping[str, object],
+    labels: Sequence[Tuple[int, float, float, float, float]],
+) -> List[DatasetIssue]:
+    objects = payload.get("objects")
+    if not isinstance(objects, list):
+        return [DatasetIssue("invalid_provenance", path, "objects must be a list")]
+    provenance_rows = []
+    for item in objects:
+        if not isinstance(item, dict) or item.get("included") is not True:
+            continue
+        box = item.get("box")
+        class_index = item.get("class_index")
+        if not isinstance(class_index, int) or not isinstance(box, list) or len(box) != 4:
+            return [DatasetIssue("invalid_provenance", path, "included objects need a class_index and four-value box")]
+        try:
+            provenance_rows.append((class_index,) + tuple(float(value) for value in box))
+        except (TypeError, ValueError):
+            return [DatasetIssue("invalid_provenance", path, "object box values must be numeric")]
+    key = lambda row: (row[0],) + tuple(round(value, 6) for value in row[1:])
+    if sorted(map(key, provenance_rows)) != sorted(map(key, labels)):
+        return [DatasetIssue("provenance_mismatch", path, "included provenance objects do not match the YOLO label")]
+    return []
 
 
 def _sha256(path: Path) -> str:

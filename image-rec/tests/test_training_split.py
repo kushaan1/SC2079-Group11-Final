@@ -42,7 +42,7 @@ def test_split_is_deterministic_and_covers_every_class_in_every_split():
 
 def test_split_fails_when_a_class_cannot_cover_required_pools():
     samples = [sample(0, (0,)), sample(1, (0,))]
-    with pytest.raises(DatasetValidationError, match="3 distinct images"):
+    with pytest.raises(DatasetValidationError, match="3 are required"):
         allocate_splits(
             samples,
             1,
@@ -50,6 +50,37 @@ def test_split_fails_when_a_class_cannot_cover_required_pools():
             ("train", "val", "test"),
             1,
         )
+
+
+def test_split_keeps_every_source_group_in_one_pool():
+    samples = []
+    for group_index in range(6):
+        for copy in range(3):
+            item = sample("{}-{}".format(group_index, copy), (0,))
+            samples.append(
+                Sample(
+                    item.image_path,
+                    item.label_path,
+                    item.relative_path,
+                    item.class_ids,
+                    item.image_sha256,
+                    item.label_sha256,
+                    item.width,
+                    item.height,
+                    source_group="capture-{}".format(group_index),
+                )
+            )
+    assignments = allocate_splits(
+        samples,
+        1,
+        {"train": 0.7, "val": 0.2, "test": 0.1},
+        ("train", "val", "test"),
+        2079,
+    )
+    group_splits = {}
+    for index, item in enumerate(samples):
+        group_splits.setdefault(item.source_group, set()).add(assignments[index])
+    assert all(len(splits) == 1 for splits in group_splits.values())
 
 
 def build_config(tmp_path):
@@ -107,7 +138,9 @@ def test_prepare_materializes_dataset_and_replay_manifest(tmp_path):
     data = json.loads(data_path.read_text(encoding="utf-8"))
     manifest = json.loads(config.dataset.manifest.read_text(encoding="utf-8"))
     assert data["names"] == {"0": "arrow"}
+    assert manifest["schema_version"] == "1.1"
     assert len(manifest["samples"]) == 4
     assert {item["split"] for item in manifest["samples"]} == {"train", "val", "test"}
+    assert all(item["source_group"].startswith("image:") for item in manifest["samples"])
     for item in manifest["samples"]:
         assert (config.dataset.workspace / "images" / item["split"] / item["image"]).is_file()
