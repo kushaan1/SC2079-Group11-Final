@@ -28,7 +28,7 @@ CELL_SIZE = (150, 150)
 ROW_LENGTHS = (8, 8, 8, 7)
 
 DEFAULT_OUTPUT_DIR = (
-    Path(__file__).resolve().parents[1] / "training" / "resources" / "glyphs"
+    Path(__file__).resolve().parent / "resources" / "glyphs"
 )
 
 
@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="Destination directory (default: image-rec/training/resources/glyphs).",
+        help="Destination directory (default: image-rec/misc/resources/glyphs).",
     )
     parser.add_argument(
         "--overwrite",

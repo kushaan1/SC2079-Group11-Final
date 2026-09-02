@@ -15,6 +15,7 @@ TRACKED_PACKAGES = (
     "torch-directml",
     "numpy",
     "opencv-python-headless",
+    "matplotlib",
 )
 
 

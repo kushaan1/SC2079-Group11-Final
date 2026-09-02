@@ -6,4 +6,5 @@
 # intentionally not pinned here. This profile omits torch-directml, which is incompatible with
 # using the ROCm build in the same environment.
 -r requirements-pc.txt
+matplotlib>=3.8,<4
 ultralytics==8.4.115
