@@ -16,7 +16,7 @@ Git tracks everything needed to reproduce a run except the large or private bina
 
 | Tracked | Ignored |
 |---|---|
-| YOLO `.txt` annotations and `.txt.todo` placeholders | Source photographs |
+| YOLO labels, synthesis recipes/provenance, and `.txt.todo` placeholders | Source photographs and RGBA stand templates |
 | Ordered class registries | Downloaded and trained `.pt` weights |
 | Task hyperparameters and fixed random seed | Generated train/val/test workspace |
 | Dataset validators and split algorithm | Ultralytics run directories and caches |
@@ -35,7 +35,9 @@ training/
 |-- task2_training_set/        Task 2 source images (ignored)
 |-- annotations/
 |   |-- task1/                 mirrors Task 1 image paths
-|   `-- task2/                 mirrors Task 2 image paths
+|   |-- task2/                 mirrors Task 2 image paths
+|   `-- synthesis/             versioned card, stand, and scene recipes
+|-- synthesis/                 local base photos, backgrounds, cutouts, and patterns
 |-- classes/                   ordered model classes and competition IDs
 |-- configs/                   split, model, and export settings
 |-- manifests/                 generated split/checksum records (tracked)
@@ -85,6 +87,100 @@ python -m training.create_placeholders --task task2
 Empty labels are rejected by default because each competition image is expected to contain a target.
 If genuine negative/background images are added later, put them in a deliberately configured dataset
 instead of weakening this safeguard without review.
+
+## Generate synthetic Task 1 images
+
+The synthesis pipeline separates the black glyph mask, fuzzing pattern, stand, and environment so
+none becomes an accidental class shortcut. IDs 11–40 currently share a diagonal-stripe background.
+Extract and visually inspect their reusable masks before generating a dataset:
+
+```powershell
+python -m training.synthesize build-masks
+```
+
+This writes ignored masks and `glyph-mask-audit.jpg` below `training/.generated/synthesis/`.
+Bullseye ID 41 remains a fixed black-and-white marker.
+
+### Replace a card on a photographed stand
+
+Place the photo under `training/synthesis/`, then register its target card and visible adjacent
+bullseye cards. Click each surface top-left, top-right, bottom-right, then bottom-left.
+
+```powershell
+python -m training.synthesize configure-in-scene `
+  --image training/synthesis/in-scene/hallway-01.jpg `
+  --output training/annotations/synthesis/hallway-01.json `
+  --recipe-id hallway-01 `
+  --source-group hallway-session-a `
+  --bullseyes 1
+```
+
+Use zero bullseyes only when no adjacent face is meaningfully visible. Register a visible side even
+when the original photograph shows blank black material there.
+
+### Compose several cutout stands into an environment
+
+Stand templates must be tightly cropped RGBA PNGs with genuine transparency. Register their target
+and visible bullseye surfaces once:
+
+```powershell
+python -m training.synthesize configure-template `
+  --image training/synthesis/stand-templates/right-facing.png `
+  --output training/annotations/synthesis/right-facing-template.json `
+  --bullseyes 1
+```
+
+Supply stands in far-to-near order. Exactly one must be `primary`; the rest are `distractor` stands.
+The interactive windows register the destination quadrilateral for each tightly cropped template.
+
+```powershell
+python -m training.synthesize configure-scene `
+  --background training/synthesis/backgrounds/lab-03.jpg `
+  --output training/annotations/synthesis/lab-03-multi.json `
+  --recipe-id lab-03-multi `
+  --source-group lab-session-b `
+  --stand distractor:training/annotations/synthesis/right-facing-template.json `
+  --stand distractor:training/annotations/synthesis/left-facing-template.json `
+  --stand primary:training/annotations/synthesis/front-template.json
+```
+
+The primary cycles through all 30 targets. Distractors receive deterministic rotating targets and
+independent patterns. Every visible target and bullseye is labelled; nearer stands occlude earlier
+ones according to the supplied order. To move, reorder, or remove stands, rerun the command with the
+desired far-to-near `--stand` list and the scoped `--overwrite` flag.
+
+Generate the variants and inspect their annotations:
+
+```powershell
+python -m training.synthesize generate `
+  --recipe training/annotations/synthesis/lab-03-multi.json `
+  --custom-patterns training/synthesis/custom-patterns
+
+python -m training.synthesize audit `
+  --images training/training_set/synthetic `
+  --annotations training/annotations/task1/synthetic `
+  --output training/.generated/synthesis/dataset-audit.jpg
+```
+
+Built-in patterns include stripes, checks, dots, scales, diamonds, camouflage, marble, and weave.
+Custom files must be clean pattern-only images with sufficient variation and contrast for a black
+glyph. Pattern assignment rotates independently of class, and each same-stem `.meta.json` records
+the pattern, objects, recipe hash, and `source_group`. Existing outputs require `--overwrite`.
+
+### Base-photo requirements
+
+- Prefer the mounted Pi camera at real robot height and standoff distance. Phone images are useful
+  smoke tests but should not dominate training.
+- Capture front, left-oblique, and right-oblique views under varied lighting, floors, corridors,
+  people, and clutter.
+- Stand-free backgrounds need plausible floor placement space and no existing competition cards.
+  Avoid floating stands, impossible perspective, and intersecting geometry.
+- Supply at least front, left-facing, right-facing, and blank-black RGBA templates with clean alpha
+  edges. Include single- and multi-stand scenes at varied depths and partial occlusion.
+- Start with 60–100 environments across at least 12 capture groups. Adjacent video frames are one
+  group, not independent examples.
+- Keep a separate real-photo acceptance set with printed fuzzed cards and bullseyes; synthetic test
+  results alone do not measure the deployment gap.
 
 ## Training environment
 
@@ -146,9 +242,10 @@ python -m training.prepare --task task2
 ```
 
 The committed default is 70% train, 20% validation, and 10% test with seed `2079`. Before balancing
-the remaining images, the splitter reserves distinct examples so every class is represented at least
-once in **all three pools**. Consequently, a class needs at least three independently captured images.
-The test split may grow beyond exactly 10% when that is necessary to satisfy class coverage.
+the remaining images, the splitter reserves independent source groups so every class appears in
+**all three pools**. A class therefore needs at least three groups. Every derivative carrying the
+same `source_group` remains in one pool. The test split may grow beyond exactly 10% when required for
+class coverage or group atomicity.
 
 Preparation creates `.generated/<task>/data.yaml` for Ultralytics and
 `manifests/<task>-split.json` for replay. Review and commit the manifest whenever the approved image
@@ -212,6 +309,7 @@ dtypes, quantization scales, latency, and model checksum in `docs/calibration.md
 - No training starts while validation or split coverage fails.
 - Placeholder labels are never interpreted as empty/background images.
 - Duplicate images cannot leak across train and test under different filenames.
+- Synthetic derivatives and related captures cannot cross splits when they share a `source_group`.
 - CUDA/ROCm/DirectML/MPS failures fall back only when the error is device-related.
 - Ambiguous or stale multiple TFLite outputs stop export rather than publishing an arbitrary file.
 - Weights, datasets, and generated workspaces are never committed by the supplied ignore rules.
