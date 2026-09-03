@@ -120,6 +120,32 @@ a **regression anchor, not an independent oracle** — the expected numbers were
 planner, not from a known-good implementation. Its value is that a change which alters them becomes
 visible instead of silent.
 
+Unit tests: `./.venv/bin/python -m pytest tests -q`.
+
+## Simulator
+
+Checklist items B.1 and B.2 are demonstrated with it (B.3 once the shortest-time source lands).
+
+```sh
+./.venv/bin/python -m simulator                                   # opens with testdata/02
+./.venv/bin/python -m simulator --arena .replay/<file>.json       # replay a real RPi request
+./.venv/bin/python -m simulator --snapshot out.png --frame 350    # no window, just a PNG
+./.venv/bin/python -m simulator --selftest                        # opens, drives a route, exits 0
+```
+
+Needs tkinter. macOS Homebrew Python: `brew install python-tk@3.11`. Windows python.org
+installers include it. Debian/Ubuntu: `sudo apt install python3-tk`. Check with
+`./.venv/bin/python -c "import tkinter; tkinter.Tk().destroy()"`.
+
+Click an empty cell to add an obstacle, click an obstacle to turn its image face, drag to move,
+right-click (or control-click) to remove. Plan route, then Play. Space plays and pauses, right
+arrow steps, `r` resets. Obstacles are numbered the way the tablet numbers them (1 to 8) and the
+panel shows positions in tablet cells. The clock is an estimate from `config.ROBOT_SPEED_CM_S`
+and `config.CAPTURE_DWELL_S`, both placeholders until STM and CV measure them.
+
+`--snapshot` needs Pillow (`pip install Pillow`); the window does not. Design and module layout:
+`simulator/SPEC.md`.
+
 ---
 
 ## Known limitations — read before trusting a plan
@@ -153,11 +179,11 @@ competition-ready.
 
 5. **No Dubins path implementation.** Quiz-assessed (`AGENTS.md` §7.4), not built.
 
-6. **No simulator.** Checklist items **B.1, B.2 and B.3 all three** require one — each says the
-   work must be *"shown on a simulator displaying a grid map of the movement area"*. This is the
-   largest graded gap in the subsystem.
+6. **B.3 is not yet demonstrable.** The simulator (below) covers B.1 and B.2. B.3 needs the
+   shortest-time route source from limitation 4; the simulator's route selector is where it plugs in.
 
-7. **No automated tests** beyond `smoke.py`.
+7. **Tests cover the simulator, not the planner.** `tests/` (60 tests) pins geometry, arena rules,
+   playback and drawing. The planner itself still has only `smoke.py`.
 
 8. **Latency is fine, so don't optimise it.** ~2.5 s for a 4-obstacle arena at 1 cm cells against a
    6-minute Task 1 budget. The A\* heuristic is written but never wired in, so the search is really
@@ -174,8 +200,10 @@ algorithm/
 ├── pathfinding_controller.py   ← the only module that knows about HTTP
 ├── config.py                   ← every tuneable number, with provenance comments
 ├── requirements.txt
-├── PROVENANCE.md               ← lineage, the five fixes, design decisions
+├── PROVENANCE.md               ← lineage, the six fixes, design decisions
 ├── smoke.py                    ← 4-arena regression check
+├── tests/                      ← pytest suite (simulator modules, robot parity, obstacle ids)
+├── simulator/                  ← tkinter simulator; python -m simulator. See simulator/SPEC.md
 └── pathfinding/
     ├── report.py               ← UnreachableObstacle / UnreachableReason
     ├── search/{search,segment,straight,turn,instructions}.py

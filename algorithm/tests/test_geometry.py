@@ -2,8 +2,9 @@ import math
 
 import config
 from pathfinding.world.primitives import Direction, Point
-from simulator.geometry import (Geometry, car_shapes, cell_to_corners, centre_to_tablet,
-                                corners_to_cell, fit_scale, rotate, snap)
+from simulator.geometry import (Geometry, HEADING_DEG, Pose, car_shapes, cell_to_corners,
+                                centre_to_tablet, corners_to_cell, fit_scale, rotate, snap,
+                                unit)
 
 G = Geometry(scale=3.0, arena_cm=200)
 
@@ -67,24 +68,37 @@ def test_rotate_east_sends_right_hand_to_south():
 
 
 def test_car_camera_is_at_the_front():
-    north = car_shapes(100, 100, Direction.NORTH)
+    north = car_shapes(Pose(100, 100, 0))
     assert len(north.body) == 8 and len(north.wheels) == 4
     cx, cy, r = north.camera
     assert cy > 100 and math.isclose(cx, 100, abs_tol=1e-9) and r > 0
-    west = car_shapes(100, 100, Direction.WEST)
+    west = car_shapes(Pose(100, 100, HEADING_DEG[Direction.WEST]))
     wx, wy, _ = west.camera
     assert wx < 100 and math.isclose(wy, 100, abs_tol=1e-9)
 
 
 def test_car_body_spans_the_configured_chassis():
-    body = car_shapes(100, 100, Direction.NORTH).body
+    body = car_shapes(Pose(100, 100, 0)).body
     xs = [p[0] for p in body]
     ys = [p[1] for p in body]
     w, l = config.ROBOT_BODY_CM
     assert math.isclose(max(xs) - min(xs), w) and math.isclose(max(ys) - min(ys), l)
-    east = car_shapes(100, 100, Direction.EAST)
+    east = car_shapes(Pose(100, 100, 90))
     xs = [p[0] for p in east.body]
     assert math.isclose(max(xs) - min(xs), l)          # length now lies along x
     assert math.isclose(min(xs), 100 - l / 2)          # translated to the centre
     wheel_xs = [p[0] for q in east.wheels for p in q]
     assert min(wheel_xs) > 100 - l / 2 and max(wheel_xs) < 100 + l / 2   # wheels inboard along the length
+
+
+def test_unit_points_along_the_compass():
+    dx, dy = unit(0)
+    assert math.isclose(dx, 0, abs_tol=1e-9) and math.isclose(dy, 1)
+    dx, dy = unit(90)
+    assert math.isclose(dx, 1) and math.isclose(dy, 0, abs_tol=1e-9)
+
+
+def test_car_can_be_drawn_part_way_through_a_turn():
+    """A heading between compass points is honoured, not snapped."""
+    (camx, camy) = car_shapes(Pose(100, 100, 45)).camera[:2]
+    assert camx > 100 and camy > 100

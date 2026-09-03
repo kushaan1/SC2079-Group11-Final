@@ -1,6 +1,7 @@
 # Simulator spec
 
-Status: approved 2026-09-03. Owner: algorithms. Replaces the 2026-08-27 draft.
+Status: implemented 2026-09-03 (plan tasks 1-12); the manual checklist below is still to be run by
+a human at the keyboard. Owner: algorithms. Replaces the 2026-08-27 draft.
 
 ## Why
 
@@ -116,7 +117,7 @@ camera dot) driving over lined paper; everything else is quiet ink on white.
 | window / panel | `#F7F7F2` / `#FFFFFF` | frame and side panel |
 | rule | `#E3E7E1` | panel dividers, scrubber track |
 | start zone | fill `#E8F1EA`, edge `#2A9D6B` dashed | 40 x 40 cm at origin |
-| image face | `#E4572E` | 5 px stripe on the face carrying the image; also unreachable outline |
+| image face | `#E4572E` | 1.5 cm stripe (about 5 px) on the face carrying the image; also unreachable outline |
 | camera dot | `#2457A8` | front of the car |
 | segment colours | `#2457A8 #E4572E #2A9D6B #8E5AC8 #D99A00 #0E9AA7 #C2185B #7A5230` | trail of segment 1..8, and the obstacle chip in the panel |
 | planned, not yet driven | `#9AA5A8` dashed | remaining route |
@@ -143,10 +144,23 @@ case everywhere. Buttons say what they do: "Plan route", "Open arena", "Save are
 
 ## Playback
 
-`playback.py` flattens `[segment.vectors]` into frames tagged with segment index; the last frame
-of each segment carries `captured_id` and is repeated `CAPTURE_DWELL_FRAMES` (10) times so the
-capture moment is visible. Dwell frames do not count as distance. `distance_cm` is the number of
-non-dwell frames (1 cm per cell). `estimated_seconds = distance_cm / config.ROBOT_SPEED_CM_S`
+The planner's `Segment.vectors` is a collision-check set, not a path: a turn's arc comes out of
+`turn.__curve` with its two ends interleaved, every arc cell carries the post-turn heading, and
+the arc is the path of a point `lead` cm behind the robot centre (`robot.south_length -
+TURN_PIVOT_OFFSET_CM`, 12 cm for the 31 cm robot), while the appended end pose is the new centre.
+Two consequences, both handled:
+
+- `Segment.compress` orders each arc in driving order and exposes `Segment.moves`, the parts in
+  sequence. `vectors` (and the HTTP `path`) become an ordered path as a side effect.
+- `playback.py` builds one `Frame` per cell with a continuous `Pose(x, y, heading_deg)`: straight
+  cells as-is; arc frames are placed on the true circle through the arc's end cells, with the
+  heading equal to the angle swept, so the car glides through turns; then the end pose. So the car
+  rotates through turns and never jumps.
+
+The last frame of each segment carries `captured_id` and is repeated `CAPTURE_DWELL_FRAMES` (10)
+times so the capture moment is visible. Dwell frames add no distance. `distance_cm` accumulates
+per move from the planner's own costs (a cell per straight cell, `arc_length` per turn), so at
+the end it equals `Route.total_cost * cell_size`. `estimated_seconds = distance_cm / config.ROBOT_SPEED_CM_S`
 plus `config.CAPTURE_DWELL_S` per capture. Empty routes, single-frame routes, `step()` past the
 end, `seek()` clamping and `reset()` are all handled and tested.
 
@@ -159,7 +173,7 @@ is stored so Pause and window close can cancel it.
 |---|---|
 | Left-click empty cell | add a 10 cm obstacle, face S, lowest unused id |
 | Left-click an obstacle | cycle face N -> E -> S -> W |
-| Right-click an obstacle | remove |
+| Right-click or control-click an obstacle | remove (control-click on empty space does nothing) |
 | Drag an obstacle | move it, snapped |
 
 Refused with a message in the status line, never silently: overlapping another obstacle, outside
@@ -168,7 +182,7 @@ clears the current route and playback.
 
 ## Open and save
 
-`arena_io.py` reads and writes the `PathfindingRequest` JSON exactly as the RPi sends it (robot
+`arena.py` reads and writes the `PathfindingRequest` JSON exactly as the RPi sends it (robot
 plus obstacles, cm, inclusive corners). Open accepts anything in `testdata/` or `.replay/`, so a
 real request that misbehaved can be replayed in front of a supervisor. Save writes the current
 arena with the configured start pose and `"verbose": false`.
@@ -179,6 +193,7 @@ In `config.py`, in the existing provenance format:
 
 ```python
 START_ZONE_CM = 40          # RULES | measured
+OBSTACLE_SIZE_CM = 10       # RULES | measured; also the tablet's grid cell
 ROBOT_SPEED_CM_S = 30       # STM | placeholder, NOT MEASURED
 CAPTURE_DWELL_S = 2.0       # CV | placeholder, capture + inference time
 TASK_1_TIME_LIMIT_S = 360   # RULES | measured
@@ -229,7 +244,7 @@ caught without eyes. Everything visual is verified by a human with the checklist
 1. `geometry`, `fonts`, `arena_view`, minimal `app`: static render of testdata 02. Gate: checks 1-2.
 2. `routes`, `playback`, transport bar. Gate: checks 4-5, 8. **Earns B.1.**
 3. Captured list, clock, config additions. Gate: checks 6-7. **Earns B.2.**
-4. Editing and `arena_io`. Gate: checks 3, 9-11.
+4. Editing and `arena` open/save. Gate: checks 3, 9-11.
 5. Unreachable rendering, route selector. Ready for the optimiser to plug in.
 
 ## Risks

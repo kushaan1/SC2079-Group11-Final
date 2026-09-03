@@ -676,6 +676,8 @@ Note on `to_request`: the testdata files write the robot's corners as `{"x": 0, 
 
 ### Task 4: routes and playback
 
+> **Superseded in part by the fix round:** `.superpowers/sdd/2026-09-03-simulator/task-4-fix-brief.md` (arc ordering in `Segment.compress`, `geometry.Pose`, continuous-pose frames, precomputed properties). The code below is the original brief; the fix brief wins where they differ, and `SPEC.md` "Playback" describes the result.
+
 **Files:**
 - Create: `algorithm/simulator/routes.py`, `algorithm/simulator/playback.py`
 - Test: `algorithm/tests/test_routes.py`, `algorithm/tests/test_playback.py`
@@ -981,7 +983,7 @@ class Playback:
   - `painters.Painter` Protocol: `rect(x0, y0, x1, y1, *, fill=None, outline=None, width=1.0, dash=None)`, `line(points, *, fill, width=1.0, dash=None)`, `polygon(points, *, fill=None, outline=None, width=1.0)`, `oval(x0, y0, x1, y1, *, fill=None, outline=None, width=1.0)`, `text(x, y, text, *, fill, size, bold=False, mono=False, anchor="center")`. Colours are `#rrggbb` strings or None; `dash` is a tuple like `(6, 4)` or None; `anchor` is a tk anchor (`center`, `n`, `s`, `e`, `w`, `ne`, `nw`, `se`, `sw`).
   - `painters.RecordingPainter`: appends `(op, args, kwargs)` tuples to `.calls`.
   - `arena_view.Palette` constants (the Global Constraints palette, as module-level names: `PAPER, GRID_MINOR, GRID_MAJOR, INK, MUTED, WINDOW, PANEL, RULE, START_FILL, START_EDGE, FACE, CAMERA, PLANNED, SEGMENT_COLOURS`) and `segment_colour(index) -> str` (cycles).
-  - `arena_view.Scene(arena: Arena, colour_of: dict[int, str], unreachable: dict[int, str], captured: frozenset[int], next_id: int | None, pose: Vector | None, trail: tuple[tuple[Vector, int], ...], remaining: tuple[tuple[Vector, int], ...])` frozen dataclass with defaults so `Scene(arena)` is valid.
+  - `arena_view.Scene(arena: Arena, colour_of: dict[int, str], unreachable: dict[int, str], captured: frozenset[int], next_id: int | None, pose: Pose | None, trail: tuple[tuple[Pose, int], ...], remaining: tuple[tuple[Pose, int], ...])` frozen dataclass with defaults so `Scene(arena)` is valid. `Pose` is `geometry.Pose(x, y, heading_deg)` (added in Task 4's fix round); positions are robot-centre cm, already continuous, so NO `+ 0.5` cell-centre offset is applied to poses or trails.
   - `arena_view.draw_static(painter, geometry, scene)` and `arena_view.draw_dynamic(painter, geometry, scene)`.
   - `arena_view.AXIS_MARGIN_PX = 26` (canvas is `arena_px + AXIS_MARGIN_PX` tall and wide; the arena is drawn at offset (0, 0) and the axis labels sit below and to the right... see step 3).
 
@@ -992,10 +994,10 @@ class Playback:
 import os
 
 import config
-from pathfinding.world.primitives import Direction, Vector
+from pathfinding.world.primitives import Direction
 from simulator import arena_view as av
 from simulator.arena import empty, load
-from simulator.geometry import Geometry
+from simulator.geometry import Geometry, Pose
 from simulator.painters import RecordingPainter
 
 TESTDATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "testdata")
@@ -1044,9 +1046,9 @@ def test_unreachable_obstacle_uses_warning_style_and_reason():
 
 def test_car_is_drawn_at_the_pose_and_trail_uses_segment_colours():
     arena = empty().add(5, 9)
-    pose = Vector(Direction.EAST, 60, 40)
-    trail = ((Vector(Direction.NORTH, 15, 16), 0), (Vector(Direction.NORTH, 15, 17), 0))
-    remaining = ((Vector(Direction.NORTH, 15, 18), 1), (Vector(Direction.NORTH, 15, 19), 1))
+    pose = Pose(60, 40, 90)
+    trail = ((Pose(15, 16, 0), 0), (Pose(15, 17, 0), 0))
+    remaining = ((Pose(15, 18, 0), 1), (Pose(15, 19, 0), 1))
     p = RecordingPainter()
     av.draw_dynamic(p, G, av.Scene(arena, pose=pose, trail=trail, remaining=remaining,
                                     colour_of={1: av.segment_colour(0)}))
@@ -1130,7 +1132,7 @@ class RecordingPainter:
 
 - [ ] **Step 4: implement `simulator/arena_view.py`**
 
-Layout: the canvas is `arena_px + AXIS_MARGIN_PX` wide and tall. The arena occupies `(0, 0)` to `(arena_px, arena_px)`; axis labels are drawn in the margin below (x labels, anchor `n`) and to the right (y labels, anchor `w`). Draw order in `draw_static`: paper, minor grid, major grid, start zone, obstacles (body, stripe, label; unreachable variant), arena border, axis labels. `draw_dynamic`: remaining route (dashed, PLANNED, one `line` per segment index), trail (one `line` per segment index in its colour, width 3), then the car at `scene.pose` or `scene.arena.robot.vector` (footprint dashed MUTED square from the Robot's own extents, body polygon fill `#FFFFFF` outline INK width 2, wheels INK, camera oval CAMERA). A trail or remaining segment with a single point is skipped (a line needs two).
+Layout: the canvas is `arena_px + AXIS_MARGIN_PX` wide and tall. The arena occupies `(0, 0)` to `(arena_px, arena_px)`; axis labels are drawn in the margin below (x labels, anchor `n`) and to the right (y labels, anchor `w`). Draw order in `draw_static`: paper, minor grid, major grid, start zone, obstacles (body, stripe, label; unreachable variant), arena border, axis labels. `draw_dynamic`: remaining route (dashed, PLANNED, one `line` per segment index), trail (one `line` per segment index in its colour, width 3), then the car at `scene.pose` or, with no route, a `Pose` at the robot's centre with its start heading (footprint dashed MUTED square from the Robot's own extents, body polygon fill `#FFFFFF` outline INK width 2, wheels INK, camera oval CAMERA). A trail or remaining segment with a single point is skipped (a line needs two).
 
 ```python
 """
@@ -1146,11 +1148,10 @@ from dataclasses import dataclass, field
 from itertools import groupby
 
 import config
-from pathfinding.world.primitives import Vector
-from pathfinding.world.world import Obstacle, Robot
 from pathfinding.world.primitives import Direction
+from pathfinding.world.world import Obstacle, Robot
 from simulator.arena import Arena
-from simulator.geometry import Geometry, car_shapes
+from simulator.geometry import HEADING_DEG, Geometry, Pose, car_shapes
 from simulator.painters import Painter
 
 PAPER, GRID_MINOR, GRID_MAJOR = "#FDFDFA", "#D5E8DC", "#A8CDB6"
@@ -1175,9 +1176,9 @@ class Scene:
     unreachable: dict[int, str] = field(default_factory=dict)    # image_id -> reason
     captured: frozenset[int] = frozenset()
     next_id: int | None = None
-    pose: Vector | None = None
-    trail: tuple[tuple[Vector, int], ...] = ()
-    remaining: tuple[tuple[Vector, int], ...] = ()
+    pose: Pose | None = None
+    trail: tuple[tuple[Pose, int], ...] = ()
+    remaining: tuple[tuple[Pose, int], ...] = ()
 
 
 def draw_static(p: Painter, g: Geometry, scene: Scene) -> None:
@@ -1231,13 +1232,14 @@ def _draw_obstacle(p: Painter, g: Geometry, o: Obstacle, scene: Scene) -> None:
 def draw_dynamic(p: Painter, g: Geometry, scene: Scene) -> None:
     _draw_route(p, g, scene.remaining, colour=None)
     _draw_route(p, g, scene.trail, colour="segment")
-    pose = scene.pose if scene.pose is not None else scene.arena.robot.vector
-    _draw_car(p, g, scene.arena.robot, pose)
+    robot = scene.arena.robot
+    pose = scene.pose if scene.pose is not None else Pose(robot.centre.x, robot.centre.y, HEADING_DEG[robot.direction])
+    _draw_car(p, g, robot, pose)
 
 
-def _draw_route(p: Painter, g: Geometry, cells: tuple[tuple[Vector, int], ...], colour: str | None) -> None:
-    for index, group in groupby(cells, key=lambda item: item[1]):
-        points = [g.to_canvas(v.x + 0.5, v.y + 0.5) for v, _ in group]
+def _draw_route(p: Painter, g: Geometry, poses: tuple[tuple[Pose, int], ...], colour: str | None) -> None:
+    for index, group in groupby(poses, key=lambda item: item[1]):
+        points = [g.to_canvas(pose.x, pose.y) for pose, _ in group]
         if len(points) < 2:
             continue
         if colour is None:
@@ -1246,11 +1248,11 @@ def _draw_route(p: Painter, g: Geometry, cells: tuple[tuple[Vector, int], ...], 
             p.line(points, fill=segment_colour(index), width=3)
 
 
-def _draw_car(p: Painter, g: Geometry, robot: Robot, pose: Vector) -> None:
-    cx, cy = pose.x + 0.5, pose.y + 0.5
+def _draw_car(p: Painter, g: Geometry, robot: Robot, pose: Pose) -> None:
+    cx, cy = pose.x, pose.y
     half = robot.clearance / 2
     p.rect(*g.rect(cx - half, cy - half, robot.clearance, robot.clearance), outline=MUTED, width=1, dash=(3, 3))
-    car = car_shapes(cx, cy, pose.direction)
+    car = car_shapes(pose)
     for wheel in car.wheels:
         p.polygon([g.to_canvas(x, y) for x, y in wheel], fill=INK)
     p.polygon([g.to_canvas(x, y) for x, y in car.body], fill=BODY_FILL, outline=INK, width=2)
@@ -1260,7 +1262,7 @@ def _draw_car(p: Painter, g: Geometry, robot: Robot, pose: Vector) -> None:
     p.oval(px - rp, py - rp, px + rp, py + rp, fill=CAMERA)
 ```
 
-The `+ 0.5` puts the robot and the route on the centre of a cell rather than its south-west corner, so a 1 cm cell reads as a point at its middle.
+Poses are robot-centre positions from playback (continuous floats), so they are drawn as-is; obstacles keep their corner-based `g.rect`.
 
 - [ ] **Step 5: run, expect 6 passed; suite green**
 
@@ -1420,7 +1422,7 @@ def render(arena: Arena, *, frame: int | None, source_name: str | None, scale: f
             unreachable={u.image_id: u.reason.value for u in route.unreachable},
             captured=frozenset(i for i, _ in playback.captured),
             next_id=playback.next_id,
-            pose=current.vector if current else None,
+            pose=current.pose if current else None,
             trail=tuple(playback.trail),
             remaining=tuple(playback.remaining),
         )
@@ -1781,7 +1783,7 @@ Add to `__init__`: `self.route = None`, `self.playback = None`, `self.source = S
             unreachable={u.image_id: u.reason.value for u in self.route.unreachable},
             captured=frozenset(i for i, _ in self.playback.captured),
             next_id=self.playback.next_id,
-            pose=current.vector if current else None,
+            pose=current.pose if current else None,
             trail=tuple(self.playback.trail),
             remaining=tuple(self.playback.remaining),
         )
@@ -2030,3 +2032,112 @@ Run: `./.venv/bin/python smoke.py | tail -1` → 4/4.
 Run: `./.venv/bin/python -m simulator --selftest` → 0.
 Run: `./.venv/bin/python -m simulator --snapshot $TMPDIR/final.png --arena testdata/03-unreachable.json` and view: obstacle 13 is drawn in the warning style with `NO_OBJECTIVES` under it.
 Then STOP. The manual checklist in SPEC is for the repo owner at a keyboard; list in the report which items an agent could not verify.
+
+---
+
+### Task 12: smooth arcs analytically in playback
+
+Added 2026-09-03 after Task 6's snapshot: turn arcs drawn through the planner's integer rear-point
+cells stair-step by up to 1.65 cm per frame and look hairy. The rear point actually follows a
+circle of known radius between two known cells, so playback can place every arc frame on the true
+circle and give it the exact swept heading. Frame count, distance bookkeeping and the end pose are
+unchanged; only the positions and headings of arc frames move.
+
+**Files:**
+- Modify: `algorithm/simulator/playback.py` (the turn branch of frame building only)
+- Test: `algorithm/tests/test_playback.py` (add two tests), `algorithm/simulator/SPEC.md` (one sentence in "Playback")
+
+**Interfaces:** unchanged. `Frame.pose` for arc frames now lies on the analytic arc.
+
+- [ ] **Step 1: failing tests**
+
+Append to `tests/test_playback.py`:
+
+```python
+def _turns(playback):
+    """(start_deg, end_deg, frames) for every turn in the route, in order."""
+    from pathfinding.search.instructions import Turn
+    out = []
+    i = 0
+    for seg_index, segment in enumerate(playback.route.segments):
+        for move in segment.moves:
+            n = len(move.vectors)
+            if isinstance(move, Turn):
+                out.append(playback.frames[i:i + n])
+            i += n
+        i += CAPTURE_DWELL_FRAMES
+    return out
+
+
+def test_arc_frames_lie_on_a_circle_of_the_turn_radius():
+    import math
+    p = Playback(route_for("02-four-obstacles.json"))
+    lead = p.route.robot.south_length - config.TURN_PIVOT_OFFSET_CM // p.route.cell_size
+    for frames in _turns(p):
+        # rear point of every arc frame (frame pose minus lead along heading)
+        rears = []
+        for f in frames[:-1]:
+            t = math.radians(f.pose.heading_deg)
+            rears.append((f.pose.x - lead * math.sin(t), f.pose.y - lead * math.cos(t)))
+        (x0, y0), (x1, y1) = rears[0], rears[-1]
+        r = max(abs(x1 - x0), abs(y1 - y0))
+        assert 30 <= r <= 45
+        # the centre is offset from the first rear point perpendicular to the initial heading
+        h0 = frames[0].pose.heading_deg
+        first_heading_is_vertical = round(h0) % 180 in (0, 90) and abs(math.cos(math.radians(round(h0)))) > 0.5
+        cx, cy = (x0 + (x1 - x0), y0) if first_heading_is_vertical else (x0, y0 + (y1 - y0))
+        for rx, ry in rears:
+            assert math.isclose(math.hypot(rx - cx, ry - cy), r, abs_tol=0.6), (cx, cy, r, rx, ry)
+
+
+def test_arc_frames_step_evenly():
+    import math
+    p = Playback(route_for("02-four-obstacles.json"))
+    for frames in _turns(p):
+        steps = [math.hypot(b.pose.x - a.pose.x, b.pose.y - a.pose.y) for a, b in zip(frames, frames[1:])]
+        assert max(steps) <= 1.25 and min(steps) >= 0.5, steps
+```
+
+(`test_playback_is_continuous`'s 2.5 cm bound still applies; keep it.)
+
+- [ ] **Step 2: run, expect the circle test to fail on the lattice positions**
+
+- [ ] **Step 3: implement, in the `Turn` branch of `Playback.__init__`**
+
+Keep `start_deg`, `end_deg`, `delta`, `lead`, the per-frame distance step and the final end-pose
+frame exactly as they are. Replace only how the `m` arc frames get their positions:
+
+```python
+                *arc, end = move.vectors
+                m = len(arc)
+                rear_start = (arc[0].x, arc[0].y)
+                rear_end = (arc[-1].x, arc[-1].y)
+                dx, dy = rear_end[0] - rear_start[0], rear_end[1] - rear_start[1]
+                # The rear point rides a quarter circle. Its centre sits beside the first rear cell,
+                # perpendicular to the initial heading: along x when starting north/south, along y
+                # when starting east/west.
+                if start_deg % 180 == 0:
+                    cx, cy = rear_start[0] + dx, rear_start[1]
+                else:
+                    cx, cy = rear_start[0], rear_start[1] + dy
+                phi0 = math.atan2(rear_start[1] - cy, rear_start[0] - cx)
+                phi1 = math.atan2(rear_end[1] - cy, rear_end[0] - cx)
+                sweep = ((phi1 - phi0 + math.pi) % (2 * math.pi)) - math.pi      # signed, +-pi/2
+                radius = math.hypot(rear_start[0] - cx, rear_start[1] - cy)
+                for k in range(m):
+                    t = (k + 1) / (m + 1)
+                    phi = phi0 + sweep * t
+                    heading = (start_deg + delta * t) % 360
+                    ux, uy = unit(heading)
+                    rx, ry = cx + radius * math.cos(phi), cy + radius * math.sin(phi)
+                    pose = Pose(rx + lead * ux, ry + lead * uy, heading)
+                    ... (append the frame exactly as before, with the same distance step)
+                then the end-pose frame as before.
+```
+
+Note `t = (k + 1) / (m + 1)` so the `m` arc frames plus the end frame divide the sweep evenly and
+the last arc frame is not a duplicate of the end pose. Update the SPEC "Playback" bullet: "arc
+cells reconstruct the centre" becomes "arc frames are placed on the true circle through the arc's
+end cells, with the heading equal to the angle swept, so the car glides through turns".
+
+- [ ] **Step 4: run the suite and smoke; then `./.venv/bin/python -m simulator --snapshot $TMPDIR/t12.png` and look at a turn at 4x** (crop with Pillow and Read it). The arcs must be smooth curves; straight legs unchanged.

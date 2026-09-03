@@ -19,3 +19,7 @@ flask-cors>=4.0
 
 # Tests. Harmless to install now; nothing in the service imports it.
 pytest>=8.0
+
+# Dev only, for python -m simulator --snapshot. The window renders with tkinter and never
+# imports PIL; this is only so a headless agent, and the README, can see what it draws.
+Pillow>=10.1

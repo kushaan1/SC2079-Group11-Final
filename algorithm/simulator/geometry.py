@@ -83,14 +83,33 @@ def rotate(points: list[tuple[float, float]], cx: float, cy: float, heading_deg:
 
 
 @dataclass(frozen=True)
+class Pose:
+    """A robot centre in arena cm with a continuous compass heading (degrees clockwise from north)."""
+    x: float
+    y: float
+    heading_deg: float
+
+
+def unit(heading_deg: float) -> tuple[float, float]:
+    """The unit vector pointing along a compass heading, as (dx, dy) in arena cm."""
+    t = math.radians(heading_deg)
+    return math.sin(t), math.cos(t)
+
+
+@dataclass(frozen=True)
 class CarShapes:
     body: list[tuple[float, float]]
     wheels: list[list[tuple[float, float]]]
     camera: tuple[float, float, float]
 
 
-def car_shapes(cx_cm: float, cy_cm: float, direction: Direction) -> CarShapes:
-    """The top-down car at a pose, in arena cm: chamfered body, four wheels, camera dot at the front."""
+def car_shapes(pose: Pose) -> CarShapes:
+    """
+    The top-down car at a pose, in arena cm: chamfered body, four wheels, camera dot at the front.
+
+    Takes a continuous heading rather than a Direction so a car part-way through a turn can be
+    drawn at the angle it is actually at, not snapped to the nearest compass point.
+    """
     w, l = config.ROBOT_BODY_CM
     hw, hl, ch = w / 2, l / 2, 2.0          # half width, half length, corner chamfer
     body = [(-hw + ch, hl), (hw - ch, hl), (hw, hl - ch), (hw, -hl + ch),
@@ -102,7 +121,7 @@ def car_shapes(cx_cm: float, cy_cm: float, direction: Direction) -> CarShapes:
             x, y = sx * (hw + ww / 2 - 0.5), sy * (hl - wl / 2 - 2)
             wheels.append([(x - ww / 2, y + wl / 2), (x + ww / 2, y + wl / 2),
                            (x + ww / 2, y - wl / 2), (x - ww / 2, y - wl / 2)])
-    heading = HEADING_DEG[direction]
+    cx_cm, cy_cm, heading = pose.x, pose.y, pose.heading_deg
     (camx, camy), = rotate([(0, hl - 2.5)], cx_cm, cy_cm, heading)
     return CarShapes(
         body=rotate(body, cx_cm, cy_cm, heading),
