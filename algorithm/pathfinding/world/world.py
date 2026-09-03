@@ -124,3 +124,20 @@ class Obstacle(Entity):
 class Robot(Entity):
     def __post_init__(self):
         super().__post_init__()
+
+    @classmethod
+    def planned(cls, direction: Direction, south_west: Point, north_east: Point) -> Robot:
+        """
+        Build a Robot the planner can actually turn.
+
+        The turning geometry needs the centre cell to be genuinely central, which holds only
+        when both corner extents are even (footprint in cells is odd). An odd extent is bumped
+        by one, so a robot declared 0..29 (30 cm) is planned as 0..30 (31 cm). Both extents are
+        tested even though ``Entity.__post_init__`` asserts the entity is square and they are
+        therefore always equal; the reference controller's expression is kept verbatim so no
+        behaviour rides on that assertion holding. This is the one home of the rule; the
+        controller, smoke test and simulator all call it.
+        """
+        if (north_east.x - south_west.x) % 2 != 0 and (north_east.y - south_west.y) % 2 != 0:
+            north_east = Point(north_east.x + 1, north_east.y + 1)
+        return cls(direction, south_west, north_east)

@@ -75,7 +75,9 @@ curl -s -X POST http://127.0.0.1:5000/pathfinding/ \
 ```
 
 One segment per obstacle in visit order, each ending in `CAPTURE_IMAGE`, plus an `unreachable` list
-of obstacles the plan skips. Full field-by-field description is in the protocol doc.
+of obstacles the plan skips. `image_id` must be 1–40 and identifies the obstacle, not the image — on
+a real run it is the tablet's obstacle number (1–8), echoed back unchanged. Full field-by-field
+description is in the protocol doc.
 
 ## Stub mode
 

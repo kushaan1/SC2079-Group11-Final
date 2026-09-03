@@ -32,22 +32,8 @@ from pathfinding.world.world import Obstacle, Robot, World
 
 
 def make_robot(direction: Direction, south_west: tuple[int, int], north_east: tuple[int, int]) -> Robot:
-    """
-    Build a Robot, applying the same off-centre workaround the reference controller applies.
-
-    The turning maths assumes the robot's centre cell is genuinely central, which only holds
-    when both extents are even. A robot spanning 0..29 is therefore planned as 0..30. This is
-    the corner-wise form of config.planned_footprint_cm(); config states the rule, this
-    reproduces the controller's exact expression of it so the smoke test exercises the geometry
-    the service does. pathfinding_controller.PathfindingRequestRobot.to_robot is the third copy.
-
-    config.START_POSE is already odd-sized, so for the default pose this is a no-op.
-    """
-    sw = Point(*south_west)
-    ne = Point(*north_east)
-    if (ne.x - sw.x) % 2 != 0 and (ne.y - sw.y) % 2 != 0:
-        ne = Point(ne.x + 1, ne.y + 1)
-    return Robot(direction, sw, ne)
+    """Build a Robot the way the service does, parity bump included (Robot.planned)."""
+    return Robot.planned(direction, Point(*south_west), Point(*north_east))
 
 
 def default_robot() -> Robot:

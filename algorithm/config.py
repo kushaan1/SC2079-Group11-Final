@@ -42,6 +42,16 @@ ARENA_SIZE_CM = 200
 #   simulator must render whatever GRID_SIZE says, not a second hardcoded resolution.
 GRID_SIZE = 200
 
+# Edge length of the square start zone at the arena's origin, in centimetres. Display only:
+# the planner does not keep the robot out of it.
+# SOURCE: RULES | measured | 40 x 40 cm bottom-left. MDP briefing p.16, algo deck p.3.
+START_ZONE_CM = 40
+
+# Edge length of one obstacle, in centimetres. Also the tablet's grid cell: the Android app
+# sends an obstacle as one cell (cx, cy) in 0..19, which the simulator converts to corners.
+# SOURCE: RULES | measured | 10 x 10 cm blocks. MDP briefing p.15.
+OBSTACLE_SIZE_CM = 10
+
 # ---------------------------------------------------------------------------------------
 # Robot
 # ---------------------------------------------------------------------------------------
@@ -66,10 +76,11 @@ def planned_footprint_cm(footprint_cm: int) -> int:
     """
     The footprint the planner will actually use for a requested footprint, in centimetres.
 
-    The parity rule, in one place: a square robot is only symmetric about its centre cell when
-    its size in cells is odd, so an even request is rounded up by one. Callers that LABEL a
-    footprint - the coverage tool above all - must label it with this, not with what was asked
-    for, or they report a number the planner never used.
+    A square robot is only symmetric about its centre cell when its size in cells is odd, so an
+    even request is rounded up by one. Callers that LABEL a footprint - the coverage tool above
+    all - must label it with this, not with what was asked for, or they report a number the
+    planner never used. ``Robot.planned`` is the corner-wise form of the same rule and is what
+    everything that builds a Robot goes through.
 
         >>> planned_footprint_cm(30), planned_footprint_cm(31)
         (31, 31)
@@ -78,8 +89,8 @@ def planned_footprint_cm(footprint_cm: int) -> int:
 
 
 # The default starting pose: direction plus the south-west and north-east corners, in cm.
-# Corners are INCLUSIVE, so a 31 cm robot spans 0..30 - an extent of 30, which is even, so the
-# controller's odd-extent bump does not fire and this pose is planned exactly as written.
+# Corners are INCLUSIVE, so a 31 cm robot spans 0..30 - an extent of 30, which is even, so
+# Robot.planned's odd-extent bump does not fire and this pose is planned exactly as written.
 # SOURCE: RULES | measured | Start zone is 40 x 40 cm in the bottom-left corner at origin (0, 0),
 #   robot facing north. AGENTS.md 3.1.
 START_POSE = {
@@ -87,6 +98,18 @@ START_POSE = {
     "south_west": (0, 0),
     "north_east": (ROBOT_FOOTPRINT_CM - 1, ROBOT_FOOTPRINT_CM - 1),
 }
+
+# The physical chassis, (width across, length along heading) in centimetres. Drawn by the
+# simulator inside the planning footprint; the planner never uses it.
+# SOURCE: STM | assumed | 18.6-18.8 cm wide, 23 cm plate, from the briefing photo (p.9).
+#   Re-measure with the camera mount fitted.
+ROBOT_BODY_CM = (19, 23)
+
+# Straight-line speed at competition speed, in centimetres per second. Used ONLY by the
+# simulator to turn a path length into an estimated duration; the planner costs in cm.
+# SOURCE: STM | placeholder | NOT MEASURED. 30 is a guess. Update together with
+#   TURN_RADIUS_CM, which must be measured at the same speed.
+ROBOT_SPEED_CM_S = 30
 
 # ---------------------------------------------------------------------------------------
 # Goal-pose generation (world/objective.py)
@@ -169,15 +192,29 @@ STRAIGHT_CHUNK_CELLS = (5,)
 # Image recognition
 # ---------------------------------------------------------------------------------------
 
-# Lowest valid image ID. Inclusive.
-# SOURCE: RULES | measured | The competition image table runs 11-40 (IDs 36-40 are the arrows and
-#   stop marker). The reference asserted 1 <= id < 36 and would reject five legal IDs.
-#   AGENTS.md 3.3.
-IMAGE_ID_MIN = 11
+# Lowest accepted obstacle identifier. Inclusive.
+# SOURCE: RULES | measured | In Task 1 the image on an obstacle is unknown until CV reads it, so
+#   this field identifies the OBSTACLE, not the image. The tablet numbers obstacles 1-8
+#   (checklist C.6, C.9 "TARGET, <Obstacle Number>, <Target ID>"; android branch Encoder.kt
+#   sends "ADD,B<id>,..."). The planner never uses the value beyond echoing it. 1-40 accepts
+#   both obstacle numbers and, for hand-written arenas, real image ids 11-40.
+IMAGE_ID_MIN = 1
 
-# Highest valid image ID. Inclusive.
-# SOURCE: RULES | measured | See IMAGE_ID_MIN.
+# Highest accepted obstacle identifier. Inclusive.
+# SOURCE: RULES | measured | See IMAGE_ID_MIN. 36-40 are the arrows and stop marker.
 IMAGE_ID_MAX = 40
+
+# Seconds the robot stands still at each obstacle for capture and inference. Simulator clock only.
+# SOURCE: CV | placeholder | NOT MEASURED. 2 s is a guess.
+CAPTURE_DWELL_S = 2.0
+
+# ---------------------------------------------------------------------------------------
+# Rules
+# ---------------------------------------------------------------------------------------
+
+# Task 1 time limit, in seconds. The simulator shows its estimate against this.
+# SOURCE: RULES | measured | 6 minutes for Task 1 (3 for Task 2). MDP briefing p.17.
+TASK_1_TIME_LIMIT_S = 360
 
 # ---------------------------------------------------------------------------------------
 # Service

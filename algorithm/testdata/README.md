@@ -19,6 +19,9 @@ curl -s -X POST http://192.168.50.12:5000/pathfinding/ \
 | `02-four-obstacles.json` | 4 | 4 segments in visit order `12, 11, 14, 13`, `unreachable` empty, ~2.5 s |
 | `03-unreachable.json` | 2 | **1 segment (11) and 1 unreachable (13, `NO_OBJECTIVES`)** — this is correct, not a bug |
 
+`image_id` in these files is the obstacle's identifier, not a real image ID; any value in 1–40 is
+accepted and is echoed back unchanged.
+
 `03` exists to exercise the `unreachable` path deliberately. Obstacle 13 faces north while sitting
 at y ≤ 159, so every pose that would photograph it lands beyond the arena's free area. Use it to
 check that the RPi and the tablet handle a skipped obstacle instead of silently showing one fewer.

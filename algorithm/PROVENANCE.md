@@ -58,8 +58,9 @@ across iterations instead of applying once. Hoisted out of the loop.
 
 **Fix 4 — `image_id` range rejected legal images.** They asserted `1 <= image_id < 36`, which
 rejects IDs 36–40: the four arrows and the stop marker, all of which the competition uses. Bounds
-now come from `config.IMAGE_ID_MIN`/`IMAGE_ID_MAX` (11–40) and a violation raises a `ValueError`
-naming the offending ID rather than a bare `assert` that vanishes under `python -O`.
+now come from `config.IMAGE_ID_MIN`/`IMAGE_ID_MAX` and a violation raises a `ValueError` naming
+the offending ID rather than a bare `assert` that vanishes under `python -O`. The accepted range is
+now **1–40**, not 11–40 — see "`image_id` is an obstacle id" below.
 
 **Fix 5 — every hardcoded physical number moved into `config.py`.** Arena size, standoff band,
 lateral tolerance, obstacle clearance, boundary adjustment, the four turning radii and the straight
@@ -117,13 +118,20 @@ collapse into a single dictionary key and one is lost outright. No legitimate ar
 since two obstacles cannot carry the same image.
 
 **A domain `ValueError` maps to 422, not 500.** The published request schema allows `image_id`
-`minimum: 1` while the domain allows 11–40, so IDs 1–10 satisfy one and violate the other. The
+`minimum: 1` with no upper bound while the domain allows 1–40, so an ID above 40 satisfies one and
+violates the other. The
 schema was deliberately **not** tightened — it is the contract the RPi generated a client from — so
 the narrower rule is enforced a layer down and mapped to a clean 422. Same for `AssertionError`
 raised while building the world: the planner states its input preconditions as bare asserts, so on
 that path they are request validation and a 500 would blame the RPi for their own request. The
 `ValueError` that `search()` raises for a non-accounting objective set is *our* bug and stays a 500.
 **Consequence: never run the service under `python -O`**, which strips asserts.
+
+**`image_id` is an obstacle id, so the accepted range starts at 1.** In Task 1 the image on an
+obstacle is unknown until CV reads it, so the field cannot be an image ID on the way in — the
+tablet numbers the obstacles 1–8 and sends that number, and the planner only echoes it back.
+Rejecting 1–10 therefore rejected every real run, so `config.IMAGE_ID_MIN` is 1 and the range
+1–40 accepts both obstacle numbers and the real image IDs a hand-written arena may use.
 
 **Error bodies use pydantic's key names** — `type`, `loc`, `msg` — so every 422 has one shape
 whether it came from schema validation or from our own checks. See

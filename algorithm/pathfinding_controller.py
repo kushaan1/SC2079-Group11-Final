@@ -104,38 +104,13 @@ class PathfindingRequestRobot(BaseModel):
     north_east: PathfindingPoint = Field(description="The north-east corner of the robot.")
 
     def to_robot(self) -> Robot:
-        """
-        Build the domain :class:`~pathfinding.world.world.Robot`, applying the parity bump.
-
-        The turning geometry assumes the robot's centre cell is genuinely central, which holds
-        only when both corner extents are even — i.e. when the footprint in cells is odd. An
-        odd extent is therefore bumped by one, so a robot declared as spanning 0..29 (30 cm) is
-        planned as 0..30 (31 cm).
-
-        This is the same rule as :func:`config.planned_footprint_cm`, expressed corner-wise
-        because that is what a request gives us. It is reproduced from the reference
-        controller verbatim rather than rewritten, because the constant it implies
-        (``config.ROBOT_FOOTPRINT_CM = 31``) was chosen to match what this expression actually
-        does.
-
-        **Known duplication:** the parity rule is implemented three times — here, in
-        ``config.planned_footprint_cm``, and in ``smoke.py:make_robot``. Unifying them is
-        deliberately deferred, because the three call sites take different inputs (corners,
-        a scalar footprint, corners again) and collapsing them risks changing behaviour for
-        no functional gain. If a fourth copy appears, unify them.
-        """
-        south_west = self.south_west.to_point()
-        north_east = self.north_east.to_point()
-
-        if (north_east.x - south_west.x) % 2 != 0 and (north_east.y - south_west.y) % 2 != 0:
-            north_east = Point(north_east.x + 1, north_east.y + 1)
-
-        return Robot(self.direction, south_west, north_east)
+        """Build the domain Robot. The parity bump lives in Robot.planned; see it for why."""
+        return Robot.planned(self.direction, self.south_west.to_point(), self.north_east.to_point())
 
 
 class PathfindingRequestObstacle(BaseModel):
     # ge=1 reproduces openapi.json's `minimum: 1` EXACTLY, and is deliberately looser than the
-    # 11-40 range config declares. Tightening the schema here would be the tidier-looking
+    # 1-40 range config declares. Tightening the schema here would be the tidier-looking
     # choice, but the schema is the published contract (AGENTS.md 2.2) and the RPi
     # client was generated from it. The narrower domain rule is enforced one layer down, in
     # Obstacle.__post_init__, and mapped to 422 by the route — see PROVENANCE.md and
@@ -347,8 +322,9 @@ def _construct_world(body: PathfindingRequest) -> World:
     become 422:
 
     - ``ValueError`` from ``Obstacle.__post_init__`` — ``image_id`` outside
-      ``config.IMAGE_ID_MIN..IMAGE_ID_MAX``. Reachable because the schema's ``minimum: 1`` is
-      looser than the domain's 11-40; IDs 1-10 satisfy one and violate the other.
+      ``config.IMAGE_ID_MIN..IMAGE_ID_MAX``. Reachable because the schema's ``minimum: 1`` has
+      no upper bound while the domain's range is 1-40; an id above 40 satisfies one and violates
+      the other.
     - ``AssertionError`` from ``Entity.__post_init__`` — corners inverted
       (``north_east`` below ``south_west``) or not square.
     - ``AssertionError`` from ``World.__init__`` — an entity outside the grid.

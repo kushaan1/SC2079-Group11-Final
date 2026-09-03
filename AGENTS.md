@@ -533,7 +533,7 @@ amount.
 | Greedy nearest ordering only | Can be materially worse than optimal | Precompute leg-cost matrix, then exhaustive/2-opt over orderings |
 | Heuristic written but never wired in — effectively Dijkstra | Slower than necessary | Wire a real admissible heuristic, or accept Dijkstra knowingly and measure |
 | Hardcoded server IP and port in `app.py` | Breaks on every network change | Config/env vars |
-| `image_id` asserted `< 36`, world size hardcoded `200` | Won't accept IDs 36–40 (arrows, stop) | Support the full 11–40 range |
+| `image_id` asserted `< 36`, world size hardcoded `200` | Won't accept IDs 36–40 (arrows, stop) | Support the full 11–40 image range, and accept 1–40 on the `image_id` field because it carries the tablet's obstacle number (1–8) |
 | Fixed 5 obstacles assumed throughout | Our arena has 4–8 | Parameterise `N` |
 | Vision trained on their lab floor | Our evaluation arena is background-agnostic and may be anywhere on campus | Augment aggressively across backgrounds/lighting |
 
@@ -625,7 +625,8 @@ Two traps in their tree:
 1. **Never hardcode a physical constant inline.** Turning radii, robot footprint, standoff distance,
    arena size, obstacle count, camera offsets — all live in one config module per subsystem, and are
    documented in `/docs/calibration.md` with the date and conditions they were measured under.
-2. **Never assume 5 obstacles or a 15-image set.** `4 ≤ N ≤ 8`, IDs 11–40.
+2. **Never assume 5 obstacles or a 15-image set.** `4 ≤ N ≤ 8`, image IDs 11–40 — but the
+   `image_id` request field accepts 1–40, because it carries the tablet's obstacle number (1–8).
 3. **Never assume a fixed background or lighting.** The evaluation arena can be drawn anywhere.
 4. **Every subsystem must be runnable and demonstrable standalone**, because that is how the
    checklist is graded.

@@ -46,8 +46,10 @@ Interactive Swagger UI for poking at it by hand: `http://<address>:<port>/openap
 - Coordinates are **centimetres**, origin at the arena's south-west corner, and both corners are
   **inclusive** — a 10 cm obstacle spans e.g. 50..59, not 50..60.
 - `direction` on an obstacle is the face the image is on; on the robot it is the heading.
-- `image_id` must be **11–40**. IDs 11–35 are the digits and letters, 36–40 the four arrows and the
-  stop marker. IDs outside that range are rejected (see "Errors").
+- `image_id` must be **1–40**. It identifies the obstacle, not the image: on a real run it is the
+  tablet's obstacle number (1–8), and it is echoed back unchanged in `segments[].image_id` and
+  `unreachable[].image_id`. Hand-written arenas may instead use a real image ID (11–35 the digits
+  and letters, 36–40 the arrows and stop marker). IDs outside 1–40 are rejected (see "Errors").
 - `image_id` must be **unique** across obstacles.
 - `verbose: false` omits the per-cell path and zeroes the cost. Use it once you no longer need to
   draw the route — a 4-obstacle verbose response carries ~1000 path vectors.
@@ -128,7 +130,7 @@ algorithm's own rules:
 ```jsonc
 [ { "type": "value_error",
     "loc": ["obstacles", 0, "image_id"],
-    "msg": "image_id 5 is outside the valid range 11-40 (inclusive)." } ]
+    "msg": "image_id 41 is outside the valid range 1-40 (inclusive)." } ]
 ```
 
 Read `msg` for something human-readable and `loc` for which field. `loc` keeps list indices as
@@ -136,7 +138,7 @@ integers (`0`, not `"0"`). Cases that return 422:
 
 | Cause | `loc` |
 |---|---|
-| `image_id` outside 11–40 | `["obstacles", <i>, "image_id"]` |
+| `image_id` outside 1–40 | `["obstacles", <i>, "image_id"]` |
 | Duplicate `image_id` across obstacles | `[]` |
 | Corners inverted or not square | `["obstacles", <i>]` or `["robot"]` |
 | Robot or obstacle outside the 200×200 arena | `[]` |
@@ -162,15 +164,16 @@ end before the planner is finished.
 ## Deviations from the prior-year contract
 
 The prior-year team's `openapi.json` is what an earlier generated client was built from. The
-**request shape is unchanged**, so such a client still works. Four things differ, all additive or
+**request shape is unchanged**, so such a client still works. Five things differ, all additive or
 error-path only:
 
 | # | Delta | Breaks a client? |
 |---|---|---|
 | 1 | `unreachable` response field added | **Possibly** — see the warning above |
 | 2 | Duplicate `image_id`s rejected with 422 | No. Never a legal arena |
-| 3 | `image_id` 1–10 returns 422 instead of 500 | No. Schema still declares `minimum: 1`; the narrower 11–40 rule is enforced below it and mapped to a clean 422 |
+| 3 | An `image_id` outside 1–40 returns 422 instead of 500 | No. Schema still declares `minimum: 1`; the narrower 1–40 rule is enforced below it and mapped to a clean 422 |
 | 4 | 422 bodies use `type`, not `type_` | Only if you parse 422 bodies. The prior-year schema did not match its own framework's output; ours matches what is actually emitted |
+| 5 | `image_id` 1–10 accepted (was 422) | No. The field is the tablet's obstacle number, which starts at 1 |
 
 Rationale for each is in [`algorithm/PROVENANCE.md`](../../algorithm/PROVENANCE.md) under "Design
 decisions".
