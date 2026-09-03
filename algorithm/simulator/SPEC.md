@@ -1,7 +1,8 @@
 # Simulator spec
 
-Status: implemented 2026-09-03 (plan tasks 1-12); the manual checklist below is still to be run by
-a human at the keyboard. Owner: algorithms. Replaces the 2026-08-27 draft.
+Status: implemented 2026-09-03 (plan tasks 1-12), shortest-time source added 2026-09-04; the
+manual checklist below is still to be run by a human at the keyboard. Owner: algorithms.
+Replaces the 2026-08-27 draft.
 
 ## Why
 
@@ -18,9 +19,10 @@ All three add: "This should be shown on a simulator displaying a grid map of the
 The algorithms deck (p. 40) adds: robot position "in real time (a square shape or a marker is ok)
 in a time stepped manner", and "report images recognized as it is done".
 
-Without a simulator these score zero. This spec covers B.1 and B.2 fully. B.3 needs a
-shortest-time route source, which is separate work; the simulator only provides the selector it
-plugs into.
+Without a simulator these score zero. This spec covers all three. B.1 and B.2 are the greedy
+source; B.3 is the shortest-time source (`pathfinding/search/tour.py`, separate work) shown
+through the same selector, so the two routes over one arena can be compared side by side in
+front of the supervisor.
 
 ## Scope
 
@@ -28,10 +30,11 @@ In: a tkinter window; grid map of the arena; start zone; obstacles with the imag
 click-to-place editing; open/save arenas in the exact JSON the RPi sends; animated time-stepped
 playback with play, pause, step, reset, speed; captured list filling in as the robot arrives;
 estimated clock against the 6-minute limit; unreachable obstacles drawn with their reason; a
-route-source selector.
+route-source selector carrying both the greedy planner and the shortest-time optimiser.
 
-Out: the optimiser itself; sensors, camera, motor error; Task 2; any network; live display of
-the real robot (that is the tablet's job, checklist C.5 to C.10).
+Out: the optimiser itself (it lives in `pathfinding/`; the simulator only calls it); sensors,
+camera, motor error; Task 2; any network; live display of the real robot (that is the tablet's
+job, checklist C.5 to C.10).
 
 ## Runs anywhere
 
@@ -55,7 +58,7 @@ algorithm/simulator/
   __main__.py     python -m simulator [--arena FILE] [--snapshot OUT.png --frame N]
   geometry.py     cm <-> px, y-flip, snapping, cell <-> corners, car outline. Pure
   arena.py        Arena (robot + obstacles), edit rules, load/save request JSON. Pure
-  routes.py       RouteSource protocol + GreedyRouteSource. Pure
+  routes.py       RouteSource protocol + Greedy and Optimal RouteSource. Pure
   playback.py     frames, dwell, captured list, clock. Pure
   arena_view.py   Scene + Palette, and draw_static/draw_dynamic against a Painter. Pure
   painters.py     Painter protocol; TkPainter (tk.Canvas) and PilPainter (PNG)
@@ -73,7 +76,7 @@ dependency for it; the window itself needs only tkinter.
 
 Dependencies flow downward only: app -> arena_view -> geometry; app -> playback, routes,
 arena -> pathfinding. The simulator calls the planner in-process (`generate_objectives` then
-`search`). No HTTP.
+`search` or `tour.plan_optimal`). No HTTP.
 
 ## Coordinates
 
@@ -132,7 +135,11 @@ Obstacle: ink square of `obstacle.clearance` cm with the id centred in paper-whi
 image-face stripe. Unreachable: paper fill, `#E4572E` dashed outline, red id, reason below.
 
 Panel (right, 300 px): "Plan route" primary button, "Open arena", "Save arena"; Route section
-with a radio per registered `RouteSource`, total length in cm, planning time; Obstacles list with
+with a radio per registered `RouteSource` -- "Greedy, nearest first" and "Shortest time", in
+registry order, greedy first because it is the fast one to press -- then total length in cm,
+estimated time as `m:ss`, and planning time. Choosing a source clears the route, so the two are
+never confused; "Driving time" is driving only, while the transport clock adds the capture
+dwells, which is why the two disagree. Obstacles list with
 a coloured chip per obstacle (colour = its segment), position, face, and state (captured / next /
 unreachable + reason); Captured list in visit order with the estimated time of each capture.
 
@@ -145,7 +152,7 @@ case everywhere. Buttons say what they do: "Plan route", "Open arena", "Save are
 ## Playback
 
 The planner's `Segment.vectors` is a collision-check set, not a path: a turn's arc comes out of
-`turn.__curve` with its two ends interleaved, every arc cell carries the post-turn heading, and
+`turn.__offsets` with its two ends interleaved, every arc cell carries the post-turn heading, and
 the arc is the path of a point `lead` cm behind the robot centre (`robot.south_length -
 TURN_PIVOT_OFFSET_CM`, 12 cm for the 31 cm robot), while the appended end pose is the new centre.
 Two consequences, both handled:
@@ -158,11 +165,17 @@ Two consequences, both handled:
   rotates through turns and never jumps.
 
 The last frame of each segment carries `captured_id` and is repeated `CAPTURE_DWELL_FRAMES` (10)
-times so the capture moment is visible. Dwell frames add no distance. `distance_cm` accumulates
-per move from the planner's own costs (a cell per straight cell, `arc_length` per turn), so at
-the end it equals `Route.total_cost * cell_size`. `estimated_seconds = distance_cm / config.ROBOT_SPEED_CM_S`
-plus `config.CAPTURE_DWELL_S` per capture. Empty routes, single-frame routes, `step()` past the
-end, `seek()` clamping and `reset()` are all handled and tested.
+times so the capture moment is visible. Dwell frames add neither distance nor time.
+
+Each frame carries two running totals, because they are not proportional. `distance_cm`
+accumulates per move from the planner's own costs (a cell per straight cell, `arc_length` per
+turn), so at the end it equals `Route.total_cost * cell_size`; that is the length readout.
+`seconds` accumulates under `pathfinding.cost.TIME_SECONDS` -- the model the optimiser
+minimises -- so a straight cell adds `cell_size / config.ROBOT_SPEED_CM_S` and a turn adds a
+flat `config.TURN_TIME_S` spread evenly over its arc frames, and at the end it equals
+`Route.seconds`. `estimated_seconds = frame.seconds` plus `config.CAPTURE_DWELL_S` per capture
+so far. Empty routes, single-frame routes, `step()` past the end, `seek()` clamping and
+`reset()` are all handled and tested.
 
 Speed pills set ms per frame: 40, 20, 10, 5. The loop is `root.after`, never a thread. The handle
 is stored so Pause and window close can cancel it.
@@ -211,17 +224,21 @@ IMAGE_ID_MIN = 1            # was 11; see "Obstacles are numbered"
 - arena: add/remove/move/cycle, every refusal reason, `testdata/02-four-obstacles.json`
   round-trips; obstacles keep ids, faces, corners.
 - routes: `GreedyRouteSource.plan(world)` equals `generate_objectives` + `search` directly:
-  same ids, costs, instructions.
+  same ids, costs, instructions; `Route.seconds` is the sum of its segments'; the registry is
+  greedy then optimal, and the optimal route photographs at least as many obstacles as greedy
+  and, at the same count, takes no longer.
 - playback: frame count, one capture per segment at its last frame, dwell repeats, distance
-  excludes dwell, captured order equals `[s.image_id for s in segments]`, reset, step past end,
-  seek clamp, empty route.
+  and time both exclude dwell, the last frame's clock is `Route.seconds` plus one
+  `CAPTURE_DWELL_S` per segment, captured order equals `[s.image_id for s in segments]`,
+  reset, step past end, seek clamp, empty route.
 - arena_view: against a recording painter, the start zone lands bottom-left, every obstacle is
   drawn with its face stripe, unreachable obstacles use the warning style, the car is drawn at
   the pose.
 - snapshot: renders `testdata/02` to a PNG file that exists and has the arena's pixel size.
 
 Not unit-tested: `app.py`, `fonts.py`, `TkPainter`. `python -m simulator --selftest` opens
-the window, plans testdata 02, steps through the route, and exits, so a crash in wiring is
+the window, plans testdata 02, steps through the route, edits the arena and re-plans, then
+switches to "Shortest time" and plans and plays that too, and exits, so a crash in wiring is
 caught without eyes. Everything visual is verified by a human with the checklist below.
 
 ## Manual checklist (also the demo script)
@@ -238,6 +255,9 @@ caught without eyes. Everything visual is verified by a human with the checklist
    with `NO_OBJECTIVES`. Correct, not a bug.
 10. Plan with zero obstacles; no crash.
 11. Save arena; the file is a valid request body (curl it at the service).
+12. Choose "Shortest time" and Plan again (it thinks for longer; the button says
+    "Planning..."). The route is drawn the same way; it photographs at least as many obstacles as greedy and, at equal count, its "Driving time" is no larger than the
+    greedy one's. That is B.3.
 
 ## Phases
 
@@ -246,11 +266,15 @@ caught without eyes. Everything visual is verified by a human with the checklist
 3. Captured list, clock, config additions. Gate: checks 6-7. **Earns B.2.**
 4. Editing and `arena` open/save. Gate: checks 3, 9-11.
 5. Unreachable rendering, route selector. Ready for the optimiser to plug in.
+6. `OptimalRouteSource`, the time-model clock, "Driving time". Gate: check 12 and the
+   selftest's second plan. **Earns B.3.**
 
 ## Risks
 
 - Y flip: isolated in `geometry.py`, asserted by tests, gated at phase 1.
-- Planning blocks the UI for ~2.5 s: disable the button and show "Planning..." Not threaded.
+- Planning blocks the UI, and "Shortest time" costs several times what greedy does: disable
+  the button and show "Planning..." Not threaded. Latency figures live in `README.md`
+  limitation 8, so there is one place to keep them honest.
 - Legal 30 cm obstacle spacing comes back unreachable: real planner limitation
   (`README.md` limitation 1). The simulator makes it visible; say it before demoing.
 - Clock is a guess until STM measures speed: labelled "est." in the UI, placeholder in config.

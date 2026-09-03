@@ -6,7 +6,7 @@ Two things have to be undone here before the cells can be animated. Both come fr
 planner stores a turn.
 
 1. Order. ``search.Segment.moves`` now hands over each turn's arc in driving order (the raw
-   ``turn.__curve`` output is an interleaved collision-check set, not a path). This module relies
+   ``turn.__offsets`` output is an interleaved collision-check set, not a path). This module relies
    on that ordering and does not re-sort anything.
 2. Reference point and heading. An arc cell is the path of a point ``lead`` cm BEHIND the robot
    centre, and every arc cell carries the POST-turn heading. Played back as-is the car would
@@ -23,6 +23,7 @@ import math
 from dataclasses import dataclass
 
 import config
+from pathfinding import cost
 from pathfinding.search.instructions import Turn, TurnInstruction
 from simulator.geometry import HEADING_DEG, Pose, unit
 from simulator.routes import Route
@@ -44,6 +45,7 @@ class Frame:
     captured_id: int | None      # set on a segment's last cell and its dwell frames
     dwell: bool                  # True for the repeated frames; they are not travel
     distance_cm: float           # cumulative, including this frame; dwell repeats the previous
+    seconds: float               # cumulative driving time under cost.TIME_SECONDS; dwell repeats
 
 
 class Playback:
@@ -55,6 +57,11 @@ class Playback:
         lead = (route.robot.south_length - config.TURN_PIVOT_OFFSET_CM // cell_size
                 if route.robot is not None else 0)
         distance = 0.0
+        # Two clocks, not one: distance is centimetres of path, seconds is the time model the
+        # optimiser minimises. They are not proportional - a turn is charged a flat
+        # config.TURN_TIME_S however short its arc - so the length readout cannot be divided
+        # into the estimate, and both have to be accumulated.
+        seconds = 0.0
 
         for index, segment in enumerate(route.segments):
             first = len(self.frames)
@@ -66,6 +73,9 @@ class Playback:
                     delta = ((end_deg - start_deg + 180) % 360) - 180
                     m = len(arc)
                     step = move.turn.arc_length(cell_size) * cell_size / (m + 1)
+                    # The turn's whole time charge, spread evenly over the m arc frames and the
+                    # end frame, so the clock runs through a turn instead of jumping at its end.
+                    tick = cost.TIME_SECONDS.turn(move.turn, cell_size) / (m + 1)
                     if m:
                         # The rear point rides a quarter circle between the arc's first and last
                         # cells. Its centre sits beside the first of them, perpendicular to the
@@ -87,24 +97,30 @@ class Playback:
                             heading = (start_deg + delta * t) % 360
                             ux, uy = unit(heading)
                             distance += step
+                            seconds += tick
                             self.frames.append(Frame(
                                 Pose(cx + radius * math.cos(phi) + lead * ux,
                                      cy + radius * math.sin(phi) + lead * uy, heading),
-                                index, None, False, distance))
+                                index, None, False, distance, seconds))
                     distance += step
-                    self.frames.append(Frame(Pose(end.x, end.y, end_deg), index, None, False, distance))
+                    seconds += tick
+                    self.frames.append(Frame(Pose(end.x, end.y, end_deg), index, None, False,
+                                             distance, seconds))
                 else:
                     for vector in move.vectors:
                         distance += cell_size
+                        seconds += cost.TIME_SECONDS.straight(1, cell_size)
                         self.frames.append(Frame(
                             Pose(vector.x, vector.y, HEADING_DEG[vector.direction]),
-                            index, None, False, distance))
+                            index, None, False, distance, seconds))
 
             if len(self.frames) > first:
                 arrival = self.frames[-1]
-                self.frames[-1] = Frame(arrival.pose, index, segment.image_id, False, arrival.distance_cm)
+                self.frames[-1] = Frame(arrival.pose, index, segment.image_id, False,
+                                        arrival.distance_cm, arrival.seconds)
                 for _ in range(CAPTURE_DWELL_FRAMES):
-                    self.frames.append(Frame(arrival.pose, index, segment.image_id, True, arrival.distance_cm))
+                    self.frames.append(Frame(arrival.pose, index, segment.image_id, True,
+                                             arrival.distance_cm, arrival.seconds))
 
         self.index = 0
         # Precomputed once: the properties below are read every animation tick, so none of them
@@ -148,8 +164,7 @@ class Playback:
 
     def seconds_at(self, index: int) -> float:
         """Estimated elapsed time when frame `index` is reached, driving plus captures so far."""
-        return (self.frames[index].distance_cm / config.ROBOT_SPEED_CM_S
-                + self._captures_upto(index) * config.CAPTURE_DWELL_S)
+        return self.frames[index].seconds + self._captures_upto(index) * config.CAPTURE_DWELL_S
 
     @property
     def estimated_seconds(self) -> float:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from pathfinding import cost
 from pathfinding.report import UnreachableObstacle, UnreachableReason
 from pathfinding.search.instructions import Turn, TurnInstruction, Move, MoveInstruction, MiscInstruction
 from pathfinding.search.segment import segment
@@ -30,19 +31,62 @@ class SearchResult:
 
         ``segments`` and ``unreachable`` partition the world's obstacles: every obstacle
         appears in exactly one of them, and no ``image_id`` appears in both. That is
-        enforced, not merely intended — :func:`search` rejects an
+        enforced, not merely intended — :func:`require_accounting` rejects an
         :class:`~pathfinding.world.objective.ObjectiveGeneration` that does not account for
-        exactly ``world.obstacles``, so a non-partitioning result cannot be constructed by
-        the only code that constructs one.
+        exactly ``world.obstacles``, and both functions that build a SearchResult
+        (:func:`search` and :func:`~pathfinding.search.tour.plan_optimal`) call it first, so
+        a non-partitioning result cannot be constructed by the only code that constructs one.
 
-        Order is deterministic — :attr:`~pathfinding.report.UnreachableReason.NO_OBJECTIVES`
-        entries first, in ``world.obstacles`` order, then
-        :attr:`~pathfinding.report.UnreachableReason.NO_PATH` entries in goal-pose order.
+        Order is deterministic, and the two planners produce it differently:
+
+        - :func:`search` appends
+          :attr:`~pathfinding.report.UnreachableReason.NO_OBJECTIVES` entries first (carried
+          through from goal-pose generation, in ``world.obstacles`` order), then the
+          :attr:`~pathfinding.report.UnreachableReason.NO_PATH` entries in goal-pose order —
+          the order of the ``remaining`` dict at the moment it gave up.
+        - :func:`~pathfinding.search.tour.plan_optimal` also carries the NO_OBJECTIVES
+          entries through first, then makes ONE pass over the obstacles that had goal poses,
+          in ``world.obstacles`` order, appending every one its chosen route does not
+          photograph. So its NO_PATH entries are in ``world.obstacles`` order, and they are
+          derived from the route that won rather than decided in advance — which is what
+          keeps the two lists partitioning when several candidate routes were in play.
+
         Compare it as a set if that order is not what a caller cares about.
     """
 
     segments: list[Segment]
     unreachable: list[UnreachableObstacle]
+
+
+def require_accounting(world: World, generated: ObjectiveGeneration) -> None:
+    """
+    The precondition behind :class:`SearchResult`'s partition guarantee, enforced rather than
+    merely written down.
+
+    ``generated`` must account for exactly the obstacles in ``world``. That holds by
+    construction for ``generate_objectives(world)``, and stops holding the moment anyone
+    hands over a filtered dict. The controller serialises ``unreachable`` over HTTP as the
+    definitive list of obstacles the robot will not visit, so a result that quietly fails to
+    partition is a wire-level lie about the plan - the exact class of silent failure the
+    structured report exists to remove. It also catches two obstacles that collapsed into one
+    dict key, by comparing image_ids as a multiset rather than a set.
+
+    Every function that builds a SearchResult calls this FIRST - :func:`search` and
+    :func:`~pathfinding.search.tour.plan_optimal` alike. Microseconds on <=8 obstacles, and
+    it fails at the mistake rather than seconds later with a plausible-looking answer.
+
+    :raises ValueError: If ``generated`` does not account for exactly ``world.obstacles``.
+    """
+    offered = sorted([obstacle.image_id for obstacle in generated.objectives]
+                     + [entry.image_id for entry in generated.unreachable])
+    present = sorted(obstacle.image_id for obstacle in world.obstacles)
+    if offered != present:
+        raise ValueError(
+            f"ObjectiveGeneration does not account for this world's obstacles: it offers "
+            f"image_ids {offered}, the world holds {present}. Pass the ObjectiveGeneration "
+            f"that generate_objectives() returned for THIS world; to plan a subset of the "
+            f"obstacles, build a World containing that subset."
+        )
 
 
 def search(world: World, generated: ObjectiveGeneration) -> SearchResult:
@@ -59,26 +103,7 @@ def search(world: World, generated: ObjectiveGeneration) -> SearchResult:
     :return: A :class:`SearchResult` holding the segments and every obstacle not visited.
     :raises ValueError: If ``generated`` does not account for exactly ``world.obstacles``.
     """
-    # The precondition behind SearchResult's partition guarantee, enforced rather than
-    # merely written down. `generated` must account for exactly the obstacles in `world`.
-    # That holds by construction for generate_objectives(world), and stops holding the
-    # moment anyone hands over a filtered dict. The controller serialises `unreachable` over HTTP as
-    # the definitive list of obstacles the robot will not visit, so a result that quietly
-    # fails to partition is a wire-level lie about the plan - the exact class of silent
-    # failure this module exists to remove. It also catches two obstacles that collapsed
-    # into one dict key by comparing image_ids as a multiset rather than a set.
-    # Checked BEFORE the search: microseconds on <=8 obstacles, and it fails at the mistake
-    # rather than seconds later with a plausible-looking answer.
-    offered = sorted([obstacle.image_id for obstacle in generated.objectives]
-                     + [entry.image_id for entry in generated.unreachable])
-    present = sorted(obstacle.image_id for obstacle in world.obstacles)
-    if offered != present:
-        raise ValueError(
-            f"ObjectiveGeneration does not account for this world's obstacles: it offers "
-            f"image_ids {offered}, the world holds {present}. Pass the ObjectiveGeneration "
-            f"that generate_objectives() returned for THIS world; to plan a subset of the "
-            f"obstacles, build a World containing that subset."
-        )
+    require_accounting(world, generated)
 
     # Copy before mutating. The reference popped from the caller's dict, so after a search
     # the caller's `objectives` was empty and the same world could not be re-planned or
@@ -140,14 +165,19 @@ def search(world: World, generated: ObjectiveGeneration) -> SearchResult:
 @dataclass
 class Segment:
     image_id: int
-    cost: int
+    cost: int                     # path length in grid cells (== cm at the default 1 cm cell)
     instructions: list[TurnInstruction | MoveInstruction | MiscInstruction]
     vectors: list[Vector]
     moves: list[Turn | Move]      # the segment's parts in driving order; turn arcs de-interleaved
+    seconds: float                # estimated driving time of `moves`; excludes the capture dwell
 
     @classmethod
-    def compress(cls, world: World, information: tuple[Obstacle, int, list[tuple[Vector, Turn | Move | None]]]) -> Segment:
-        obstacle, cost, parts = information
+    def compress(cls, world: World, information: tuple[Obstacle, float, list[tuple[Vector, Turn | Move | None]]]) -> Segment:
+        # The search's own cost is discarded: it is denominated in whatever the caller asked the
+        # search to minimise, which for a time-weighted search is seconds. Re-costing the moves
+        # under DISTANCE_CELLS keeps `cost` one unit whichever weights planned the leg. For a
+        # distance-weighted search the two numbers are equal, so greedy planning is unchanged.
+        obstacle, _search_cost, parts = information
         instructions: list[TurnInstruction | MoveInstruction | MiscInstruction] = []
         vectors: list[Vector] = []
         moves: list[Turn | Move] = []
@@ -176,14 +206,18 @@ class Segment:
 
         instructions.append(MiscInstruction.CAPTURE_IMAGE)
 
-        return cls(obstacle.image_id, cost, instructions, vectors, moves)
+        # Not named `cost`: that would make the module-level `cost` import a local of this
+        # method and turn the two reads above into an UnboundLocalError.
+        distance = round(sum(cost.move_cost(m, cost.DISTANCE_CELLS, world.cell_size) for m in moves))
+
+        return cls(obstacle.image_id, distance, instructions, vectors, moves, cost.seconds(moves, world.cell_size))
 
 
 def _ordered_arc(cells: list[Vector], start: Vector) -> list[Vector]:
     """
     Put a turn's cells in driving order.
 
-    ``turn.__curve`` fills the arc from both ends at once and appends ``a0, b0, a1, b1, ...`` then
+    ``turn.__offsets`` fills the arc from both ends at once and appends ``a0, b0, a1, b1, ...`` then
     the end pose, so the list it returns is a collision-check SET, not a path. Split the two
     interleaved halves, join them at the 45-degree point, pick the direction that begins nearest
     ``start`` (the pose before the turn), drop consecutive duplicates, and keep the end pose last.

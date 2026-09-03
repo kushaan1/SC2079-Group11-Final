@@ -226,6 +226,9 @@ class SimulatorApp:
                            anchor="w").pack(fill="x")
         if self.route is not None:
             self._row(self.route_frame, "Total length", f"{self.route.total_cost * self.route.cell_size:,} cm")
+            # Driving only. The transport clock adds the capture dwells on top, so the two
+            # numbers differ by design and the bar is the one to compare against the limit.
+            self._row(self.route_frame, "Driving time", clock(self.route.seconds))
             self._row(self.route_frame, "Planned in", f"{self.route.plan_ms / 1000:.1f} s")
 
         scene = self.scene()
@@ -462,7 +465,8 @@ class SimulatorApp:
 
 
 def _schedule_selftest(root: tk.Tk, app: SimulatorApp) -> None:
-    """Drive one route without eyes: plan, play at 4x, then step, reset and scrub, then close.
+    """Drive the window without eyes: plan, play at 4x, step, reset and scrub, edit the arena,
+    re-plan, then switch to the shortest-time source and plan and play that one too, then close.
 
     Set MDP_SELFTEST_RAISE=1 to raise inside a callback and prove the exception hook fails the run.
     """
@@ -498,10 +502,25 @@ def _schedule_selftest(root: tk.Tk, app: SimulatorApp) -> None:
         app.try_edit(lambda: app.arena.remove(last))
         assert len(app.arena.obstacles) == before
         app.on_plan()
-        root.after(100, finish)
+        root.after(100, optimal)
+
+    def optimal() -> None:
+        # The second source, end to end: switching clears the route, planning fills it again.
+        # The plan runs inside this callback and blocks; that is what pressing the button does.
+        app.source_var.set("Shortest time")
+        app.on_source()
+        assert app.route is None, "switching source must drop the old route"
+        app.on_plan()
+        assert app.route is not None, app.status_var.get()
+        assert app.route.source_name == "Shortest time", app.route.source_name
+        assert app.playback.frames, "optimal route has no frames"
+        app.on_play()
+        root.after(500, finish)
 
     def finish() -> None:
         try:
+            app.stop_timer()
+            assert app.playback.index > 0, "optimal route did not play"
             app.status("Selftest done.")
         finally:
             root.destroy()

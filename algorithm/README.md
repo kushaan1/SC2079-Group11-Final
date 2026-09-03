@@ -79,6 +79,11 @@ of obstacles the plan skips. `image_id` must be 1–40 and identifies the obstac
 a real run it is the tablet's obstacle number (1–8), echoed back unchanged. Full field-by-field
 description is in the protocol doc.
 
+The visiting order is the shortest-time one by default. Add `"strategy": "greedy"` to the body for
+the old nearest-first order. Optimal never photographs fewer obstacles than greedy and, at equal
+count, never takes longer to drive; both plan in under a second on four obstacles. Each segment
+carries its estimated driving time in `seconds` when `verbose` is true.
+
 ## Stub mode
 
 ```sh
@@ -112,36 +117,45 @@ Paths are `config.REPLAY_DIR` and `config.DUMP_PATH`. Both are gitignored.
 ## Smoke test
 
 ```sh
-./.venv/bin/python smoke.py     # 4 arenas, exits non-zero on any regression
+./.venv/bin/python smoke.py     # 5 arenas, exits non-zero on any regression
 ```
 
-Prints instruction streams and unreachable obstacles for four arenas with recorded baselines. It is
+Prints instruction streams and unreachable obstacles for five arenas with recorded baselines. It is
 a **regression anchor, not an independent oracle** — the expected numbers were captured from this
 planner, not from a known-good implementation. Its value is that a change which alters them becomes
-visible instead of silent.
+visible instead of silent. The fifth arena is the fourth one planned for shortest time instead of
+nearest-first, and checks the property that matters: optimal never photographs fewer obstacles
+than greedy and, at equal count, is never slower.
 
 Unit tests: `./.venv/bin/python -m pytest tests -q`.
 
 ## Simulator
 
-Checklist items B.1 and B.2 are demonstrated with it (B.3 once the shortest-time source lands).
+Checklist items B.1, B.2 and B.3 are demonstrated with it.
 
 ```sh
 ./.venv/bin/python -m simulator                                   # opens with testdata/02
 ./.venv/bin/python -m simulator --arena .replay/<file>.json       # replay a real RPi request
 ./.venv/bin/python -m simulator --snapshot out.png --frame 350    # no window, just a PNG
-./.venv/bin/python -m simulator --selftest                        # opens, drives a route, exits 0
+./.venv/bin/python -m simulator --selftest                        # drives both sources, exits 0
 ```
 
 Needs tkinter. macOS Homebrew Python: `brew install python-tk@3.11`. Windows python.org
 installers include it. Debian/Ubuntu: `sudo apt install python3-tk`. Check with
-`./.venv/bin/python -c "import tkinter; tkinter.Tk().destroy()"`.
+`./.venv/bin/python -c "import tkinter; tkinter.Tk().destroy()"`. On Windows the venv's
+interpreter is `.venv\Scripts\python` wherever this file says `./.venv/bin/python`.
 
 Click an empty cell to add an obstacle, click an obstacle to turn its image face, drag to move,
 right-click (or control-click) to remove. Plan route, then Play. Space plays and pauses, right
 arrow steps, `r` resets. Obstacles are numbered the way the tablet numbers them (1 to 8) and the
-panel shows positions in tablet cells. The clock is an estimate from `config.ROBOT_SPEED_CM_S`
-and `config.CAPTURE_DWELL_S`, both placeholders until STM and CV measure them.
+panel shows positions in tablet cells.
+
+The Route panel picks the planner: "Greedy, nearest first" or "Shortest time", the optimiser of
+limitation 4 — that switch is B.3. Plan both over one arena and compare the panel's "Driving
+time"; `testdata/05-greedy-loses.json` is the arena built to make the two differ. Shortest time
+thinks for longer and the window is frozen while it does. Every clock in the window is an
+estimate from `config.ROBOT_SPEED_CM_S`, `config.TURN_TIME_S` and `config.CAPTURE_DWELL_S`, all
+placeholders until STM and CV measure them.
 
 `--snapshot` needs Pillow (`pip install Pillow`); the window does not. Design and module layout:
 `simulator/SPEC.md`.
@@ -173,21 +187,34 @@ competition-ready.
    optimum three mutually inconsistent ways (~20 cm, a 25–30 cm band, and two disagreeing
    formulas in `AGENTS.md` §7.2). CV needs to pick one against the real lens.
 
-4. **No visiting-order optimisation.** The route is greedy nearest-first, which does not satisfy
-   checklist item **B.3** ("shortest-time Hamiltonian path"). Held–Karp over a precomputed
-   all-pairs leg-cost matrix is the intended fix and is not built.
+4. **The time model's constants are guesses.** Visiting-order optimisation is **done** (2026-09-03):
+   `strategy: "optimal"` is the default and minimises estimated driving time, satisfying checklist
+   item **B.3**. What it minimises is only as true as `config.ROBOT_SPEED_CM_S` (30) and
+   `config.TURN_TIME_S` (3.0), both **placeholders until STM measures them** — a turn currently
+   costs the same as 90 cm of straight, and moving that number moves which order wins. Two further
+   caps are deliberate: above 9 obstacles the order is chosen greedily on the leg-cost matrix
+   (`tour.MAX_EXHAUSTIVE`; Task 1 fields at most 8), and at most 8 candidate orders are re-planned
+   for real (`tour.MAX_REPLANS`), which is logged as a warning when it binds — the answer is then
+   the best order tried, not a proven optimum.
 
 5. **No Dubins path implementation.** Quiz-assessed (`AGENTS.md` §7.4), not built.
 
-6. **B.3 is not yet demonstrable.** The simulator (below) covers B.1 and B.2. B.3 needs the
-   shortest-time route source from limitation 4; the simulator's route selector is where it plugs in.
+6. **B.3 is demonstrable, but only under placeholder timings.** Since 2026-09-04 the simulator's
+   route selector carries "Shortest time" beside "Greedy, nearest first" and the Route panel shows
+   the route's estimated time, so B.1, B.2 and B.3 are all shown from the one window (above). What
+   it demonstrates is shortest under the guessed constants of limitation 4: a supervisor reading
+   that clock is reading an estimate, not a measurement. Planning runs on the UI thread behind a
+   "Planning..." button, deliberately unthreaded (limitation 8 for what that costs).
 
-7. **Tests cover the simulator, not the planner.** `tests/` (60 tests) pins geometry, arena rules,
-   playback and drawing. The planner itself still has only `smoke.py`.
+7. **Test coverage is uneven.** `tests/` pins simulator geometry, arena rules, playback and drawing,
+   and since 2026-09-03 the cost model, the leg matrix, the visiting-order search and the HTTP
+   surface. The planner's own geometry — goal-pose generation, the turn primitives, the grid search
+   — is still covered only by `smoke.py`'s recorded baselines.
 
-8. **Latency is fine, so don't optimise it.** ~2.5 s for a 4-obstacle arena at 1 cm cells against a
-   6-minute Task 1 budget. The A\* heuristic is written but never wired in, so the search is really
-   Dijkstra — knowingly.
+8. **Latency is a solved problem.** Measured 2026-09-04 on a 4-obstacle arena at 1 cm cells:
+   about 0.07 s greedy, under 1 s optimal, after the search core moved to integer state indices
+   and numpy arrays and the turn arcs were cached. The search is Dijkstra, knowingly; a heuristic
+   is not needed at this speed.
 
 9. **Do not run the service under `python -O`.** The planner validates request geometry with bare
    `assert`s, which `-O` strips; the service maps them to clean 422s and cannot if they are gone.

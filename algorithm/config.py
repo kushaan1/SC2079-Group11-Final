@@ -106,8 +106,9 @@ START_POSE = {
 #   Re-measure with the camera mount fitted.
 ROBOT_BODY_CM = (19, 23)
 
-# Straight-line speed at competition speed, in centimetres per second. Used ONLY by the
-# simulator to turn a path length into an estimated duration; the planner costs in cm.
+# Straight-line speed at competition speed, in centimetres per second. Together with TURN_TIME_S
+# it sets the time model the shortest-time optimiser ranks routes by, and the simulator clock.
+# The greedy planner still costs in cm and does not read it.
 # SOURCE: STM | placeholder | NOT MEASURED. 30 is a guess. Update together with
 #   TURN_RADIUS_CM, which must be measured at the same speed.
 ROBOT_SPEED_CM_S = 30
@@ -188,6 +189,13 @@ TURN_PIVOT_OFFSET_CM = 3
 # becomes one candidate neighbour, so more entries means a finer but slower search.
 # SOURCE: ALGO | assumed | Reference offered exactly one chunk length, 5 cells.
 STRAIGHT_CHUNK_CELLS = (5,)
+
+# Seconds the robot takes for one 90 degree turn at competition speed, arc included. The time
+# model charges this per turn and cells/ROBOT_SPEED_CM_S per straight cell; the optimiser and the
+# simulator clock both use it.
+# SOURCE: STM | placeholder | NOT MEASURED. 3.0 is a guess: a 40 cm radius arc is 63 cm, about
+#   2 s at 30 cm/s, plus steering. Measure together with TURN_RADIUS_CM and ROBOT_SPEED_CM_S.
+TURN_TIME_S = 3.0
 
 # ---------------------------------------------------------------------------------------
 # Image recognition

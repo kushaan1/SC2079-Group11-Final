@@ -36,7 +36,7 @@ What was worth taking, and is now here:
 - **Request replay capture** and an **ASCII grid dump** for debugging.
 - The **OpenAPI contract shape** for the RPi boundary — see `docs/protocols/algorithm-service.md`.
 
-## The five defects fixed in the rewrite
+## The six defects fixed in the rewrite
 
 These were found by auditing their code and are listed because each one is a trap worth not
 re-introducing.
@@ -77,7 +77,8 @@ routes by 15% (testdata 02 total cost 1083 to 919).
 Two defects of theirs were deliberately **not** reproduced and are worth knowing about: their
 `segment.py` defines a `__heuristic` that is never called (so the search is really Dijkstra, not
 A\*), and their `RPi/Communication/stm.py` hardcoded an absolute path containing their own
-username. Neither exists here, but the unwired heuristic is still an open performance item.
+username. Neither exists here; the dead heuristic was deleted on 2026-09-04 when the search core
+moved to integer state indices, which made it unnecessary.
 
 ## Design decisions
 
@@ -145,6 +146,33 @@ Rejecting 1–10 therefore rejected every real run, so `config.IMAGE_ID_MIN` is 
 whether it came from schema validation or from our own checks. See
 `docs/protocols/algorithm-service.md`.
 
+**The route is optimised against a time model with placeholder constants, by exhaustive
+branch-and-bound up to 9 obstacles.** Three choices, taken together on 2026-09-03:
+
+- *Time, not distance.* `cost` stays centimetres, but the optimiser minimises
+  `straight_cm / ROBOT_SPEED_CM_S + turns × TURN_TIME_S` (`pathfinding/cost.py`). At the current
+  30 cm/s and 3 s per quarter-turn a turn is worth 90 cm of straight, so the shortest route and
+  the quickest route are genuinely different routes. **Both constants are guesses until STM
+  measures them**, which is a real limitation and not a rounding error: change them and the
+  chosen order can change. It is still the right objective — the competition scores time — and it
+  is the same model the simulator's clock uses, so the panel and the planner cannot disagree.
+- *Exhaustive branch-and-bound, not Held–Karp.* Held–Karp was the plan; the algorithms deck's
+  own line, "we can afford the cost of the exhaustive search", is right at this size and the
+  exhaustive version is far easier to keep correct. Task 1 fields at most 8 obstacles, and
+  `tour.MAX_EXHAUSTIVE = 9` is headroom rather than a compromise — above it the order falls back
+  to greedy on the matrix. What is enumerated is orders by ascending *matrix* bound; what is
+  compared is the **real re-planned route**, because a matrix leg is priced from anywhere in an
+  obstacle's goal-pose set while the robot drives it from the one pose it arrived at. Trusting
+  the matrix directly was measured 7.2% *slower* than plain greedy on
+  `testdata/04-five-obstacles.json`, which is what forced the re-planning. `tour.MAX_REPLANS = 8`
+  caps how many candidates are re-planned; hitting it is logged, and means the answer is the best
+  order tried rather than a proven optimum.
+- *Optimal is the HTTP default, behind an additive `strategy` field.* Greedy's real route is one
+  of the candidates, so optimal never photographs fewer obstacles and, at equal count, is never
+  slower; a caller loses nothing by not knowing the field exists — which matters, because the
+  RPi's client was generated before it did. Greedy stays selectable because reproducing an old
+  plan needs the old planner.
+
 ## Known gaps
 
 Carried here so they are not rediscovered as surprises. The user-facing version is in
@@ -161,17 +189,27 @@ Carried here so they are not rediscovered as surprises. The user-facing version 
    speed; every plan is only as true as they are.
 3. **The standoff band is a placeholder.** 25–30 cm, inherited. The course documents state the
    camera optimum three mutually inconsistent ways. CV needs to pick one against the real lens.
-4. **No visiting-order optimisation.** The route is greedy nearest-first, which does not satisfy
-   checklist item B.3 ("shortest-time Hamiltonian path"). The intended fix is Held–Karp over a
-   precomputed all-pairs leg-cost matrix — note that matrix costs **9 searches at N=8, not 56**,
-   because one multi-source multi-goal search yields a whole row.
+4. **The time model's constants are guesses.** Visiting-order optimisation is done (2026-09-03,
+   `pathfinding/search/tour.py`): `strategy: "optimal"` is the HTTP default and satisfies
+   checklist item B.3. `ROBOT_SPEED_CM_S` (30) and `TURN_TIME_S` (3.0) are placeholders until STM
+   measures them, and the chosen order depends on their ratio. Held–Karp was replaced by
+   exhaustive branch-and-bound over real re-planned routes with the leg matrix as the lower bound
+   (see "Design decisions"); the matrix still costs **9 searches at N=8, not 56**, because one
+   multi-source multi-goal search yields a whole row. Caps: `MAX_EXHAUSTIVE = 9` obstacles, then
+   greedy on the matrix; `MAX_REPLANS = 8` candidate orders re-planned, logged when it binds.
 5. **No Dubins implementation.** Quiz-assessed.
-6. **B.3 not demonstrable yet.** The simulator (`simulator/`, 2026-09-03) covers B.1 and B.2; B.3
-   waits on the route optimiser in gap 4.
-7. **The planner has no unit tests.** `smoke.py` is a regression anchor with baselines captured
-   from this planner, not an independent oracle. `tests/` covers the simulator modules.
-8. **The A\* heuristic is unwired**, so the search is Dijkstra. Latency is ~2.5 s for a 4-obstacle
-   arena at 1 cm cells against a 6-minute budget, so this is knowingly accepted rather than fixed.
+6. **B.3 is demonstrable, under placeholder timings.** Since 2026-09-04 `simulator/routes.py`
+   has `OptimalRouteSource` ("Shortest time") beside the greedy one and the Route panel shows
+   "Driving time", so B.1, B.2 and B.3 are all shown from the one window. What it demonstrates
+   is shortest under gap 4's guessed constants. Planning runs on the UI thread behind a
+   "Planning..." button (gap 8), deliberately unthreaded.
+7. **The planner's geometry has no unit tests.** Since 2026-09-03 `tests/` also covers the cost
+   model, the leg matrix, the visiting-order search and the HTTP surface, but goal-pose
+   generation, the turn primitives and the grid search are still pinned only by `smoke.py` — a
+   regression anchor with baselines captured from this planner, not an independent oracle.
+8. **The search is Dijkstra, knowingly.** Latency on a 4-obstacle arena at 1 cm cells is about
+   0.07 s greedy and under 1 s optimal (2026-09-04, after the integer-state search core and the
+   turn-arc cache), so a heuristic is not needed.
 
 ## Attribution
 

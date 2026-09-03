@@ -71,6 +71,11 @@
                         "$ref": "#/components/schemas/PathfindingRequestRobot",
                         "description": "The initial position of the robot."
                     },
+                    "strategy": {
+                        "$ref": "#/components/schemas/Strategy",
+                        "default": "optimal",
+                        "description": "Visiting order: 'optimal' (shortest estimated time, default) or 'greedy' (nearest first)."
+                    },
                     "verbose": {
                         "default": true,
                         "description": "Whether to attach the path and cost alongside the movement instructions in the response.",
@@ -212,6 +217,12 @@
                         ],
                         "description": "The cells of the path in driving order, included only if verbose is true.",
                         "title": "Path"
+                    },
+                    "seconds": {
+                        "default": 0.0,
+                        "description": "Estimated driving time of this segment in seconds under the time model, only if verbose is true.",
+                        "title": "Seconds",
+                        "type": "number"
                     }
                 },
                 "required": [
@@ -273,6 +284,15 @@
                     "BACKWARD"
                 ],
                 "title": "Straight",
+                "type": "string"
+            },
+            "Strategy": {
+                "description": "Which visiting order to plan.\n\nAn enum rather than a free string, so an unknown value is a 422 from the schema instead of\na silent fall-through to one of the two planners; the ``str`` mixin is what keeps it\nserialising as the bare ``\"greedy\"``/``\"optimal\"`` on the wire and in ``openapi.json``.\n\n``OPTIMAL`` is the default because it is never worse than greedy on the planner's own score:\nat least as many obstacles photographed and, at equal count, no more driving time. Greedy's\nreal route is one of the candidates it compares against (see\n:func:`~pathfinding.search.tour.plan_optimal`). ``GREEDY`` stays selectable because it is an order of\nmagnitude quicker to plan, which matters when someone is iterating on an arena by hand,\nand because it is the behaviour every response before 2026-09-03 had - a caller comparing\nagainst a recorded plan needs to be able to ask for the old one.",
+                "enum": [
+                    "greedy",
+                    "optimal"
+                ],
+                "title": "Strategy",
                 "type": "string"
             },
             "TurnInstruction": {

@@ -29,6 +29,7 @@ Interactive Swagger UI for poking at it by hand: `http://<address>:<port>/openap
 ```jsonc
 {
   "verbose": true,                    // optional, default true
+  "strategy": "optimal",              // optional, default "optimal"; or "greedy"
   "robot": {
     "direction": "NORTH",             // NORTH | EAST | SOUTH | WEST
     "south_west": {"x": 0,  "y": 0},  // inclusive corners, centimetres
@@ -51,8 +52,17 @@ Interactive Swagger UI for poking at it by hand: `http://<address>:<port>/openap
   `unreachable[].image_id`. Hand-written arenas may instead use a real image ID (11–35 the digits
   and letters, 36–40 the arrows and stop marker). IDs outside 1–40 are rejected (see "Errors").
 - `image_id` must be **unique** across obstacles.
-- `verbose: false` omits the per-cell path and zeroes the cost. Use it once you no longer need to
-  draw the route — a 4-obstacle verbose response carries ~1000 path vectors.
+- `verbose: false` omits the per-cell path and zeroes the cost and `seconds`. Use it once you no
+  longer need to draw the route — a 4-obstacle verbose response carries ~1000 path vectors.
+- `strategy` picks the visiting order. **Additive and optional — omit it and nothing changes for
+  you except that the route gets better.**
+  - `"optimal"` (the default) minimises estimated driving time over the whole route. It is never
+    worse than `"greedy"` on the planner's score: it photographs at least as many obstacles and,
+    at equal count, takes no more seconds. Greedy's real route is one of the candidates it compares.
+  - `"greedy"` is nearest-first, the behaviour every response before 2026-09-03 had. Keep it for
+    reproducing an old plan. Planning time on a 4-obstacle arena is about 0.1 s for greedy and
+    under 1 s for optimal; both are noise against the 6-minute Task 1 budget.
+  - Any other value is a 422.
 
 ## Response — 200
 
@@ -61,6 +71,7 @@ Interactive Swagger UI for poking at it by hand: `http://<address>:<port>/openap
   "segments": [                       // one per obstacle to visit, IN VISIT ORDER
     { "image_id": 12,
       "cost": 88,
+      "seconds": 3.83,
       "instructions": [
         {"move": "FORWARD", "amount": 15},
         "FORWARD_RIGHT",
@@ -97,6 +108,23 @@ Three token types, mixed in one list:
   cells are robot-centre positions; the cells of a turn arc are the path of a point 12 cm behind
   the centre, followed by the post-turn centre pose. Good for drawing, not for driving: drive
   from `instructions`.
+
+### `seconds`
+
+**Additive field, not present in the prior-year contract.** The estimated driving time of one
+segment, and what `strategy: "optimal"` minimises when it sums them over the route. `0` when
+`verbose` is false, like `cost`.
+
+```
+seconds = straight_cm / ROBOT_SPEED_CM_S  +  turns × TURN_TIME_S
+```
+
+with `ROBOT_SPEED_CM_S = 30` and `TURN_TIME_S = 3.0` in `algorithm/config.py`. **Both are
+placeholders until STM measures them** (open item 3), so treat `seconds` as a comparison between
+two routes, not as a prediction of the clock. It is not `cost` in other units: `cost` is
+centimetres of path and prices a turn by the length of its arc, while `seconds` charges a flat
+3 s per turn — that difference is exactly why the two orders can disagree. The capture dwell is
+excluded; add `CAPTURE_DWELL_S` per segment if you want the wall-clock estimate.
 
 ### `unreachable`
 
@@ -147,6 +175,7 @@ integers (`0`, not `"0"`). Cases that return 422:
 | Corners inverted or not square | `["obstacles", <i>]` or `["robot"]` |
 | Robot or obstacle outside the 200×200 arena | `[]` |
 | Empty `obstacles` list | `["obstacles"]` |
+| `strategy` other than `"greedy"` or `"optimal"` | `["strategy"]` |
 
 **No malformed request should ever produce a 500.** If you get one, that is an algorithms bug —
 send the request body and it will be fixed.
@@ -160,6 +189,7 @@ end before the planner is finished.
 - Stub responses carry the header **`X-MDP-Stub: true`**. Any test meant to exercise the real
   planner should assert that header is **absent**, so a forgotten flag cannot pass for a working
   system.
+- `seconds` is always `0.0` in stub mode.
 - `path` and `unreachable` are always empty in stub mode, even with `verbose: true`. Fabricated
   coordinates would let the tablet draw a route that looks plausible and is wrong.
 
@@ -168,8 +198,8 @@ end before the planner is finished.
 ## Deviations from the prior-year contract
 
 The prior-year team's `openapi.json` is what an earlier generated client was built from. The
-**request shape is unchanged**, so such a client still works. Five things differ, all additive or
-error-path only:
+**request shape is backward compatible**, so such a client still works. Six things differ, all
+additive or error-path only:
 
 | # | Delta | Breaks a client? |
 |---|---|---|
@@ -178,6 +208,7 @@ error-path only:
 | 3 | An `image_id` outside 1–40 returns 422 instead of 500 | No. Schema still declares `minimum: 1`; the narrower 1–40 rule is enforced below it and mapped to a clean 422 |
 | 4 | 422 bodies use `type`, not `type_` | Only if you parse 422 bodies. The prior-year schema did not match its own framework's output; ours matches what is actually emitted |
 | 5 | `image_id` 1–10 accepted (was 422) | No. The field is the tablet's obstacle number, which starts at 1 |
+| 6 | `strategy` request field and `seconds` response field added | No for `strategy` — optional, and omitting it gives the better route. `seconds` carries the same risk as `unreachable`: a generator that rejects unknown response fields will trip on it |
 
 Rationale for each is in [`algorithm/PROVENANCE.md`](../../algorithm/PROVENANCE.md) under "Design
 decisions".
@@ -187,8 +218,10 @@ decisions".
 1. **RPi:** does the generated client tolerate the unknown `unreachable` response field?
 2. **RPi:** is port 5000 correct? It is a placeholder.
 3. **STM:** the four measured turning radii — forward-left, forward-right, backward-left,
-   backward-right — at competition speed, on our chassis. Every plan is only as accurate as these,
-   and the current values are another team's car.
+   backward-right — at competition speed, on our chassis, plus the straight speed and the time a
+   quarter-turn takes. Every plan is only as accurate as these, and the current values are another
+   team's car; `seconds` and the route `strategy: "optimal"` chooses are only as good as the last
+   two.
 4. **CV:** the authoritative camera standoff distance. The course documents state it three
    inconsistent ways (~20 cm optimum, a 25–30 cm band, and two disagreeing formulas). The planner
    currently uses 25–30 cm.

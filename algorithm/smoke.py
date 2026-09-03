@@ -2,8 +2,8 @@
 """
 End-to-end smoke test for the working planner.
 
-Builds a World, generates goal poses and runs the search, printing the resulting segments
-and every obstacle the plan could not reach.
+Builds a World, generates goal poses and runs a planner - greedy ``search`` or shortest-time
+``plan_optimal`` - printing the resulting segments and every obstacle the plan could not reach.
 
 This is the check that the reference's blocking defect (Fix 1) is actually gone: the
 reference raises TypeError on the very first turn() call and never reaches a segment.
@@ -21,14 +21,20 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from typing import Callable
 
 import config
 from pathfinding.report import UnreachableReason
 from pathfinding.search.instructions import MiscInstruction, MoveInstruction, TurnInstruction
 from pathfinding.search.search import SearchResult, search
-from pathfinding.world.objective import generate_objectives
+from pathfinding.search.tour import plan_optimal
+from pathfinding.world.objective import ObjectiveGeneration, generate_objectives
 from pathfinding.world.primitives import Direction, Point
 from pathfinding.world.world import Obstacle, Robot, World
+
+# What both planners are: same inputs, same result type. `search` is greedy nearest-first,
+# `plan_optimal` minimises estimated driving time.
+Planner = Callable[[World, ObjectiveGeneration], SearchResult]
 
 
 def make_robot(direction: Direction, south_west: tuple[int, int], north_east: tuple[int, int]) -> Robot:
@@ -76,12 +82,19 @@ def report(result: SearchResult, robot: Robot, obstacles: list[Obstacle], elapse
         print(f"               {instructions}")
 
 
+def total_seconds(result: SearchResult) -> float:
+    """The route's estimated driving time: what plan_optimal minimises, excluding capture dwell."""
+    return sum(segment.seconds for segment in result.segments)
+
+
 def run(
     name: str,
     robot: Robot,
     obstacles: list[Obstacle],
     expected_segments: int | None = None,
     expected_unreachable: dict[int, UnreachableReason] | None = None,
+    planner: Planner = search,
+    versus: Planner | None = None,
 ) -> bool:
     """
     Plan one arena and print it. Returns False only when a stated expectation was violated.
@@ -93,6 +106,13 @@ def run(
     :param expected_unreachable: The baseline ``{image_id: reason}`` the planner must report,
         or None to only print. ``{}`` is a real expectation - it asserts that nothing was
         dropped - and is not the same as None.
+    :param planner: Which planner to run. Greedy ``search`` by default, so the four recorded
+        baselines below keep measuring what they were captured from.
+    :param versus: A second planner to plan the same arena with, for comparison only. Its
+        route is not printed; both totals are, and ``planner`` must photograph at least as many
+        obstacles and, at equal count, take no longer. This is the check that "optimal is never
+        worse than greedy" is a property of the code and not a hope - see
+        :func:`~pathfinding.search.tour.plan_optimal`.
     """
     print(f"\n=== {name} ===")
     world = World(config.GRID_SIZE, robot, obstacles)
@@ -101,7 +121,7 @@ def run(
 
     started = time.perf_counter()
     objectives = generate_objectives(world)
-    result = search(world, objectives)
+    result = planner(world, objectives)
     elapsed = time.perf_counter() - started
 
     report(result, robot, obstacles, elapsed)
@@ -135,6 +155,19 @@ def run(
         expected_text = {i: r.value for i, r in expected_unreachable.items()} or "none"
         actual_text = {i: r.value for i, r in actual.items()} or "none"
         print(f"  unreachable: expected {expected_text}, got {actual_text} -> "
+              f"{'OK' if passed else 'MISMATCH'}")
+
+    if versus is not None:
+        # Planned fresh rather than reused from an earlier arena: `versus` must see exactly the
+        # world and goal poses `planner` saw, or the two totals are not comparable.
+        other = versus(world, generate_objectives(world))
+        mine, theirs = total_seconds(result), total_seconds(other)
+        # Tolerance, not equality: both totals are sums of floats over different move counts.
+        # Count first, then seconds: an extra obstacle is worth more than any time saving.
+        passed = (-len(result.segments), mine) <= (-len(other.segments), theirs + 1e-9)
+        checks.append(passed)
+        print(f"  time       : {planner.__name__} {mine:.2f} s over {len(result.segments)} "
+              f"obstacle(s) vs {versus.__name__} {theirs:.2f} s over {len(other.segments)} -> "
               f"{'OK' if passed else 'MISMATCH'}")
 
     return all(checks)
@@ -239,6 +272,27 @@ def main() -> None:
             12: UnreachableReason.NO_PATH,
             13: UnreachableReason.NO_OBJECTIVES,
         },
+    ))
+
+    # The same nominal arena as run 2, planned for shortest time instead of nearest-first. It is
+    # here rather than replacing run 2 because run 2's numbers are the recorded greedy baseline:
+    # this run must not be able to move them. The `versus` line is the load-bearing check -
+    # plan_optimal evaluates greedy's own order among its candidates, so a route slower than
+    # greedy's is not a worse heuristic, it is a bug. Expect the same four obstacles: optimal
+    # never gives one up to save time (see tour._score).
+    results.append(run(
+        "nominal arena, shortest time: 4 obstacles",
+        default_robot(),
+        [
+            Obstacle(Direction.SOUTH, Point(50, 90), Point(59, 99), 11),
+            Obstacle(Direction.WEST, Point(120, 60), Point(129, 69), 12),
+            Obstacle(Direction.WEST, Point(150, 150), Point(159, 159), 13),
+            Obstacle(Direction.EAST, Point(60, 150), Point(69, 159), 14),
+        ],
+        expected_segments=4,
+        expected_unreachable={},
+        planner=plan_optimal,
+        versus=search,
     ))
 
     failures = results.count(False)

@@ -59,6 +59,37 @@ class World:
     def contains(self, centre: Point | Vector) -> bool:
         return (0 <= centre.x < self.size and 0 <= centre.y < self.size) and self.grid[centre.x, centre.y]
 
+    def contains_all(self, xs: np.ndarray, ys: np.ndarray, box: tuple[int, int, int, int],
+                     x: int = 0, y: int = 0) -> bool:
+        """
+        Whether EVERY cell of a shape translated to ``(x, y)`` is inside the grid and free.
+
+        The array form of :meth:`contains`, for a caller checking a whole turn arc in one
+        operation instead of one Python call per cell (:func:`~pathfinding.search.turn.turn`).
+
+        Bounds are tested BEFORE indexing, and this is the only place that rule lives. numpy
+        reads a negative coordinate as an offset from the far edge, so an arc leaving the
+        arena to the west would otherwise be checked against the eastern wall and could come
+        back legal; :meth:`contains` never allowed that and neither may this. The test is the
+        shape's bounding box rather than a per-cell mask because the box is exact for this
+        purpose - every cell is in bounds exactly when the box's corners are - and 60x cheaper.
+
+        ``box`` is the caller's to supply because a turn arc's shape, and therefore its box,
+        is constant across the whole search while this runs once per expansion; rediscovering
+        it here with four numpy reductions costs more than the grid read it guards.
+
+        :param xs: The shape's x coordinates, relative to ``(x, y)``.
+        :param ys: The shape's y coordinates, paired elementwise with ``xs``.
+        :param box: ``xs`` and ``ys``' ``(min x, max x, min y, max y)``.
+        :param x: The x the shape is translated to.
+        :param y: The y the shape is translated to.
+        :return: True only if every cell is in bounds and free.
+        """
+        min_x, max_x, min_y, max_y = box
+        if x + min_x < 0 or x + max_x >= self.size or y + min_y < 0 or y + max_y >= self.size:
+            return False
+        return bool(self.grid[xs + x, ys + y].all())
+
     @property
     def cell_size(self) -> int:
         """

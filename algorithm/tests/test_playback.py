@@ -49,8 +49,11 @@ def test_distance_excludes_dwell_and_clock_adds_capture_time():
     p = Playback(route)
     p.seek(len(p.frames) - 1)
     assert p.distance_cm == pytest.approx(route.total_cost * route.cell_size)
+    # The clock comes from the time model, not from distance over speed: a turn is charged
+    # config.TURN_TIME_S however few centimetres of arc it covers.
     assert p.estimated_seconds == pytest.approx(
-        p.distance_cm / config.ROBOT_SPEED_CM_S + len(route.segments) * config.CAPTURE_DWELL_S)
+        route.seconds + len(route.segments) * config.CAPTURE_DWELL_S)
+    assert p.estimated_seconds > p.distance_cm / config.ROBOT_SPEED_CM_S
 
     first_capture = next(i for i, f in enumerate(p.frames) if f.captured_id is not None)
     p.seek(first_capture - 1)
@@ -61,6 +64,7 @@ def test_distance_excludes_dwell_and_clock_adds_capture_time():
     for _ in range(CAPTURE_DWELL_FRAMES):
         p.step()
     assert p.distance_cm == held                    # the dwell drives nowhere
+    assert p.frames[p.index].seconds == p.frames[first_capture].seconds   # nor does it drive time
     assert len(p.captured) == 1
     assert p.next_id == route.segments[1].image_id
 
@@ -184,3 +188,17 @@ def test_arc_frames_step_evenly():
     for frames in _turns(p):
         steps = [math.hypot(b.pose.x - a.pose.x, b.pose.y - a.pose.y) for a, b in zip(frames, frames[1:])]
         assert max(steps) <= 1.25 and min(steps) >= 0.5, steps
+
+
+def test_frame_seconds_are_cumulative_and_end_at_the_routes_estimate():
+    route = route_for("02-four-obstacles.json")
+    p = Playback(route)
+    seconds = [f.seconds for f in p.frames]
+    assert seconds == sorted(seconds)
+    assert seconds[-1] == pytest.approx(route.seconds)
+    # Each segment's last travelling frame stands at the running total of the segments so far.
+    running = 0.0
+    for index, segment in enumerate(route.segments):
+        running += segment.seconds
+        last = max(i for i, f in enumerate(p.frames) if f.segment_index == index)
+        assert p.frames[last].seconds == pytest.approx(running)

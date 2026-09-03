@@ -9,7 +9,7 @@ this layer decides how those become status codes and JSON.
 **The wire contract is fixed** (AGENTS.md 2.2). The RPi's client was generated from the
 prior-year team's OpenAPI schema, so the request shape and the route are reproduced from their
 controller field for field, including choices this file would otherwise make differently (see
-:meth:`PathfindingResponseSegment.from_segment` on ``verbose``). There are exactly three
+:meth:`PathfindingResponseSegment.from_segment` on ``verbose``). There are exactly four
 deliberate departures, all additive or error-path-only, and all recorded in
 ``docs/protocols/algorithm-service.md``:
 
@@ -21,8 +21,12 @@ deliberate departures, all additive or error-path-only, and all recorded in
    :meth:`PathfindingRequest.reject_duplicate_image_ids`.
 3. An ``image_id`` that satisfies the schema's ``minimum: 1`` but falls outside
    ``config.IMAGE_ID_MIN..IMAGE_ID_MAX`` returns 422, not 500.
+4. ``strategy`` request field and ``seconds`` response field — both new, both additive. A
+   request that omits ``strategy`` gets the shortest-time route (:class:`Strategy`), which is
+   what the prior-year contract's caller wanted and could not ask for; ``seconds`` is what that
+   route was chosen to minimise, so a caller can see the number rather than trust it.
 
-The reasoning behind all three is in ``algorithm/PROVENANCE.md`` under "Design decisions".
+The reasoning behind all four is in ``algorithm/PROVENANCE.md`` under "Design decisions".
 
 Stub mode is selected per-request from ``current_app.config["MDP_STUB"]`` rather than by an
 import-time flag, so the same module serves both modes and a test can flip it.
@@ -33,6 +37,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
+from enum import Enum
 from http import HTTPStatus
 
 import numpy as np
@@ -44,6 +49,7 @@ import config
 from pathfinding.report import UnreachableReason
 from pathfinding.search.instructions import MiscInstruction, MoveInstruction, Straight, TurnInstruction
 from pathfinding.search.search import Segment, search
+from pathfinding.search.tour import plan_optimal
 from pathfinding.world.objective import generate_objectives
 from pathfinding.world.primitives import Direction, Point, Vector
 from pathfinding.world.world import Obstacle, Robot, World
@@ -98,6 +104,27 @@ class PathfindingVector(BaseModel):
 # ---------------------------------------------------------------------------------------
 
 
+class Strategy(str, Enum):
+    """
+    Which visiting order to plan.
+
+    An enum rather than a free string, so an unknown value is a 422 from the schema instead of
+    a silent fall-through to one of the two planners; the ``str`` mixin is what keeps it
+    serialising as the bare ``"greedy"``/``"optimal"`` on the wire and in ``openapi.json``.
+
+    ``OPTIMAL`` is the default because it is never worse than greedy on the planner's own score:
+    at least as many obstacles photographed and, at equal count, no more driving time. Greedy's
+    real route is one of the candidates it compares against (see
+    :func:`~pathfinding.search.tour.plan_optimal`). ``GREEDY`` stays selectable because it is an order of
+    magnitude quicker to plan, which matters when someone is iterating on an arena by hand,
+    and because it is the behaviour every response before 2026-09-03 had - a caller comparing
+    against a recorded plan needs to be able to ask for the old one.
+    """
+
+    GREEDY = "greedy"
+    OPTIMAL = "optimal"
+
+
 class PathfindingRequestRobot(BaseModel):
     direction: Direction = Field(description="The direction of the robot.")
     south_west: PathfindingPoint = Field(description="The south-west corner of the robot.")
@@ -128,6 +155,12 @@ class PathfindingRequest(BaseModel):
     verbose: bool = Field(
         default=True,
         description="Whether to attach the path and cost alongside the movement instructions in the response.",
+    )
+    # Additive and optional, so a client generated from the prior-year schema keeps working and
+    # gets the better route without being changed. See Strategy on why optimal is the default.
+    strategy: Strategy = Field(
+        default=Strategy.OPTIMAL,
+        description="Visiting order: 'optimal' (shortest estimated time, default) or 'greedy' (nearest first).",
     )
     robot: PathfindingRequestRobot = Field(description="The initial position of the robot.")
     obstacles: list[PathfindingRequestObstacle] = Field(min_length=1)
@@ -184,18 +217,29 @@ class PathfindingResponseSegment(BaseModel):
     path: list[PathfindingVector] | None = Field(
         description="The cells of the path in driving order, included only if verbose is true."
     )
+    # Additive, and last so the reference's own key order is untouched. Not the same quantity as
+    # `cost`, which stays centimetres of path: `seconds` prices the turns too, and a turn costs
+    # config.TURN_TIME_S regardless of how few cells its arc happens to occupy. That is why the
+    # optimiser minimises this one and not `cost`.
+    seconds: float = Field(
+        default=0.0,
+        description="Estimated driving time of this segment in seconds under the time model, "
+        "only if verbose is true.",
+    )
 
     @classmethod
     def from_segment(cls, verbose: bool, segment: Segment) -> PathfindingResponseSegment:
         # The reference emits 0 and [] when not verbose, not null, even though both fields are
         # declared nullable. Preserved verbatim: a client that switched on `cost is None` would
         # break against the reference too, and the frozen contract makes the reference's actual
-        # behaviour the contract rather than the schema's permissiveness.
+        # behaviour the contract rather than the schema's permissiveness. `seconds` follows the
+        # same rule for consistency rather than because a client depends on it.
         return cls(
             image_id=segment.image_id,
             cost=segment.cost if verbose else 0,
             instructions=segment.instructions,
             path=[PathfindingVector.from_vector(vector) for vector in segment.vectors] if verbose else [],
+            seconds=round(segment.seconds, 2) if verbose else 0.0,
         )
 
 
@@ -260,7 +304,9 @@ def pathfinding(body: PathfindingRequest):
         return make_response(invalid.body(), HTTPStatus.UNPROCESSABLE_ENTITY)
 
     objectives = generate_objectives(world)
-    result = search(world, objectives)
+    # The two planners take the same inputs and return the same type, so the strategy is a
+    # one-line choice here rather than a branch through the response building below.
+    result = search(world, objectives) if body.strategy is Strategy.GREEDY else plan_optimal(world, objectives)
 
     pathfinding_response = PathfindingResponse(
         segments=[
@@ -277,10 +323,12 @@ def pathfinding(body: PathfindingRequest):
 
     elapsed_ms = (datetime.now() - started).total_seconds() * 1000
     logger.info(
-        "Planned %s/%s obstacles in %.0f ms; unreachable: %s",
+        "Planned %s/%s obstacles with the %s strategy in %.0f ms (%.2f s of driving); unreachable: %s",
         len(result.segments),
         len(world.obstacles),
+        body.strategy.value,
         elapsed_ms,
+        sum(segment.seconds for segment in result.segments),
         {entry.image_id: entry.reason.value for entry in result.unreachable} or "none",
     )
 
