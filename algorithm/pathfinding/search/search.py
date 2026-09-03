@@ -143,27 +143,62 @@ class Segment:
     cost: int
     instructions: list[TurnInstruction | MoveInstruction | MiscInstruction]
     vectors: list[Vector]
+    moves: list[Turn | Move]      # the segment's parts in driving order; turn arcs de-interleaved
 
     @classmethod
     def compress(cls, world: World, information: tuple[Obstacle, int, list[tuple[Vector, Turn | Move | None]]]) -> Segment:
         obstacle, cost, parts = information
         instructions: list[TurnInstruction | MoveInstruction | MiscInstruction] = []
         vectors: list[Vector] = []
+        moves: list[Turn | Move] = []
+        previous = parts[0][0]
 
         for vector, move in parts:
             match move:
                 case Turn():
+                    move = Turn(move.turn, _ordered_arc(move.vectors, previous))
                     instructions.append(move.turn)
                     vectors.extend(move.vectors)
+                    moves.append(move)
 
                 case Move() if instructions and isinstance(instructions[-1], MoveInstruction) and instructions[-1].move == move.move:
                     instructions[-1].amount += len(move.vectors) * world.cell_size
                     vectors.extend(move.vectors)
+                    moves.append(move)
 
                 case Move():
                     instructions.append(MoveInstruction(move=move.move, amount=len(move.vectors) * world.cell_size))
                     vectors.extend(move.vectors)
+                    moves.append(move)
+
+            if move is not None:
+                previous = vector
 
         instructions.append(MiscInstruction.CAPTURE_IMAGE)
 
-        return cls(obstacle.image_id, cost, instructions, vectors)
+        return cls(obstacle.image_id, cost, instructions, vectors, moves)
+
+
+def _ordered_arc(cells: list[Vector], start: Vector) -> list[Vector]:
+    """
+    Put a turn's cells in driving order.
+
+    ``turn.__curve`` fills the arc from both ends at once and appends ``a0, b0, a1, b1, ...`` then
+    the end pose, so the list it returns is a collision-check SET, not a path. Split the two
+    interleaved halves, join them at the 45-degree point, pick the direction that begins nearest
+    ``start`` (the pose before the turn), drop consecutive duplicates, and keep the end pose last.
+    """
+    *arc, end = cells
+    a, b = arc[0::2], arc[1::2]
+    forward = a + b[::-1]
+    backward = b + a[::-1]
+
+    def gap(v: Vector) -> int:
+        return abs(v.x - start.x) + abs(v.y - start.y)
+
+    ordered = forward if gap(forward[0]) <= gap(backward[0]) else backward
+    result: list[Vector] = []
+    for v in ordered + [end]:
+        if not result or (v.x, v.y) != (result[-1].x, result[-1].y):
+            result.append(v)
+    return result

@@ -138,15 +138,22 @@ def turn(world: World, start: Vector, instruction: TurnInstruction) -> list[Vect
                 3,
             )
 
+        # Fix 6: the reference put the robot-extent term on the circle centre instead of the end
+        # pose, so this arc was checked 12 cm off and the post-turn pose was wrong by 12 cm.
+        # Now mirrors (EAST, BACKWARD_LEFT).
         case (Direction.EAST, TurnInstruction.BACKWARD_RIGHT):
             x = start.x - world.robot.west_length + offset
             y = start.y
             return __curve(
                 world,
                 turning_radius,
-                Vector(Direction.NORTH, x - turning_radius, y - turning_radius),
+                Vector(
+                    Direction.NORTH,
+                    x - turning_radius,
+                    y - turning_radius + world.robot.south_length - offset,
+                ),
                 x,
-                y - turning_radius + world.robot.south_length - offset,
+                y - turning_radius,
                 2,
             )
 

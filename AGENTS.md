@@ -542,6 +542,9 @@ amount.
 - `pathfinding/search/turn.py`: `__curve` is declared with 5 parameters but all 16 call sites pass 6,
   and the body references an undefined name `end`. **The code on their master branch does not run.**
   If porting, restore the `end: Vector` parameter.
+- `pathfinding/search/turn.py`, the `(EAST, BACKWARD_RIGHT)` case: the robot-extent term is on the
+  circle centre instead of the end pose, so that arc is collision-checked 12 cm off and the
+  post-turn pose is wrong by 12 cm. The other 15 cases are consistent. Fixed in ours as Fix 6.
 - `pathfinding/world/objective.py`: `offset += 2` sits *inside* the gap loop, so for boundary
   obstacles the lateral tolerance accumulates across iterations rather than being applied once.
 - `pathfinding/search/segment.py`: `__heuristic` is defined but never called.

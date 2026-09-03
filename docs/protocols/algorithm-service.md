@@ -93,6 +93,10 @@ Three token types, mixed in one list:
   have genuinely different radii and radius grows with speed, so these must be re-measured on our
   chassis — see "Open items".
 - After `CAPTURE_IMAGE` the robot is nose-to-obstacle and the next segment begins with a reverse.
+- `path` is in driving order (since 2026-09-03; it was an unordered cell set before). Straight
+  cells are robot-centre positions; the cells of a turn arc are the path of a point 12 cm behind
+  the centre, followed by the post-turn centre pose. Good for drawing, not for driving: drive
+  from `instructions`.
 
 ### `unreachable`
 

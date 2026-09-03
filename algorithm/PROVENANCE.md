@@ -66,6 +66,14 @@ now **1–40**, not 11–40 — see "`image_id` is an obstacle id" below.
 lateral tolerance, obstacle clearance, boundary adjustment, the four turning radii and the straight
 chunk length were all inline literals. `AGENTS.md` §9.2 rule 1 requires them in one place.
 
+**Fix 6 — one turn branch built its arc 12 cm off.** In `search/turn.py`, the
+`(EAST, BACKWARD_RIGHT)` case passed the robot-extent term to `__curve`'s circle centre instead of
+to the end pose; the other 15 branches do the opposite, and its mirror `(EAST, BACKWARD_LEFT)`
+shows the intended form. The arc was therefore collision-checked in the wrong place and left the
+robot 12 cm from where the planner recorded it, which the search then had to drive back out of:
+correcting it makes the rear-point model exact for all 16 branches and shortens the testdata
+routes by 15% (testdata 02 total cost 1083 to 919).
+
 Two defects of theirs were deliberately **not** reproduced and are worth knowing about: their
 `segment.py` defines a `__heuristic` that is never called (so the search is really Dijkstra, not
 A\*), and their `RPi/Communication/stm.py` hardcoded an absolute path containing their own
@@ -158,9 +166,10 @@ Carried here so they are not rediscovered as surprises. The user-facing version 
    precomputed all-pairs leg-cost matrix — note that matrix costs **9 searches at N=8, not 56**,
    because one multi-source multi-goal search yields a whole row.
 5. **No Dubins implementation.** Quiz-assessed.
-6. **No simulator** — and checklist items B.1, B.2 and B.3 *all three* require one.
-7. **No automated tests.** `smoke.py` is a regression anchor with baselines captured from this
-   planner, not an independent oracle.
+6. **B.3 not demonstrable yet.** The simulator (`simulator/`, 2026-09-03) covers B.1 and B.2; B.3
+   waits on the route optimiser in gap 4.
+7. **The planner has no unit tests.** `smoke.py` is a regression anchor with baselines captured
+   from this planner, not an independent oracle. `tests/` covers the simulator modules.
 8. **The A\* heuristic is unwired**, so the search is Dijkstra. Latency is ~2.5 s for a 4-obstacle
    arena at 1 cm cells against a 6-minute budget, so this is knowingly accepted rather than fixed.
 

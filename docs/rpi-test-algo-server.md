@@ -127,7 +127,7 @@ curl -s $U/pathfinding/ -H 'Content-Type: application/json' -d @arena.json | pyt
 | `segments` | One per obstacle to visit, **in visit order**. Each ends in `CAPTURE_IMAGE` |
 | `segments[].instructions` | Mixed list: `{"move":"FORWARD","amount":<cm>}` objects, bare turn strings, and `"CAPTURE_IMAGE"` |
 | `segments[].cost` | Path length in cm |
-| `segments[].path` | Every cell passed through. **Currently unordered — do not drive from it** |
+| `segments[].path` | Every cell passed through, in driving order. Straight cells are the robot centre; turn arcs are the path of a point 12 cm behind the centre, with the end pose last. Draw it; drive from `instructions` |
 | `unreachable` | Obstacles the robot will **not** visit, with a reason |
 
 `len(segments) + len(unreachable)` always equals the number of obstacles sent.

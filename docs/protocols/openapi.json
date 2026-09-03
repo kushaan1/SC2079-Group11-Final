@@ -210,7 +210,7 @@
                                 "type": "null"
                             }
                         ],
-                        "description": "The path (unordered), included only if verbose is true.",
+                        "description": "The cells of the path in driving order, included only if verbose is true.",
                         "title": "Path"
                     }
                 },

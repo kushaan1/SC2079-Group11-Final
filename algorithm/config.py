@@ -91,7 +91,8 @@ def planned_footprint_cm(footprint_cm: int) -> int:
 # The default starting pose: direction plus the south-west and north-east corners, in cm.
 # Corners are INCLUSIVE, so a 31 cm robot spans 0..30 - an extent of 30, which is even, so
 # Robot.planned's odd-extent bump does not fire and this pose is planned exactly as written.
-# SOURCE: RULES | measured | Start zone is 40 x 40 cm in the bottom-left corner at origin (0, 0),
+# SOURCE: ALGO | assumed | Derived from ROBOT_FOOTPRINT_CM, itself assumed. The zone it sits in is
+#   rules: start zone is 40 x 40 cm in the bottom-left corner at origin (0, 0),
 #   robot facing north. AGENTS.md 3.1.
 START_POSE = {
     "direction": "NORTH",
