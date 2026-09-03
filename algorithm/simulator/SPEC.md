@@ -1,608 +1,242 @@
-# Simulator — specification and implementation plan
+# Simulator spec
 
-> **Status:** approved design, not yet implemented.
-> **Written:** 2026-08-27. **Owner:** algorithms.
-> **Read this first if you are taking over the simulator work.** It is both the spec and the
-> implementation plan; work the phases in §7 in order.
+Status: approved 2026-09-03. Owner: algorithms. Replaces the 2026-08-27 draft.
 
----
+## Why
 
-## 1. Why this exists
+Checklist items B.1, B.2 and B.3 are the whole algorithms share of the 20% functionality
+checklist, and every one of them is graded on a simulator:
 
-Three graded checklist items — **B.1, B.2, B.3**, the entire algorithms share of the 20% functionality
-checklist — are demonstrated through a simulator. Their exact wording, from
-`docs/MDP assessment and system checklist.pdf` pp. 7–8:
-
-| Item | Requirement |
+| Item | Requirement (verbatim, `docs/MDP assessment and system checklist.pdf` pp. 7-8) |
 |---|---|
-| **B.1 Robot Movement Area Simulator** | *"display the robot's 2.0m x 2.0m movement area, the start zone, the locations of the obstacles and the positions of the images. The simulator should be able to show the position of the robot as it moves forward/backward and turns."* |
-| **B.2 Hamiltonian Path Computation Simulator** | *"demonstrate the implementation of an algorithm that guides the robot to traverse the 2.0m x 2.0m movement area, starting from the start zone and visiting each image position once. The recognition of the 5 images should be completed within the time limit... the number of images recognized within the time limit is accepted."* |
-| **B.3 Shortest-time Hamiltonian Path Computation** | *"demonstrate the robot following a shortest-time Hamiltonian path to recognize the 5 images."* |
+| B.1 | "display the robot's 2.0m x 2.0m movement area, the start zone, the locations of the obstacles and the positions of the images. The simulator should be able to show the position of the robot as it moves forward/backward and turns." |
+| B.2 | "demonstrate the implementation of an algorithm that guides the robot to traverse the 2.0m x 2.0m movement area, starting from the start zone and visiting each image position once. The recognition of the 5 images should be completed within the time limit." |
+| B.3 | "demonstrate the robot following a shortest-time Hamiltonian path to recognize the 5 images." |
 
-All three additionally require: *"This should be shown on a simulator displaying a **grid map** of the
-movement area of the robot."*
+All three add: "This should be shown on a simulator displaying a grid map of the movement area."
+The algorithms deck (p. 40) adds: robot position "in real time (a square shape or a marker is ok)
+in a time stepped manner", and "report images recognized as it is done".
 
-Two further requirements come from `docs/algarithms_briefing_25S2.pdf` p. 40:
+Without a simulator these score zero. This spec covers B.1 and B.2 fully. B.3 needs a
+shortest-time route source, which is separate work; the simulator only provides the selector it
+plugs into.
 
-- *"Display the robot's positions in real time (**a square shape or a marker is ok**) in a **time
-  stepped** manner"* — animation is required; crude rendering is explicitly acceptable.
-- *"**Report images recognized as it is done**"* — announce each image as the robot reaches it, not
-  only at the end.
+## Scope
 
-**Without a simulator these three items score zero regardless of planner quality.** A correct planner
-is not a demonstrable one, and demonstration is the assessment mechanism.
+In: a tkinter window; grid map of the arena; start zone; obstacles with the image face marked;
+click-to-place editing; open/save arenas in the exact JSON the RPi sends; animated time-stepped
+playback with play, pause, step, reset, speed; captured list filling in as the robot arrives;
+estimated clock against the 6-minute limit; unreachable obstacles drawn with their reason; a
+route-source selector.
 
-### This is not the Android arena map
+Out: the optimiser itself; sensors, camera, motor error; Task 2; any network; live display of
+the real robot (that is the tablet's job, checklist C.5 to C.10).
 
-The tablet has its own, separately graded 2D arena display (checklist **C.5–C.9**, owned by the
-Android subsystem) which shows the **real** robot over Bluetooth during a run. This simulator runs
-**standalone on the algorithms laptop with no robot, no RPi and no tablet**. Do not merge the two or
-assume one substitutes for the other.
+## Runs anywhere
 
----
+The demo may happen on any teammate's laptop. Consequences:
 
-## 2. Scope
+- Python 3.11+ with tkinter. macOS Homebrew Python needs `brew install python-tk@3.11`;
+  Windows python.org installers include it; Debian/Ubuntu need `python3-tk`. `README.md` says so.
+- No fonts are shipped. `fonts.py` picks the first installed family from a candidate list
+  (UI: Avenir Next, Helvetica Neue, Segoe UI, DejaVu Sans, Helvetica; numbers: Menlo, Consolas,
+  DejaVu Sans Mono, Courier) using `tkinter.font.families()`.
+- The arena canvas is sized from the screen: `arena_px = clamp(screen_height - 220, 480, 720)`,
+  so scale (px per cm) is a runtime value passed to geometry, never a module constant.
+- Entry point is `python -m simulator` from `algorithm/`, the same working directory the
+  service uses, so `import config` and `from pathfinding...` resolve.
 
-### In scope
-
-- A tkinter desktop window showing a grid map of the 200 × 200 cm arena.
-- Start zone, obstacles, and each obstacle's image face, drawn distinctly.
-- Click-to-place arena editing: add, remove, and set the image face of obstacles.
-- Animated time-stepped playback of a planned route, showing straights and turns.
-- Play / pause / step / reset / speed controls.
-- A panel that fills in with each image ID as the robot reaches it.
-- An estimated real-robot elapsed time against the Task 1 6-minute limit.
-- Obstacles the planner could not reach, drawn distinctly with the reason.
-- A pluggable route source, so the visiting-order strategy can be swapped and compared.
-
-### Explicitly out of scope
-
-- **The Held–Karp ordering layer itself.** B.3 requires a shortest-time route; the current planner is
-  greedy nearest-first. This spec defines the *interface* the optimiser will plug into (§5.4) and
-  nothing more. Building the optimiser is separate work, tracked as a follow-up. **B.1 and B.2 are
-  satisfiable on this spec alone; B.3 is not, and this document does not claim otherwise.**
-- Simulating sensors, the camera, image recognition, or motor error. The simulator replays the
-  planner's intended path. It is not a physics model.
-- Task 2. That is a reactive state machine owned by STM/RPi and shares no planning code.
-- Any network communication. The simulator imports the planner in-process (§5.1).
-- Live display of the real robot. That is the tablet's job.
-
----
-
-## 3. Architecture
+## Architecture
 
 ```
 algorithm/simulator/
-├── __init__.py
-├── __main__.py       entry point, so `python -m simulator` works
-├── SPEC.md           this file
-├── geometry.py       arena-cm <-> canvas-px conversion. Pure functions, no tkinter
-├── arena_view.py     all drawing. Given state, paints a canvas. Holds no application state
-├── playback.py       the animation timeline. Pure logic, no tkinter
-├── routes.py         RouteSource implementations: how a route gets planned
-└── app.py            the window, widgets, event handling. Wires the above together
+  __init__.py
+  __main__.py     python -m simulator [--arena FILE] [--snapshot OUT.png --frame N]
+  geometry.py     cm <-> px, y-flip, snapping, cell <-> corners, car outline. Pure
+  arena.py        Arena (robot + obstacles), edit rules, load/save request JSON. Pure
+  routes.py       RouteSource protocol + GreedyRouteSource. Pure
+  playback.py     frames, dwell, captured list, clock. Pure
+  arena_view.py   Scene + Palette, and draw_static/draw_dynamic against a Painter. Pure
+  painters.py     Painter protocol; TkPainter (tk.Canvas) and PilPainter (PNG)
+  snapshot.py     headless render of an arena to PNG via PilPainter. Pure
+  fonts.py        font family fallback. Only place that queries tk fonts
+  app.py          the window, widgets, event loop. Owns all mutable state
 ```
 
-Design rule: **only `app.py` and `arena_view.py` import tkinter.** `geometry.py`, `playback.py` and
-`routes.py` are plain Python and unit-testable without a display. This is what makes the timing and
-coordinate logic — where the bugs will be — testable at all.
+Only `app.py`, `fonts.py` and `painters.TkPainter` import tkinter. Everything else runs
+headless and is unit-tested. `arena_view` draws through a `Painter` protocol (rect, line,
+polygon, oval, text) so the same drawing code paints a tk canvas in the window and a PNG in
+`--snapshot` mode. The snapshot is how an agent, which cannot open a window, checks its own
+rendering, and how the README shows a picture without a screenshot. Pillow is a dev-only
+dependency for it; the window itself needs only tkinter.
 
-Dependency direction, no cycles:
+Dependencies flow downward only: app -> arena_view -> geometry; app -> playback, routes,
+arena -> pathfinding. The simulator calls the planner in-process (`generate_objectives` then
+`search`). No HTTP.
 
-```
-app.py ──> arena_view.py ──> geometry.py
-   │                              ^
-   ├──> playback.py ──────────────┘
-   └──> routes.py ──> pathfinding.* (the existing planner)
-```
+## Coordinates
 
----
+Arena origin is bottom-left, y up, centimetres, matching the planner. The canvas origin is
+top-left, y down. **Every conversion lives in `geometry.py`** and is unit-tested; nothing else may
+compute a pixel. Grid lines every 10 cm, heavier every 50 cm. Axis labels in cm at 0, 50, 100,
+150, 200. Obstacles snap to the 10 cm grid.
 
-## 4. The single most likely bug: the Y axis is flipped
-
-**The arena's origin is bottom-left with y increasing upward. A tkinter canvas's origin is top-left
-with y increasing downward.** Every coordinate must be flipped exactly once.
-
-Get this wrong and the whole arena renders upside down — obstacles in mirrored positions, "north"
-pointing down. It is the single defect most likely to consume an afternoon.
-
-Mitigation: **all conversion lives in `geometry.py` and nowhere else.** No file may compute a pixel
-coordinate inline. `geometry.py` has unit tests asserting the flip explicitly (§6.1).
-
----
-
-## 5. Module specifications
-
-### 5.1 `routes.py` — where a route comes from
-
-The simulator calls the planner **directly, in-process**. No HTTP, no server to start, nothing to
-misconfigure in front of a supervisor. The planner speaks plain Python objects and has no knowledge
-of the RPi, so this is a supported use, not a workaround.
-
-```python
-@dataclass(frozen=True)
-class Route:
-    """A planned route, plus what it could not reach."""
-    segments: list[Segment]                    # from pathfinding.search.search
-    unreachable: list[UnreachableObstacle]     # from pathfinding.report
-    source_name: str                           # the RouteSource.name that produced it
-    plan_ms: float                             # wall-clock planning time, shown in the UI
-
-    @property
-    def total_cost(self) -> int:               # sum of segment costs; the number B.3 compares on
-        ...
-
-
-class RouteSource(Protocol):
-    name: str
-    def plan(self, world: World) -> Route: ...
-
-
-class GreedyRouteSource:
-    """The planner as it exists today: generate_objectives() then search()."""
-    name = "Greedy (nearest-first)"
-```
-
-`GreedyRouteSource.plan()` must be a thin wrapper — call `generate_objectives(world)` then
-`search(world, objectives)`, time it, wrap in `Route`. **It must not reimplement or alter any
-planning logic.** If simulator behaviour and `smoke.py` behaviour ever diverge, that is a bug here.
-
-A future `OptimalRouteSource` (Held–Karp) implements the same Protocol and needs no simulator change.
-The UI lists every registered source (§5.5), which is what makes a side-by-side B.3 demo possible.
-
-### 5.2 `geometry.py` — coordinates
-
-Pure functions. No tkinter import. No state.
-
-```python
-SCALE_PX_PER_CM = 3          # 200 cm -> 600 px canvas; fits a laptop screen
-ARENA_PX = config.ARENA_SIZE_CM * SCALE_PX_PER_CM
-
-def to_canvas(x_cm: float, y_cm: float) -> tuple[float, float]:
-    """Arena centimetres (origin bottom-left, y up) -> canvas pixels (origin top-left, y down)."""
-    return x_cm * SCALE_PX_PER_CM, (config.ARENA_SIZE_CM - y_cm) * SCALE_PX_PER_CM
-
-def to_arena(px: float, py: float) -> tuple[int, int]:
-    """Canvas pixels -> arena centimetres. Inverse of to_canvas, for mouse clicks."""
-
-def cell_rect(x_cm: int, y_cm: int, size_cm: int) -> tuple[float, float, float, float]:
-    """The canvas bounding box (x0, y0, x1, y1) of a square of `size_cm` with its
-    SOUTH-WEST corner at (x_cm, y_cm). Note y0/y1 are swapped relative to naive
-    intuition because of the flip."""
-
-def snap(value_cm: float, step_cm: int) -> int:
-    """Round down to the nearest multiple of step_cm. Used to snap clicks to the obstacle grid."""
-```
-
-`SCALE_PX_PER_CM` and grid step live here, **not** in `config.py`. `config.py` is documented as
-holding numbers *the planner* uses; display scale is not a physical property of the robot and putting
-it there would dilute that rule. Physical constants the simulator needs (`ROBOT_SPEED_CM_S`) do go in
-`config.py` — see §5.6.
-
-### 5.3 `playback.py` — the animation timeline
-
-Pure logic, no tkinter, no drawing. This is the module most worth testing.
-
-The planner returns one `Segment` per obstacle, each with `.vectors: list[Vector]` — the cell-by-cell
-path. Flatten them into a single timeline, remembering where each segment ends so the "image
-recognised" event can fire there.
-
-```python
-@dataclass(frozen=True)
-class Frame:
-    vector: Vector                  # robot CENTRE position and heading at this step
-    segment_index: int              # which segment (0-based) this frame belongs to
-    captured_image_id: int | None   # image_id if this is a segment's LAST frame, else None
-
-
-class Playback:
-    def __init__(self, route: Route) -> None: ...
-
-    @property
-    def frames(self) -> list[Frame]: ...
-    @property
-    def index(self) -> int: ...
-    @property
-    def current(self) -> Frame | None: ...       # None when frames is empty
-    @property
-    def finished(self) -> bool: ...
-    @property
-    def recognised(self) -> list[int]: ...       # image_ids captured up to and including index
-
-    def step(self) -> Frame | None: ...          # advance one frame; None when already finished
-    def reset(self) -> None: ...
-    def seek(self, index: int) -> None: ...      # clamped to [0, len(frames) - 1]
-
-    @property
-    def distance_cm(self) -> int: ...            # == index; see the note below
-    def estimated_seconds(self) -> float: ...    # distance_cm / config.ROBOT_SPEED_CM_S
-```
-
-**Why `distance_cm == index`.** Each vector is one 1 cm grid cell, so frame count is centimetres
-travelled. Verified against the 4-obstacle reference arena on 2026-08-27: 1024 vectors against a
-planner cost of 1083, a ratio of **1.06**. Turn arcs are the 6% discrepancy — the cost model charges
-`radius × π/2` for an arc while the midpoint-circle generator emits marginally fewer cells. **The
-timer must be labelled an estimate**; do not present it as exact.
-
-**Dwell at each capture.** After a segment's last frame, repeat that frame `CAPTURE_DWELL_FRAMES`
-times (start at 10; at 20 ms that is a 0.2 s pause). Without it the robot arrives, the Recognised
-panel updates, and the animation moves on within one frame — so the moment B.2 is graded on is
-invisible at normal speed.
-
-Do it by **duplicating frames, not by varying the delay**. Two independent prior implementations
-landed on this — a React simulator using `ARTIFICAL_DELAY_SCAN`, and a matplotlib dashboard using 5
-dwell frames — because it keeps the timer loop a single fixed interval and keeps a step slider linear
-in real time. Varying the delay per frame means the animation speed and the pause length stop being
-independent.
-
-Consequence for `distance_cm`: **dwell frames must not count as travel.** Either exclude duplicates
-from the distance total, or track distance separately from frame index. State which in the
-implementation and test it — the naive `distance_cm == index` identity breaks the moment dwell frames
-exist, and the timer would over-report by 10 cm per obstacle.
-
-Edge cases that must be handled and tested:
-
-- An empty route (every obstacle unreachable) — `frames == []`, `current is None`, `finished` is
-  `True`, `step()` returns `None`. The UI must not crash; it shows the arena statically.
-- A single-frame route.
-- `step()` past the end is a no-op returning `None`, never an exception or an index error.
-- `recognised` after `reset()` is empty again.
-
-### 5.4 `arena_view.py` — drawing
-
-One class holding a canvas reference. **All state is passed in as arguments** — it never owns the
-world, the route, or the playback position. That keeps every drawing decision reproducible from its
-inputs.
-
-```python
-class ArenaView:
-    def __init__(self, canvas: tkinter.Canvas) -> None: ...
-
-    def draw_grid(self) -> None:
-        """Arena border plus grid lines every 10 cm. A 20x20 grid, which is what satisfies the
-        checklist's 'grid map' requirement. Heavier line every 50 cm for readability."""
-
-    def draw_start_zone(self) -> None:
-        """The start zone at the origin: config.START_ZONE_CM square. Tinted fill plus a label."""
-
-    def draw_obstacle(self, obstacle: Obstacle, *, unreachable_reason: str | None = None) -> None:
-        """A filled square of `obstacle.clearance` cm - READ FROM THE OBSTACLE, not hardcoded to 10.
-        Obstacles are 10 cm per the rules, but the size is a property of the entity's own corners
-        and a request could legally send another size; drawing a 10 cm box around a 20 cm obstacle
-        would be a silent lie. Same reasoning as draw_robot below.
-
-        Then the image_id centred on it, and a THICK COLOURED EDGE on the face carrying the image
-        (obstacle.direction). The image face is a checklist requirement in its own right - B.1 asks
-        for 'the positions of the images', not just the obstacles.
-
-        When unreachable_reason is given, draw the square in a warning style and append the reason.
-        This makes a skipped obstacle visible rather than absent, which is the same honesty the
-        `unreachable` API field exists for."""
-
-    def draw_keep_out(self, world: World) -> None:
-        """OPTIONAL overlay, default off: shade every cell where world.grid is False, i.e. where the
-        robot's centre may not go. Not required by any checklist item; included because it makes the
-        oversized-clearance problem (README limitation 1) visible instead of theoretical."""
-
-    def draw_robot(self, vector: Vector, robot: Robot) -> None:
-        """The robot at `vector`, which is its CENTRE - NOT a corner. Verified: World passes
-        `world.robot.vector`, and Entity.vector is built from `centre`. Drawing it as a corner puts
-        the robot half a footprint off in both axes.
-
-        The footprint square is sized from `robot`'s OWN extents (north_length/east_length/
-        south_length/west_length, or `robot.clearance` for the square case) - NOT from
-        config.ROBOT_FOOTPRINT_CM. Those two disagree whenever a request supplies a different-sized
-        robot: Robot(Point(100,100), Point(120,120)) has clearance 21 while config says 31. The
-        config value is the DEFAULT the planner reserves, not a description of whatever robot is
-        currently in the world. Passing the Robot in keeps the drawing honest about what was
-        actually planned.
-
-        Plus a heading indicator (a line or triangle from the centre toward `vector.direction`) so
-        that TURNS ARE VISIBLE. B.1 requires showing the robot 'as it moves forward/backward and
-        turns'; a plain square rotated through 90 degrees looks identical at every heading, so the
-        heading indicator is a requirement, not decoration."""
-
-    def draw_trail(self, trail: list[tuple[Vector, int]]) -> None:
-        """The path already driven, as a thin line. Each entry is (vector, segment_index);
-        colour-code by segment_index so the visiting ORDER is legible at a glance - that is what
-        makes B.2's 'visiting each image position once' visually checkable rather than asserted.
-
-        Takes plain (Vector, int) tuples rather than playback.Frame ON PURPOSE: it keeps
-        arena_view free of any import from playback, so the dependency graph in section 3 stays
-        acyclic and arena_view depends only on geometry and the planner's primitives. app.py does
-        the slicing and unpacking."""
-
-    def clear(self) -> None: ...
-```
-
-Rendering order matters — later draws paint over earlier: grid → start zone → keep-out (if on) →
-trail → obstacles → robot. The robot must be on top; obstacles must be above the trail so a path
-passing behind one still reads correctly.
-
-### 5.5 `app.py` — window, widgets, events
-
-Owns all mutable application state: the obstacle list, the current `World`, the current `Route`, the
-`Playback`, and the tkinter timer handle.
-
-**Layout** (matching the mockup approved during design):
+The tablet (branch `shuenwei-android`, `protocol/Encoder.kt`) sends obstacles as one grid cell
+each, `ADD,B<id>,(<cx>,<cy>)` with `cx, cy` in 0..19, origin bottom-left, ids B1..B8, and reports
+the robot as `ROBOT,<x>,<y>,<heading>` where x, y are the footprint **centre** in decimal cells
+(cell 1,1 is the centre of the start pose) and heading is N/E/S/W or degrees clockwise from
+north. The simulator therefore shows positions in **cells** in the panel, the tablet's
+vocabulary, and converts with one rule in `geometry.py`:
 
 ```
-┌──────────────────────────────────────┬─────────────────────┐
-│                                      │  Route source:      │
-│                                      │   (•) Greedy        │
-│         600 x 600 canvas             │                     │
-│         the arena grid map            │  Obstacles          │
-│                                      │   11  (50, 90)  S   │
-│                                      │   12  (120,60)  W   │
-│                                      │                     │
-│                                      │  Recognised         │
-│                                      │   ✓ 12              │
-│                                      │   ✓ 11              │
-│                                      │                     │
-│                                      │  ⚠ 13 NO_OBJECTIVES │
-├──────────────────────────────────────┴─────────────────────┤
-│ [Plan] [Play/Pause] [Step] [Reset]   speed [0.5x 1x 2x 4x] │
-│ est. 0:34 / 6:00     recognised 2/4     plan took 2470 ms  │
-└────────────────────────────────────────────────────────────┘
+cell (cx, cy)  <->  south_west = (10 cx, 10 cy), north_east = (10 cx + 9, 10 cy + 9)
+robot centre cm (x, y)  <->  tablet cell ((x - 5) / 10, (y - 5) / 10)
 ```
 
-**Mouse interaction on the canvas:**
+## Obstacles are numbered, not image-identified
+
+In Task 1 the image on an obstacle is unknown until CV recognises it. The tablet identifies
+obstacles by number (checklist C.6, C.9: "TARGET, <Obstacle Number>, <Target ID>"). The planner's
+`image_id` field is therefore an obstacle identifier, and the simulator labels each obstacle with
+that value. New obstacles get the lowest unused id from 1. The planner's accepted range widens
+to `config.IMAGE_ID_MIN = 1` (it never uses the value semantically); `docs/protocols/
+algorithm-service.md` is updated to say so.
+
+## Visual design
+
+Graph paper with a car. One memorable thing: the robot is a top-down car (body, four wheels,
+camera dot) driving over lined paper; everything else is quiet ink on white.
+
+| Token | Value | Used for |
+|---|---|---|
+| paper | `#FDFDFA` | arena background |
+| grid minor / major | `#D5E8DC` / `#A8CDB6` | 10 cm / 50 cm lines |
+| ink | `#1B2A2F` | arena border, obstacles, car outline, text |
+| muted | `#6A7A7E` | axis labels, secondary text, footprint outline |
+| window / panel | `#F7F7F2` / `#FFFFFF` | frame and side panel |
+| rule | `#E3E7E1` | panel dividers, scrubber track |
+| start zone | fill `#E8F1EA`, edge `#2A9D6B` dashed | 40 x 40 cm at origin |
+| image face | `#E4572E` | 5 px stripe on the face carrying the image; also unreachable outline |
+| camera dot | `#2457A8` | front of the car |
+| segment colours | `#2457A8 #E4572E #2A9D6B #8E5AC8 #D99A00 #0E9AA7 #C2185B #7A5230` | trail of segment 1..8, and the obstacle chip in the panel |
+| planned, not yet driven | `#9AA5A8` dashed | remaining route |
+
+Robot: a dashed `muted` square for the 31 cm planning footprint (from the Robot's own extents,
+not config), inside it a rounded body 19 x 23 cm filled white with a 2 px ink outline, four ink
+wheel rectangles, a camera dot on the front edge. The sprite rotates with heading, so turns are
+visible without a separate heading indicator. Sizes come from the Robot entity and config
+constants, never literals in the drawing code.
+
+Obstacle: ink square of `obstacle.clearance` cm with the id centred in paper-white text and the
+image-face stripe. Unreachable: paper fill, `#E4572E` dashed outline, red id, reason below.
+
+Panel (right, 300 px): "Plan route" primary button, "Open arena", "Save arena"; Route section
+with a radio per registered `RouteSource`, total length in cm, planning time; Obstacles list with
+a coloured chip per obstacle (colour = its segment), position, face, and state (captured / next /
+unreachable + reason); Captured list in visit order with the estimated time of each capture.
+
+Transport bar (bottom): Play/Pause, Step, Reset, speed pills 0.5x 1x 2x 4x, a scrubber, the
+clock as `m:ss` followed by "est. of 6:00", and "k of N".
+
+Fonts: UI family from `fonts.py`; all numbers in the mono family with tabular figures. Sentence
+case everywhere. Buttons say what they do: "Plan route", "Open arena", "Save arena".
+
+## Playback
+
+`playback.py` flattens `[segment.vectors]` into frames tagged with segment index; the last frame
+of each segment carries `captured_id` and is repeated `CAPTURE_DWELL_FRAMES` (10) times so the
+capture moment is visible. Dwell frames do not count as distance. `distance_cm` is the number of
+non-dwell frames (1 cm per cell). `estimated_seconds = distance_cm / config.ROBOT_SPEED_CM_S`
+plus `config.CAPTURE_DWELL_S` per capture. Empty routes, single-frame routes, `step()` past the
+end, `seek()` clamping and `reset()` are all handled and tested.
+
+Speed pills set ms per frame: 40, 20, 10, 5. The loop is `root.after`, never a thread. The handle
+is stored so Pause and window close can cancel it.
+
+## Editing
 
 | Action | Effect |
 |---|---|
-| Left-click empty space | Add a 10 cm obstacle, snapped to the 10 cm grid, image face defaulting to SOUTH, `image_id` = lowest unused value from `config.IMAGE_ID_MIN` |
-| Left-click an existing obstacle | Cycle its image face NORTH → EAST → SOUTH → WEST |
-| Right-click an existing obstacle | Remove it |
+| Left-click empty cell | add a 10 cm obstacle, face S, lowest unused id |
+| Left-click an obstacle | cycle face N -> E -> S -> W |
+| Right-click an obstacle | remove |
+| Drag an obstacle | move it, snapped |
 
-Placement must be **rejected with a visible message, never silently**, when the new obstacle would:
-overlap an existing obstacle; lie outside the arena; or overlap the 40 × 40 cm start zone. Reuse
-`config.IMAGE_ID_MAX` as the ceiling — refuse to add a 31st obstacle rather than emit an illegal ID.
+Refused with a message in the status line, never silently: overlapping another obstacle, outside
+the arena, overlapping the start zone, more than `config.IMAGE_ID_MAX` obstacles. Any edit
+clears the current route and playback.
 
-**Buttons:**
+## Open and save
 
-- **Plan** — build a fresh `World` from the current obstacles, call the selected `RouteSource`, build
-  a `Playback`, redraw. Planning takes ~2.5 s for 4 obstacles and **blocks the UI**; see §8.
-- **Play / Pause** — start or stop the timer loop.
-- **Step** — advance exactly one frame. Essential for demonstrating a single turn to a supervisor.
-- **Reset** — `Playback.reset()` and redraw at frame 0.
-- **Speed** — sets milliseconds per frame: `0.5x → 40ms`, `1x → 20ms`, `2x → 10ms`, `4x → 5ms`.
+`arena_io.py` reads and writes the `PathfindingRequest` JSON exactly as the RPi sends it (robot
+plus obstacles, cm, inclusive corners). Open accepts anything in `testdata/` or `.replay/`, so a
+real request that misbehaved can be replayed in front of a supervisor. Save writes the current
+arena with the configured start pose and `"verbose": false`.
 
-**The animation loop uses `root.after(delay_ms, tick)` — never a thread.** Tkinter is not
-thread-safe; touching widgets from another thread produces intermittent crashes that are very hard to
-diagnose. Store the handle returned by `after()` so Pause can `after_cancel()` it, and cancel it on
-window close.
+## Config additions
 
-At 1x the reference 4-obstacle arena animates in about 20 seconds (1024 frames × 20 ms), which is a
-sensible pace for a supervisor to watch.
-
-### 5.6 Change to `config.py`
-
-One constant, in the existing provenance format:
+In `config.py`, in the existing provenance format:
 
 ```python
-# How fast the robot actually drives, in centimetres per second, at competition speed.
-# Used ONLY to convert a planned path length into an estimated real-world duration for the
-# simulator's clock (checklist B.2 is scored on images recognised within the time limit).
-# The planner itself does not use this: it costs paths in centimetres, not seconds.
-# SOURCE: STM | placeholder | NOT MEASURED. 30 is a guess. Ask the STM owner for the actual figure
-#   at competition speed and update this together with TURN_RADIUS_CM, which must be measured at the
-#   same speed - turning radius grows with speed, so the two numbers are only valid as a pair.
-ROBOT_SPEED_CM_S = 30
+START_ZONE_CM = 40          # RULES | measured
+ROBOT_SPEED_CM_S = 30       # STM | placeholder, NOT MEASURED
+CAPTURE_DWELL_S = 2.0       # CV | placeholder, capture + inference time
+TASK_1_TIME_LIMIT_S = 360   # RULES | measured
+ROBOT_BODY_CM = (19, 23)    # STM | measured from briefing photo, width x length
+IMAGE_ID_MIN = 1            # was 11; see "Obstacles are numbered"
 ```
 
-Also add, in the same section:
+## Testing
 
-```python
-# The Task 1 timeout, in seconds. The simulator shows elapsed estimate against this.
-# SOURCE: RULES | measured | 6 minutes for Task 1, 3 minutes for Task 2. MDP briefing(1).pdf.
-TASK_1_TIME_LIMIT_S = 360
-```
+`algorithm/tests/`, one file per module, run with `python -m pytest tests -q` from
+`algorithm/`. A `conftest.py` puts `algorithm/` on `sys.path`.
 
-And one under **Arena**, because the simulator must draw the start zone and there is currently no
-constant for it — only `START_POSE`, which is the robot's pose *within* the zone, not the zone:
+- geometry: `to_canvas(0,0)` is bottom-left, `to_canvas(0,200)` is top-left, round trip,
+  `rect` flip, `snap`, cell <-> corners, car outline rotates with heading.
+- arena: add/remove/move/cycle, every refusal reason, `testdata/02-four-obstacles.json`
+  round-trips; obstacles keep ids, faces, corners.
+- routes: `GreedyRouteSource.plan(world)` equals `generate_objectives` + `search` directly:
+  same ids, costs, instructions.
+- playback: frame count, one capture per segment at its last frame, dwell repeats, distance
+  excludes dwell, captured order equals `[s.image_id for s in segments]`, reset, step past end,
+  seek clamp, empty route.
+- arena_view: against a recording painter, the start zone lands bottom-left, every obstacle is
+  drawn with its face stripe, unreachable obstacles use the warning style, the car is drawn at
+  the pose.
+- snapshot: renders `testdata/02` to a PNG file that exists and has the arena's pixel size.
 
-```python
-# Edge length of the square start zone at the arena's origin, in centimetres.
-# SOURCE: RULES | measured | 40 x 40 cm in the bottom-left corner at (0, 0). AGENTS.md 3.1.
-START_ZONE_CM = 40
-```
+Not unit-tested: `app.py`, `fonts.py`, `TkPainter`. `python -m simulator --selftest` opens
+the window, plans testdata 02, steps through the route, and exits, so a crash in wiring is
+caught without eyes. Everything visual is verified by a human with the checklist below.
 
-Without this the simulator would hardcode 40, which breaks `AGENTS.md` §9.2 rule 1. The planner does
-not use it — the start zone is not a keep-out, just a marked region — so it is display-only today,
-but it is a rules-derived physical measurement and belongs in `config.py` regardless.
+## Manual checklist (also the demo script)
 
-At the placeholder 30 cm/s the reference 4-obstacle arena estimates **34 s against the 360 s budget**
-— comfortable, and consistent with the measured 2.2 s planning latency being irrelevant.
+1. Window opens; grid every 10 cm; start zone bottom-left. If it is top-left, the flip is wrong.
+2. Open `testdata/02-four-obstacles.json`; four obstacles appear with ids and marked faces.
+3. Click to add a fifth; click it to cycle its face; right-click removes it; overlap is refused.
+4. Plan route; route appears, obstacles get segment colours, remaining route is dashed.
+5. Play; the car drives, arcs are visibly arcs, the car rotates through turns.
+6. Each id appears in Captured as the car arrives, with a visible pause.
+7. Clock counts up and reads "est. of 6:00".
+8. Step advances one frame; Reset returns to start and clears Captured.
+9. Build an arena with an obstacle against the wall it faces; Plan; it is drawn unreachable
+   with `NO_OBJECTIVES`. Correct, not a bug.
+10. Plan with zero obstacles; no crash.
+11. Save arena; the file is a valid request body (curl it at the service).
 
----
+## Phases
 
-## 6. Testing
+1. `geometry`, `fonts`, `arena_view`, minimal `app`: static render of testdata 02. Gate: checks 1-2.
+2. `routes`, `playback`, transport bar. Gate: checks 4-5, 8. **Earns B.1.**
+3. Captured list, clock, config additions. Gate: checks 6-7. **Earns B.2.**
+4. Editing and `arena_io`. Gate: checks 3, 9-11.
+5. Unreachable rendering, route selector. Ready for the optimiser to plug in.
 
-### 6.1 Unit tests — `algorithm/tests/test_simulator.py`
+## Risks
 
-Runnable as `python -m pytest tests/ -v` from `algorithm/`. `pytest` is already in
-`requirements.txt`. A `conftest.py` putting `algorithm/` on `sys.path` is needed if not already
-present.
-
-**`geometry.py`** — the flip is the whole point, so assert it explicitly:
-
-- `to_canvas(0, 0) == (0, 600)` — arena origin is bottom-left, canvas bottom-left is y=600.
-- `to_canvas(0, 200) == (0, 0)` — arena top-left maps to canvas origin.
-- `to_canvas(200, 0) == (600, 600)`.
-- `to_arena(to_canvas(x, y)) == (x, y)` for a spread of integer inputs — round-trip.
-- `cell_rect` produces a box whose height equals `size_cm * SCALE` and whose top edge is *above* its
-  bottom edge in canvas terms.
-- `snap(97, 10) == 90`, `snap(90, 10) == 90`, `snap(0, 10) == 0`.
-
-**`playback.py`** — behaviour, on a real route from a real `World`:
-
-- Total frames equals the sum of `len(segment.vectors)`.
-- Exactly one frame per segment has `captures` set, and it is that segment's last frame.
-- `recognised` grows in visit order and matches `[s.image_id for s in route.segments]` at the end.
-- `reset()` returns `index` to 0 and empties `recognised`.
-- `step()` at the end returns `None` and does not raise.
-- Empty route: `frames == []`, `current is None`, `finished is True`, `step() is None`.
-- `seek()` clamps rather than raising.
-- `distance_cm == index`.
-
-**`routes.py`**:
-
-- `GreedyRouteSource.plan(world)` returns segments and unreachable **identical** to calling
-  `generate_objectives()` + `search()` directly on the same world — compare `image_id`, `cost` and
-  full instruction lists. This is the test that stops the simulator quietly diverging from the
-  planner.
-
-**Not unit-tested:** `app.py` and `arena_view.py`. Driving a tkinter event loop in CI is more
-trouble than it is worth here, and the drawing is verified by eye against §6.2.
-
-### 6.2 Manual verification checklist
-
-Run through this before claiming a phase complete. It doubles as the demo script for §9.
-
-1. Window opens; arena is square with visible grid lines every 10 cm.
-2. Start zone is at the **bottom-left**. *(If it is top-left, the Y flip is wrong — see §4.)*
-3. Click four obstacles; each shows an ID and a marked image face.
-4. Click an obstacle repeatedly; the marked face cycles N → E → S → W.
-5. Right-click removes an obstacle.
-6. Try to place an obstacle overlapping another — refused, with a message.
-7. Press Plan; a route appears.
-8. Press Play; the robot moves smoothly and **turns are visibly arcs, not teleports**.
-9. The heading indicator rotates through turns.
-10. Each image ID appears in the Recognised panel **as the robot reaches it**, not all at the end.
-11. The timer counts up and is labelled an estimate.
-12. Step advances exactly one frame.
-13. Reset returns to the start and clears Recognised.
-14. Build an arena with an obstacle hard against a wall it faces; Plan; it is drawn as unreachable
-     with `NO_OBJECTIVES`. *(This is correct behaviour, not a bug.)*
-15. Plan with zero obstacles — no crash.
-
----
-
-## 7. Implementation plan
-
-Five phases. **Each ends in something demonstrable**, so work can be handed over or paused between
-them, and so partial progress still earns something. Do them in order — later phases assume earlier
-ones.
-
-### Phase 0 — confirm a window opens
-
-Before anything else, on the machine that will run the demo:
-
-```sh
-./.venv/bin/python -c "import tkinter;tkinter.Tk().mainloop()"
-```
-
-An empty window must appear. `import tkinter` succeeding is **not** sufficient evidence — a process
-without window-server access imports fine and then dies with an `NSInternalInconsistencyException`
-on `Tk()`. This bit during spec writing, from an agent shell with no GUI session.
-
-**Status: PASSED** on the algorithms laptop, 2026-08-27 — Tk 8.6, window rendered from
-`algorithm/.venv`. Re-run this on any new machine before starting work.
-
-Consequence for whoever implements this: **an automated agent cannot verify any of the visual
-behaviour in §6.2.** Every manual check must be run by a human at the keyboard. Write the code so
-the non-visual parts (`geometry`, `playback`, `routes`) carry real unit tests, because those are the
-only parts that can be verified without eyes.
-
-### Phase 1 — static render
-
-`geometry.py`, `arena_view.py`, a minimal `app.py` that opens a window and draws a hardcoded arena
-(reuse `testdata/02-four-obstacles.json`'s layout). No planning, no animation, no clicking.
-
-Deliverable: a window showing the grid, start zone, four obstacles with image faces, and the robot
-parked at the start pose.
-Tests: all of `geometry.py`'s.
-Gate: manual checks 1, 2, and a visual match against the layout in `testdata/`.
-
-**Do not proceed until check 2 passes.** Everything downstream inherits the coordinate transform.
-
-### Phase 2 — planning and playback
-
-`routes.py`, `playback.py`. Add Plan / Play / Pause / Step / Reset / speed. Still a hardcoded arena.
-
-Deliverable: press Plan then Play, watch the robot drive the route with visible arcs.
-Tests: all of `playback.py`'s and `routes.py`'s.
-Gate: manual checks 7, 8, 9, 12, 13.
-
-**This phase alone satisfies B.1.**
-
-### Phase 3 — recognition reporting and the clock
-
-The Recognised panel, the estimated-time display, the `config.py` additions from §5.6.
-
-Deliverable: image IDs appear as they are reached; the clock shows an estimate against 6:00.
-Gate: manual checks 10, 11.
-
-**This phase completes B.2.**
-
-### Phase 4 — arena editing
-
-Click-to-place, face cycling, removal, and validation with visible rejection messages.
-
-Deliverable: build any arena live, then plan it.
-Gate: manual checks 3, 4, 5, 6, 15.
-
-This is what makes the demo robust to a supervisor asking for a different layout.
-
-### Phase 5 — unreachable rendering and route switching
-
-Unreachable obstacles drawn with their reason. The route-source selector. The optional keep-out
-overlay.
-
-Deliverable: skipped obstacles are visible and explained; route sources can be switched.
-Gate: manual check 14.
-
-**B.3 remains unsatisfied until an optimising `RouteSource` exists** — that is separate work (§2).
-Phase 5 is what makes plugging it in a one-file change.
-
-### Ordering of value against the deadline
-
-If time runs short, **Phases 1–3 earn B.1 and B.2** and are the priority. Phase 4 protects the demo.
-Phase 5 is presentation and honesty. Never skip Phase 1's gate to save time.
-
----
-
-## 8. Known risks
-
-| Risk | Mitigation |
-|---|---|
-| **Y-axis flip** renders everything upside down | All conversion isolated in `geometry.py`, asserted by unit test, and gated at the end of Phase 1 (§4) |
-| **Planning blocks the UI for ~2.5 s.** The window will look frozen while Plan runs | Accepted, not fixed. Disable the button and show "Planning…" so it reads as busy rather than hung. **Do not move planning to a thread** — tkinter is not thread-safe and the cure is worse than the symptom. If it ever becomes intolerable, the fix is a faster planner (wire up the A\* heuristic), not concurrency |
-| A supervisor asks for **obstacles at the legal 30 cm spacing**, and they come back unreachable | Real limitation, documented in `README.md` limitation 1. Phase 5's rendering at least makes it legible and explainable rather than looking like a crash. Say it out loud before demoing |
-| **Turns look like teleports** and B.1's "and turns" is not convincingly shown | The heading indicator in `draw_robot`, plus the arc cells already present in `segment.vectors`. Manual checks 8 and 9 exist to catch this |
-| `ROBOT_SPEED_CM_S` is a **guess**, so the clock is fiction | Labelled an estimate in the UI and `placeholder` in config. Update after STM measures |
-| Tkinter missing from a Python build | **This fired.** Homebrew's `python@3.11` ships without `_tkinter`, so `import tkinter` failed. Resolved on 2026-08-27 with `brew install python-tk@3.11` — Tk 8.6, confirmed importable from both `python3.11` and `algorithm/.venv`. It is a system package, **not** a pip install, so `requirements.txt` does not and cannot cover it. Any new machine needs the brew step; note it in `README.md` when Phase 1 lands. macOS system `/usr/bin/python3` has tkinter but is 3.9 and cannot run the planner (`match`), so it is not a fallback |
-
----
-
-## 9. Demo script for the checklist sign-off
-
-What to do in front of the supervisor, in order. Roughly three minutes.
-
-1. **"This is the 2m by 2m arena on a 10cm grid, with the start zone bottom-left."** — B.1's map.
-2. **Place five obstacles by clicking**, setting a different image face on each. *(B.2 and B.3 both
-   say "the 5 images", so five is the specified demo arena even though competition day is 4–8.)*
-3. **"Each obstacle shows its image ID, and the thick edge is the face the image is on."** — B.1's
-   "positions of the images".
-4. **Press Plan.** — "It computed a route visiting all five in 2.5 seconds."
-5. **Press Play.** — "The robot square is the planning footprint; the pointer is its heading. Watch
-   it reverse away from an obstacle and swing through a turn." — B.1's "forward/backward and turns".
-6. **Point at the Recognised panel filling in.** — the deck's "report images recognized as it is
-   done", and B.2's "visiting each image position once".
-7. **Point at the clock.** — "Estimated 34 seconds against the 6-minute limit." — B.2's time limit.
-8. **Press Reset, then Step a few times through a turn.** — proves it is genuinely time-stepped
-   rather than an animation of a precomputed picture.
-9. **For B.3**, switch the route source and compare total costs. *(Requires the optimiser; until then
-   B.3 cannot honestly be claimed.)*
-
----
-
-## 10. References
-
-- `docs/MDP assessment and system checklist.pdf` pp. 7–8 — B.1/B.2/B.3, the graded wording.
-- `docs/algarithms_briefing_25S2.pdf` p. 40 — time-stepped display, report images as recognised.
-- `docs/MDP briefing(1).pdf` — Task 1's 6-minute limit, 4–8 obstacles, image IDs 11–40.
-- `AGENTS.md` §3.1 — robot footprint, start zone. §7.9 — simulator requirements. §9.2 — repo rules.
-- `algorithm/PROVENANCE.md` — planner lineage and design decisions.
-- `algorithm/README.md` — known limitations, especially limitation 1 (clearance) and 4 (ordering).
-- `algorithm/testdata/` — ready-made arenas; Phase 1 reuses `02-four-obstacles.json`'s layout.
+- Y flip: isolated in `geometry.py`, asserted by tests, gated at phase 1.
+- Planning blocks the UI for ~2.5 s: disable the button and show "Planning..." Not threaded.
+- Legal 30 cm obstacle spacing comes back unreachable: real planner limitation
+  (`README.md` limitation 1). The simulator makes it visible; say it before demoing.
+- Clock is a guess until STM measures speed: labelled "est." in the UI, placeholder in config.
+- tkinter missing: documented per platform above.
