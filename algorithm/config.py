@@ -42,6 +42,10 @@ ARENA_SIZE_CM = 200
 #   simulator must render whatever GRID_SIZE says, not a second hardcoded resolution.
 GRID_SIZE = 200
 
+# Edge length of the square start zone at the arena's origin, in centimetres.
+# SOURCE: RULES | measured | 40 x 40 cm in the bottom-left corner at (0, 0). AGENTS.md 3.1.
+START_ZONE_CM = 40
+
 # ---------------------------------------------------------------------------------------
 # Robot
 # ---------------------------------------------------------------------------------------
@@ -165,6 +169,17 @@ TURN_PIVOT_OFFSET_CM = 3
 # SOURCE: ALGO | assumed | Reference offered exactly one chunk length, 5 cells.
 STRAIGHT_CHUNK_CELLS = (5,)
 
+# How fast the robot actually drives, in centimetres per second, at competition speed.
+# Used ONLY to convert a planned path length into an estimated real-world duration for the
+# simulator's clock. The planner itself still costs paths in centimetres, not seconds.
+# SOURCE: STM | placeholder | 30 is a guess. Ask STM for the measured competition-speed value
+#   and update it together with TURN_RADIUS_CM, because turning radius grows with speed.
+ROBOT_SPEED_CM_S = 30
+
+# The Task 1 timeout, in seconds. The simulator shows elapsed estimate against this.
+# SOURCE: RULES | measured | 6 minutes for Task 1. AGENTS.md 4.2.
+TASK_1_TIME_LIMIT_S = 360
+
 # ---------------------------------------------------------------------------------------
 # Image recognition
 # ---------------------------------------------------------------------------------------
@@ -193,7 +208,7 @@ SERVER_HOST = "0.0.0.0"
 # SOURCE: RPI | placeholder | The reference disagreed with itself: app.py bound 5001 while its own
 #   README, and the simulator client's hardcoded http://localhost:5000, both said 5000. 5000 is
 #   what every client actually calls. Confirm with RPi before demo day.
-SERVER_PORT = 5000
+SERVER_PORT = 8000
 
 # Directory the service writes each incoming request to, one timestamped JSON file per request.
 # Relative paths resolve against the process's working directory, so where the artefacts land
