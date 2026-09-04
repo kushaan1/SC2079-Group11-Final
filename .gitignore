@@ -33,3 +33,6 @@ image-rec/training/**/*.pth
 image-rec/training/**/*.onnx
 image-rec/training/**/*.tflite
 image-rec/training/**/*.torchscript
+!image-rec/training/synthesis/stand-templates/front.png
+!image-rec/training/synthesis/stand-templates/left.png
+!image-rec/training/synthesis/stand-templates/right.png
