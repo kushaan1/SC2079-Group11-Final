@@ -6,9 +6,12 @@ import numpy as np
 import pytest
 
 from training.synthesis import (
+    DEFAULT_AUTO_PLACEMENT,
+    MIN_GLYPH_BACKGROUND_LUMA,
     PATTERN_FAMILIES,
     SynthesisError,
     _automatic_variant_recipe,
+    _perspective_height_for_bottom,
     discover_custom_patterns,
     distractor_ids,
     extract_glyph_mask,
@@ -63,6 +66,9 @@ def test_procedural_patterns_are_deterministic_and_keep_the_glyph_black(family):
     assert np.array_equal(first.image, second.image)
     assert float(first.image.std()) > 5.0
     assert int(first.image[30:65, 30:65].min()) == 0
+    resized_mask = cv2.resize(mask, (96, 96), interpolation=cv2.INTER_AREA)
+    background = cv2.cvtColor(first.image, cv2.COLOR_BGR2GRAY)[resized_mask == 0]
+    assert int(background.min()) >= MIN_GLYPH_BACKGROUND_LUMA
 
 
 def test_pattern_schedule_and_distractors_are_balanced_and_distinct():
@@ -83,6 +89,16 @@ def test_custom_patterns_are_validated_and_rendered(tmp_path):
     card = render_pattern_card(glyph_masks()[11], "custom:grid", 5, size=96, custom_patterns=patterns)
     assert card.family == "custom:grid"
     assert len(card.source_sha256) == 64
+
+
+def test_custom_patterns_reject_pixels_below_the_minimum_contrast(tmp_path):
+    texture = np.full((40, 60, 3), 100, dtype=np.uint8)
+    texture[:, ::8] = 150
+    texture[0, 0] = 20
+    texture_path = tmp_path / "custom" / "too-dark.png"
+    write_image(texture_path, texture)
+    with pytest.raises(SynthesisError, match="minimum black-glyph contrast"):
+        discover_custom_patterns(texture_path.parent)
 
 
 def test_in_scene_replacement_labels_target_and_bullseye(tmp_path):
@@ -172,6 +188,10 @@ def automatic_recipe_fixture(tmp_path):
         "background_image": background_path.name,
         "background_sha256": file_sha256(background_path),
         "templates": templates,
+        "perspective": {
+            "far_point": [0.5, 0.40],
+            "near_point": [0.5, 0.95],
+        },
     }
 
 
@@ -180,16 +200,43 @@ def test_automatic_recipe_balances_counts_and_primary_orientations(tmp_path):
     validate_recipe(recipe, tmp_path)
     stand_counts = []
     orientations = []
+    edge_variants = []
     for variant in range(30):
         expanded = _automatic_variant_recipe(recipe, tmp_path, variant)
         stand_counts.append(len(expanded["stands"]))
         orientations.append(next(item["orientation"] for item in expanded["stands"] if item["role"] == "primary"))
+        primary = next(item for item in expanded["stands"] if item["role"] == "primary")
+        distractors = [item for item in expanded["stands"] if item["role"] == "distractor"]
+        assert 0.45 <= primary["apparent_height"] <= 0.65
+        assert all(0.25 <= item["apparent_height"] <= 0.50 for item in distractors)
+        assert all(primary["apparent_height"] > item["apparent_height"] for item in distractors)
+        for stand in expanded["stands"]:
+            expected_height = _perspective_height_for_bottom(
+                stand["ground_contact_y"],
+                recipe["perspective"],
+                DEFAULT_AUTO_PLACEMENT,
+            )
+            assert stand["apparent_height"] == pytest.approx(expected_height)
+        cropped = [item for item in expanded["stands"] if item["edge_cropped"]]
+        edge_variants.append(bool(cropped))
+        assert len(cropped) <= 1
+        if cropped:
+            x_values = [point[0] for point in cropped[0]["destination_quad"]]
+            assert min(x_values) < 0.0 or max(x_values) > 1.0
     assert {count: stand_counts.count(count) for count in set(stand_counts)} == {1: 10, 2: 10, 3: 10}
     assert {orientation: orientations.count(orientation) for orientation in set(orientations)} == {
         "front": 10,
         "left": 10,
         "right": 10,
     }
+    assert sum(edge_variants) == 9
+
+
+def test_automatic_recipe_requires_two_click_perspective_calibration(tmp_path):
+    recipe = automatic_recipe_fixture(tmp_path)
+    recipe.pop("perspective")
+    with pytest.raises(SynthesisError, match="two-click perspective calibration"):
+        validate_recipe(recipe, tmp_path)
 
 
 def test_automatic_recipe_preserves_baked_bullseyes_and_adds_shadow(tmp_path):
@@ -205,6 +252,20 @@ def test_automatic_recipe_preserves_baked_bullseyes_and_adds_shadow(tmp_path):
     assert sum(item["kind"] == "bullseye" for item in included) == 3
     assert len({item["competition_id"] for item in included if item["kind"] == "target"}) == 3
     assert int(rendered.image.min()) < 18
+
+
+def test_edge_cropped_primary_remains_renderable_and_labelled(tmp_path):
+    recipe = automatic_recipe_fixture(tmp_path)
+    variant = next(
+        index
+        for index in range(30)
+        if len(_automatic_variant_recipe(recipe, tmp_path, index)["stands"]) == 1
+        and _automatic_variant_recipe(recipe, tmp_path, index)["stands"][0]["edge_cropped"]
+    )
+    rendered = render_recipe_variant(recipe, tmp_path, glyph_masks(), bullseye_tile(), variant)
+    primary = next(item for item in rendered.objects if item["role"] == "primary")
+    assert primary["included"] is True
+    assert primary["visible_fraction"] >= 0.50
 
 
 def test_separated_scene_renders_and_labels_multiple_stands(tmp_path):
