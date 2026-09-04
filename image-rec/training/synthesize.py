@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
 
     automatic = subparsers.add_parser(
         "configure-auto",
-        help="create the simple three-orientation automatic background recipe",
+        help="create a three-orientation recipe using two-click floor perspective calibration",
     )
     _add_recipe_arguments(automatic)
     automatic.add_argument("--background", type=Path, required=True)
@@ -150,6 +150,30 @@ def _surface_quads(image: np.ndarray, bullseye_count: int) -> Tuple[List[List[fl
     target = _click_quad(image, "Target card")
     bullseyes = [_click_quad(image, "Bullseye surface {}".format(index + 1)) for index in range(bullseye_count)]
     return target, bullseyes
+
+
+def _click_perspective(image: np.ndarray) -> Dict[str, List[float]]:
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as error:
+        raise SynthesisError("interactive configuration requires matplotlib on a desktop host") from error
+    figure, axis = plt.subplots()
+    axis.imshow(_display_image(image))
+    axis.set_title(
+        "Perspective calibration\nClick a far floor contact point, then a near floor contact point"
+    )
+    points = plt.ginput(2, timeout=-1, show_clicks=True)
+    plt.close(figure)
+    if len(points) != 2:
+        raise SynthesisError("perspective configuration was cancelled before two points were selected")
+    normalized = [
+        [float(x) / image.shape[1], float(y) / image.shape[0]] for x, y in points
+    ]
+    if normalized[1][1] - normalized[0][1] < 0.10:
+        raise SynthesisError(
+            "the near floor point must be at least 10% of image height below the far point"
+        )
+    return {"far_point": normalized[0], "near_point": normalized[1]}
 
 
 def _configure_in_scene(args: argparse.Namespace) -> None:
@@ -251,6 +275,7 @@ def _configure_scene(args: argparse.Namespace) -> None:
 
 
 def _configure_auto(args: argparse.Namespace) -> None:
+    background = load_image(args.background)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "mode": "auto_background",
@@ -264,6 +289,7 @@ def _configure_auto(args: argparse.Namespace) -> None:
             "left": _relative(args.left),
             "right": _relative(args.right),
         },
+        "perspective": _click_perspective(background),
         "placement": dict(DEFAULT_AUTO_PLACEMENT),
         "contact_shadow": dict(DEFAULT_CONTACT_SHADOW),
     }

@@ -34,13 +34,17 @@ IMAGE_SUFFIXES = frozenset((".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".
 DEFAULT_CARD_SIZE = 640
 DEFAULT_MIN_VISIBLE_FRACTION = 0.20
 DEFAULT_MIN_PRIMARY_FRACTION = 0.50
+MIN_GLYPH_BACKGROUND_LUMA = 48
 DEFAULT_AUTO_PLACEMENT = {
     "minimum_stands": 1,
     "maximum_stands": 3,
-    "primary_height_range": [0.32, 0.48],
-    "distractor_height_range": [0.16, 0.29],
-    "primary_bottom_range": [0.91, 0.98],
-    "distractor_bottom_range": [0.68, 0.90],
+    "far_stand_height": 0.25,
+    "near_stand_height": 0.65,
+    "primary_height_range": [0.45, 0.65],
+    "distractor_height_range": [0.25, 0.50],
+    "minimum_depth_gap": 0.025,
+    "edge_crop_fraction": 0.30,
+    "edge_visible_fraction_range": [0.75, 0.90],
     "maximum_roll_degrees": 3.0,
     "maximum_overlap": 0.45,
     "placement_attempts": 80,
@@ -116,27 +120,42 @@ def normalized_quad(points: Sequence[Sequence[float]], width: int, height: int) 
     return [[float(x) / width, float(y) / height] for x, y in array]
 
 
-def pixel_quad(points: Sequence[Sequence[float]], width: int, height: int) -> np.ndarray:
+def pixel_quad(
+    points: Sequence[Sequence[float]],
+    width: int,
+    height: int,
+    allowed_outside_fraction: float = 0.0,
+) -> np.ndarray:
     array = np.asarray(points, dtype=np.float32)
     if array.shape != (4, 2) or not np.isfinite(array).all():
         raise SynthesisError("quadrilateral must contain four finite [x, y] points")
-    if float(array.max()) <= 1.0 and float(array.min()) >= 0.0:
+    if (
+        float(array.max()) <= 1.0 + allowed_outside_fraction
+        and float(array.min()) >= -allowed_outside_fraction
+    ):
         array = array * np.asarray((width, height), dtype=np.float32)
-    validate_pixel_quad(array, width, height)
+    validate_pixel_quad(array, width, height, allowed_outside_fraction)
     return array.astype(np.float32)
 
 
-def validate_pixel_quad(quad: np.ndarray, width: int, height: int) -> None:
+def validate_pixel_quad(
+    quad: np.ndarray,
+    width: int,
+    height: int,
+    allowed_outside_fraction: float = 0.0,
+) -> None:
     if quad.shape != (4, 2) or not np.isfinite(quad).all():
         raise SynthesisError("quadrilateral must contain four finite [x, y] points")
     if width <= 0 or height <= 0:
         raise SynthesisError("image dimensions must be positive")
+    if not 0.0 <= allowed_outside_fraction <= 0.5:
+        raise SynthesisError("allowed outside fraction must be between 0 and 0.5")
     tolerance = 1e-4
     if (
-        np.any(quad[:, 0] < -tolerance)
-        or np.any(quad[:, 0] > width + tolerance)
-        or np.any(quad[:, 1] < -tolerance)
-        or np.any(quad[:, 1] > height + tolerance)
+        np.any(quad[:, 0] < -width * allowed_outside_fraction - tolerance)
+        or np.any(quad[:, 0] > width * (1.0 + allowed_outside_fraction) + tolerance)
+        or np.any(quad[:, 1] < -height * allowed_outside_fraction - tolerance)
+        or np.any(quad[:, 1] > height * (1.0 + allowed_outside_fraction) + tolerance)
     ):
         raise SynthesisError("quadrilateral extends outside the image")
     contour = quad.reshape((-1, 1, 2))
@@ -212,8 +231,12 @@ def discover_custom_patterns(directory: Optional[Path]) -> Tuple[Path, ...]:
             raise SynthesisError("custom pattern is too small: {}".format(path))
         if float(gray.std()) < 6.0:
             raise SynthesisError("custom pattern has insufficient variation: {}".format(path))
-        if float(np.percentile(gray, 25)) < 28.0:
-            raise SynthesisError("custom pattern is too dark for a black glyph: {}".format(path))
+        if int(gray.min()) < MIN_GLYPH_BACKGROUND_LUMA:
+            raise SynthesisError(
+                "custom pattern falls below the minimum black-glyph contrast of {} luma: {}".format(
+                    MIN_GLYPH_BACKGROUND_LUMA, path
+                )
+            )
     return paths
 
 
@@ -253,6 +276,11 @@ def render_pattern_card(
     )
     parameters = dict(parameters)
     parameters["rotation_degrees"] = rotation
+    pattern = _enforce_minimum_luma(pattern, MIN_GLYPH_BACKGROUND_LUMA)
+    parameters["minimum_background_luma"] = MIN_GLYPH_BACKGROUND_LUMA
+    parameters["observed_minimum_background_luma"] = int(
+        cv2.cvtColor(pattern, cv2.COLOR_BGR2GRAY).min()
+    )
     mask = cv2.resize(glyph_mask, (size, size), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
     card = pattern.astype(np.float32)
     card *= (1.0 - mask[:, :, None])
@@ -265,9 +293,12 @@ def _procedural_pattern(family: str, size: int, rng: np.random.Generator) -> Tup
     yy, xx = np.mgrid[0:dimension, 0:dimension].astype(np.float32)
     period = int(rng.integers(max(18, dimension // 24), max(30, dimension // 10)))
     phase = float(rng.uniform(0.0, period))
-    dark = np.asarray((135, 145, 150), dtype=np.float32) + rng.uniform(-12, 12, 3)
-    light = np.asarray((220, 225, 220), dtype=np.float32) + rng.uniform(-8, 8, 3)
-    accent = np.asarray((170, 185, 155), dtype=np.float32) + rng.uniform(-15, 15, 3)
+    dark_level = float(rng.uniform(50.0, 105.0))
+    light_level = float(rng.uniform(140.0, 215.0))
+    accent_level = float(rng.uniform(75.0, 165.0))
+    dark = np.full(3, dark_level, dtype=np.float32) + rng.uniform(-14, 14, 3)
+    light = np.full(3, light_level, dtype=np.float32) + rng.uniform(-12, 12, 3)
+    accent = np.full(3, accent_level, dtype=np.float32) + rng.uniform(-18, 18, 3)
     canvas = np.empty((dimension, dimension, 3), dtype=np.float32)
     params: Dict[str, Any] = {
         "period": period / oversample,
@@ -335,6 +366,15 @@ def _procedural_pattern(family: str, size: int, rng: np.random.Generator) -> Tup
 
     canvas = cv2.resize(np.clip(canvas, 0, 255).astype(np.uint8), (size, size), interpolation=cv2.INTER_AREA)
     return canvas, params
+
+
+def _enforce_minimum_luma(image: np.ndarray, minimum_luma: int) -> np.ndarray:
+    result = image.astype(np.float32)
+    for _ in range(2):
+        gray = cv2.cvtColor(np.clip(result, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
+        adjustment = np.maximum(0.0, minimum_luma - gray.astype(np.float32))
+        result = np.minimum(255.0, result + adjustment[:, :, None])
+    return np.clip(result, 0, 255).astype(np.uint8)
 
 
 def _tile_texture(image: np.ndarray, size: int, seed: int) -> Tuple[np.ndarray, Dict[str, Any]]:
@@ -407,7 +447,9 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
                     raise SynthesisError("{} template does not declare orientation {}".format(orientation, orientation))
                 if template.get("bullseye_mode") != "baked":
                     raise SynthesisError("automatic orientation templates require baked bullseyes")
-            _validate_auto_placement(recipe.get("placement", DEFAULT_AUTO_PLACEMENT))
+            placement = recipe.get("placement", DEFAULT_AUTO_PLACEMENT)
+            _validate_auto_placement(placement)
+            _validate_perspective(recipe.get("perspective"), placement)
             _validate_contact_shadow(recipe.get("contact_shadow", DEFAULT_CONTACT_SHADOW))
             return
         stands = recipe.get("stands")
@@ -425,7 +467,16 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
         for stand in stands:
             if stand.get("role") not in ("primary", "distractor"):
                 raise SynthesisError("stand role must be primary or distractor")
-            pixel_quad(stand.get("destination_quad", ()), width, height)
+            try:
+                allowed_outside = float(stand.get("allowed_outside_fraction", 0.0))
+            except (TypeError, ValueError) as error:
+                raise SynthesisError("stand allowed_outside_fraction is invalid") from error
+            pixel_quad(
+                stand.get("destination_quad", ()),
+                width,
+                height,
+                allowed_outside,
+            )
             load_template(resolve_resource(root, stand.get("template")), root)
     else:
         raise SynthesisError(
@@ -467,13 +518,16 @@ def _validate_auto_placement(raw: Any) -> None:
         attempts = int(raw["placement_attempts"])
         roll = float(raw["maximum_roll_degrees"])
         overlap = float(raw["maximum_overlap"])
+        far_height = float(raw["far_stand_height"])
+        near_height = float(raw["near_stand_height"])
+        depth_gap = float(raw["minimum_depth_gap"])
+        edge_fraction = float(raw["edge_crop_fraction"])
         ranges = [
             tuple(float(value) for value in raw[name])
             for name in (
                 "primary_height_range",
                 "distractor_height_range",
-                "primary_bottom_range",
-                "distractor_bottom_range",
+                "edge_visible_fraction_range",
             )
         ]
     except (KeyError, TypeError, ValueError) as error:
@@ -484,6 +538,43 @@ def _validate_auto_placement(raw: Any) -> None:
         raise SynthesisError("automatic placement attempts, roll, or overlap are invalid")
     if any(len(values) != 2 or not 0.0 < values[0] <= values[1] <= 1.0 for values in ranges):
         raise SynthesisError("automatic placement ranges must be ordered fractions in (0, 1]")
+    primary_range, distractor_range, edge_visible_range = ranges
+    if not 0.0 < far_height < near_height <= 1.0:
+        raise SynthesisError("far and near stand heights must be increasing fractions")
+    if not far_height <= distractor_range[0] <= distractor_range[1] <= near_height:
+        raise SynthesisError("distractor heights must fit the calibrated perspective range")
+    if not far_height <= primary_range[0] <= primary_range[1] <= near_height:
+        raise SynthesisError("primary heights must fit the calibrated perspective range")
+    if primary_range[0] <= distractor_range[0]:
+        raise SynthesisError("the primary height range must start above the smallest distractor")
+    if not 0.0 < depth_gap < 0.25 or not 0.0 <= edge_fraction <= 0.5:
+        raise SynthesisError("automatic depth gap or edge crop fraction is invalid")
+    if edge_visible_range[0] < 0.5:
+        raise SynthesisError("edge-cropped stands must remain at least half visible")
+
+
+def _validate_perspective(raw: Any, settings: Mapping[str, Any]) -> None:
+    if not isinstance(raw, Mapping):
+        raise SynthesisError(
+            "auto_background requires two-click perspective calibration; rerun configure-auto"
+        )
+    try:
+        far = np.asarray(raw["far_point"], dtype=np.float32)
+        near = np.asarray(raw["near_point"], dtype=np.float32)
+    except (KeyError, TypeError, ValueError) as error:
+        raise SynthesisError("perspective calibration points are invalid") from error
+    if far.shape != (2,) or near.shape != (2,) or not np.isfinite((far, near)).all():
+        raise SynthesisError("perspective calibration requires two finite [x, y] points")
+    if np.any(far < 0.0) or np.any(far > 1.0) or np.any(near < 0.0) or np.any(near > 1.0):
+        raise SynthesisError("perspective calibration points must be normalized within the image")
+    if float(near[1] - far[1]) < 0.10:
+        raise SynthesisError("near floor point must be at least 10% of image height below far point")
+    far_height = float(settings["far_stand_height"])
+    near_height = float(settings["near_stand_height"])
+    if float(far[1]) < far_height + 0.01 or float(near[1]) < near_height + 0.01:
+        raise SynthesisError("perspective points are too high to contain the configured stand sizes")
+    if float(near[1]) > 0.98:
+        raise SynthesisError("near floor point must leave a 2% image-bottom margin")
 
 
 def _validate_contact_shadow(raw: Any) -> None:
@@ -594,43 +685,87 @@ def _automatic_variant_recipe(
     orientation_rng.shuffle(orientation_schedule)
     primary_orientation = STAND_ORIENTATIONS[int(orientation_schedule[variant_index])]
 
+    edge_schedule = np.arange(len(TARGET_IDS))
+    edge_rng = np.random.default_rng(stable_seed(recipe["recipe_id"], "edge-crop"))
+    edge_rng.shuffle(edge_schedule)
+    edge_count = int(round(len(TARGET_IDS) * float(settings["edge_crop_fraction"])))
+    edge_variant = variant_index in set(int(value) for value in edge_schedule[:edge_count])
+    cropped_distractor = (
+        int(rng.integers(0, stand_count - 1)) if edge_variant and stand_count > 1 else None
+    )
+
+    primary_range = tuple(settings["primary_height_range"])
+    primary_height = float(rng.uniform(float(primary_range[0]), float(primary_range[1])))
+    primary_bottom = _perspective_bottom_for_height(
+        primary_height, recipe["perspective"], settings
+    )
+    primary_edge_crop = edge_variant and cropped_distractor is None
+
     primary_quad = _sample_automatic_quad(
         root,
         resolve_resource(root, recipe["templates"][primary_orientation]),
-        tuple(settings["primary_height_range"]),
-        tuple(settings["primary_bottom_range"]),
+        primary_height,
+        primary_bottom,
         float(settings["maximum_roll_degrees"]),
         float(settings["maximum_overlap"]),
         int(settings["placement_attempts"]),
         (),
         rng,
+        primary_edge_crop,
+        tuple(settings["edge_visible_fraction_range"]),
     )
-    distractor_stands: List[Mapping[str, Any]] = []
+    distractor_stands: List[Dict[str, Any]] = []
     occupied: List[np.ndarray] = [np.asarray(primary_quad, dtype=np.float32)]
+    distractor_range = tuple(settings["distractor_height_range"])
+    depth_height_limit = _perspective_height_for_bottom(
+        primary_bottom - float(settings["minimum_depth_gap"]),
+        recipe["perspective"],
+        settings,
+    )
+    maximum_distractor_height = min(
+        float(distractor_range[1]),
+        primary_height - 1e-3,
+        depth_height_limit,
+    )
+    if maximum_distractor_height < float(distractor_range[0]):
+        raise SynthesisError("perspective calibration leaves no valid distractor depth")
     for index in range(stand_count - 1):
         orientation = STAND_ORIENTATIONS[int(rng.integers(0, len(STAND_ORIENTATIONS)))]
+        height = float(
+            rng.uniform(float(distractor_range[0]), maximum_distractor_height)
+        )
+        bottom = _perspective_bottom_for_height(height, recipe["perspective"], settings)
+        edge_crop = edge_variant and cropped_distractor == index
         quad = _sample_automatic_quad(
             root,
             resolve_resource(root, recipe["templates"][orientation]),
-            tuple(settings["distractor_height_range"]),
-            tuple(settings["distractor_bottom_range"]),
+            height,
+            bottom,
             float(settings["maximum_roll_degrees"]),
             float(settings["maximum_overlap"]),
             int(settings["placement_attempts"]),
             occupied,
             rng,
+            edge_crop,
+            tuple(settings["edge_visible_fraction_range"]),
         )
         occupied.append(np.asarray(quad, dtype=np.float32))
         distractor_stands.append(
             {
-                "instance_id": "distractor-{:02d}".format(index + 1),
                 "role": "distractor",
                 "orientation": orientation,
-                "z_index": index,
                 "template": recipe["templates"][orientation],
                 "destination_quad": quad,
+                "apparent_height": height,
+                "ground_contact_y": bottom,
+                "edge_cropped": edge_crop,
+                "allowed_outside_fraction": _outside_fraction(quad),
             }
         )
+    distractor_stands.sort(key=lambda item: float(item["ground_contact_y"]))
+    for index, stand in enumerate(distractor_stands):
+        stand["instance_id"] = "distractor-{:02d}".format(index + 1)
+        stand["z_index"] = index
     primary = {
         "instance_id": "primary",
         "role": "primary",
@@ -638,6 +773,10 @@ def _automatic_variant_recipe(
         "z_index": stand_count - 1,
         "template": recipe["templates"][primary_orientation],
         "destination_quad": primary_quad,
+        "apparent_height": primary_height,
+        "ground_contact_y": primary_bottom,
+        "edge_cropped": primary_edge_crop,
+        "allowed_outside_fraction": _outside_fraction(primary_quad),
     }
     return {
         "schema_version": SCHEMA_VERSION,
@@ -655,24 +794,37 @@ def _automatic_variant_recipe(
 def _sample_automatic_quad(
     root: Path,
     template_recipe_path: Path,
-    height_range: Sequence[float],
-    bottom_range: Sequence[float],
+    height: float,
+    bottom: float,
     maximum_roll: float,
     maximum_overlap: float,
     attempts: int,
     occupied: Sequence[np.ndarray],
     rng: np.random.Generator,
+    edge_crop: bool,
+    edge_visible_range: Sequence[float],
 ) -> List[List[float]]:
     template_data = load_template(template_recipe_path, root)
     template = load_image(resolve_resource(root, template_data["image"]), unchanged=True)
     aspect_ratio = template.shape[1] / float(template.shape[0])
+    width = height * aspect_ratio
+    if width >= 0.94:
+        raise SynthesisError("stand template is too wide for the requested perspective scale")
+    target_centre_x = float(np.asarray(template_data["target_quad"])[:, 0].mean())
+    preferred_crop_left = target_centre_x >= 0.5
     for _ in range(attempts):
-        height = float(rng.uniform(float(height_range[0]), float(height_range[1])))
-        width = height * aspect_ratio
-        if width >= 0.94:
-            continue
-        bottom = float(rng.uniform(float(bottom_range[0]), float(bottom_range[1])))
-        centre_x = float(rng.uniform(width / 2.0 + 0.02, 1.0 - width / 2.0 - 0.02))
+        if edge_crop:
+            visible = float(
+                rng.uniform(float(edge_visible_range[0]), float(edge_visible_range[1]))
+            )
+            crop_left = preferred_crop_left
+            if abs(target_centre_x - 0.5) < 0.08:
+                crop_left = bool(rng.integers(0, 2))
+            centre_x = width * (visible - 0.5) if crop_left else 1.0 - width * (visible - 0.5)
+        else:
+            centre_x = float(
+                rng.uniform(width / 2.0 + 0.02, 1.0 - width / 2.0 - 0.02)
+            )
         angle = math.radians(float(rng.uniform(-maximum_roll, maximum_roll)))
         centre = np.asarray((centre_x, bottom - height / 2.0), dtype=np.float32)
         corners = np.asarray(
@@ -681,11 +833,52 @@ def _sample_automatic_quad(
         )
         rotation = np.asarray(((math.cos(angle), -math.sin(angle)), (math.sin(angle), math.cos(angle))), dtype=np.float32)
         quad = corners.dot(rotation.T) + centre
-        if np.any(quad < 0.01) or np.any(quad > 0.99):
+        if np.any(quad[:, 1] < 0.01) or np.any(quad[:, 1] > 0.99):
+            continue
+        if edge_crop and not (float(quad[:, 0].min()) < 0.0 or float(quad[:, 0].max()) > 1.0):
+            continue
+        if not edge_crop and (np.any(quad[:, 0] < 0.01) or np.any(quad[:, 0] > 0.99)):
             continue
         if all(_quad_overlap(quad, other) <= maximum_overlap for other in occupied):
             return [[float(x), float(y)] for x, y in quad]
     raise SynthesisError("could not place stands in the generic lower region without excessive overlap")
+
+
+def _perspective_bottom_for_height(
+    height: float,
+    perspective: Mapping[str, Any],
+    settings: Mapping[str, Any],
+) -> float:
+    far_y = float(perspective["far_point"][1])
+    near_y = float(perspective["near_point"][1])
+    far_height = float(settings["far_stand_height"])
+    near_height = float(settings["near_stand_height"])
+    progress = (height - far_height) / (near_height - far_height)
+    return far_y + progress * (near_y - far_y)
+
+
+def _perspective_height_for_bottom(
+    bottom: float,
+    perspective: Mapping[str, Any],
+    settings: Mapping[str, Any],
+) -> float:
+    far_y = float(perspective["far_point"][1])
+    near_y = float(perspective["near_point"][1])
+    far_height = float(settings["far_stand_height"])
+    near_height = float(settings["near_stand_height"])
+    progress = (bottom - far_y) / (near_y - far_y)
+    return far_height + progress * (near_height - far_height)
+
+
+def _outside_fraction(quad: Sequence[Sequence[float]]) -> float:
+    array = np.asarray(quad, dtype=np.float32)
+    return max(
+        0.0,
+        -float(array[:, 0].min()),
+        float(array[:, 0].max()) - 1.0,
+        -float(array[:, 1].min()),
+        float(array[:, 1].max()) - 1.0,
+    ) + 1e-3
 
 
 def _quad_overlap(first: np.ndarray, second: np.ndarray) -> float:
@@ -747,7 +940,12 @@ def _render_separated(
             mask = cv2.bitwise_and(mask, local_alpha)
             local_objects.append(_visible_bullseye(str(stand["instance_id"]), str(stand["role"]), mask, bullseye_index, orientation))
         rendered_rgba = np.dstack((local_bgr, local_alpha))
-        destination = pixel_quad(stand["destination_quad"], base.shape[1], base.shape[0])
+        destination = pixel_quad(
+            stand["destination_quad"],
+            base.shape[1],
+            base.shape[0],
+            float(stand.get("allowed_outside_fraction", 0.0)),
+        )
         warped_rgba, homography = warp_rgba(rendered_rgba, destination, (base.shape[1], base.shape[0]))
         occluder = warped_rgba[:, :, 3]
         for existing in objects:
