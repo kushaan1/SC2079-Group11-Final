@@ -8,6 +8,7 @@ headless training hosts; the interactive CLI lives in :mod:`training.synthesize`
 import hashlib
 import json
 import math
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -50,6 +51,7 @@ DEFAULT_AUTO_PLACEMENT = {
     "maximum_roll_degrees": 3.0,
     "maximum_overlap": 0.45,
     "placement_attempts": 80,
+    "layout_attempts": 16,
 }
 DEFAULT_CONTACT_SHADOW = {
     "enabled": True,
@@ -62,6 +64,10 @@ DEFAULT_CONTACT_SHADOW = {
 
 class SynthesisError(ValueError):
     """Raised when a recipe or synthesis input is unsafe or inconsistent."""
+
+
+class _AutomaticPlacementError(SynthesisError):
+    """Raised when one randomized automatic layout cannot satisfy its constraints."""
 
 
 @dataclass(frozen=True)
@@ -555,6 +561,7 @@ def _validate_auto_placement(raw: Any) -> None:
         minimum = int(raw["minimum_stands"])
         maximum = int(raw["maximum_stands"])
         attempts = int(raw["placement_attempts"])
+        layout_attempts = int(raw["layout_attempts"])
         roll = float(raw["maximum_roll_degrees"])
         overlap = float(raw["maximum_overlap"])
         far_height = float(raw["far_stand_height"])
@@ -574,8 +581,15 @@ def _validate_auto_placement(raw: Any) -> None:
         raise SynthesisError("placement settings are incomplete or invalid") from error
     if not 1 <= minimum <= maximum <= 3:
         raise SynthesisError("automatic stand count must remain within 1..3")
-    if attempts <= 0 or not 0.0 <= roll <= 15.0 or not 0.0 <= overlap < 1.0:
-        raise SynthesisError("automatic placement attempts, roll, or overlap are invalid")
+    if (
+        attempts <= 0
+        or layout_attempts <= 0
+        or not 0.0 <= roll <= 15.0
+        or not 0.0 <= overlap < 1.0
+    ):
+        raise SynthesisError(
+            "automatic stand, layout, roll, or overlap settings are invalid"
+        )
     if any(len(values) != 2 or not 0.0 < values[0] <= values[1] <= 1.0 for values in ranges):
         raise SynthesisError("automatic placement ranges must be ordered fractions in (0, 1]")
     primary_range, distractor_range, edge_visible_range = ranges
@@ -715,9 +729,44 @@ def _automatic_variant_recipe(
 ) -> Mapping[str, Any]:
     settings = _effective_auto_placement(recipe.get("placement", {}))
     recipe_seed = int(recipe.get("seed", 2079))
-    rng = np.random.default_rng(
-        stable_seed(recipe_seed, recipe["recipe_id"], variant_index, "placement")
+    last_error: Optional[_AutomaticPlacementError] = None
+    for layout_attempt in range(int(settings["layout_attempts"])):
+        seed_parts: Tuple[object, ...] = (
+            recipe_seed,
+            recipe["recipe_id"],
+            variant_index,
+            "placement",
+        )
+        if layout_attempt:
+            seed_parts += ("layout-retry", layout_attempt)
+        rng = np.random.default_rng(stable_seed(*seed_parts))
+        try:
+            return _automatic_variant_recipe_once(
+                recipe,
+                root,
+                variant_index,
+                settings,
+                recipe_seed,
+                rng,
+            )
+        except _AutomaticPlacementError as error:
+            last_error = error
+    raise SynthesisError(
+        "could not place stands in the calibrated floor region without excessive overlap "
+        "after {} complete-layout attempts: {}".format(
+            settings["layout_attempts"], last_error
+        )
     )
+
+
+def _automatic_variant_recipe_once(
+    recipe: Mapping[str, Any],
+    root: Path,
+    variant_index: int,
+    settings: Mapping[str, Any],
+    recipe_seed: int,
+    rng: np.random.Generator,
+) -> Mapping[str, Any]:
     minimum = int(settings["minimum_stands"])
     maximum = int(settings["maximum_stands"])
     stand_count = minimum + ((variant_index + stable_seed(recipe["recipe_id"], "count")) % (maximum - minimum + 1))
@@ -769,7 +818,9 @@ def _automatic_variant_recipe(
         depth_height_limit,
     )
     if maximum_distractor_height < float(distractor_range[0]):
-        raise SynthesisError("perspective calibration leaves no valid distractor depth")
+        raise _AutomaticPlacementError(
+            "perspective calibration leaves no valid distractor depth"
+        )
     far_bottom = float(recipe["perspective"]["far_point"][1])
     maximum_distractor_bottom = _perspective_bottom_for_height(
         maximum_distractor_height, recipe["perspective"], settings
@@ -895,7 +946,7 @@ def _sample_automatic_quad(
             continue
         if all(_quad_overlap(quad, other) <= maximum_overlap for other in occupied):
             return [[float(x), float(y)] for x, y in quad]
-    raise SynthesisError(
+    raise _AutomaticPlacementError(
         "could not place stands in the calibrated floor region without excessive overlap"
     )
 
@@ -1199,26 +1250,75 @@ def generate_recipe(
     existing = [path for trio in planned for path in trio if path.exists()]
     if existing and not overwrite:
         raise SynthesisError("refusing to overwrite {} existing synthesis output(s)".format(len(existing)))
-    written: List[Path] = []
-    for variant_index, (image_path, label_path, meta_path) in enumerate(planned):
-        rendered = render_recipe_variant(recipe, root, glyph_masks, bullseye, variant_index, custom_patterns)
-        _write_image(image_path, rendered.image, jpeg_quality)
-        label_path.parent.mkdir(parents=True, exist_ok=True)
-        label_path.write_text("".join("{} {:.8f} {:.8f} {:.8f} {:.8f}\n".format(*row) for row in rendered.annotations), encoding="utf-8")
-        metadata = {
-            "schema_version": SCHEMA_VERSION,
-            "synthetic": True,
-            "recipe": _resource_value(recipe_path, root),
-            "recipe_sha256": file_sha256(recipe_path),
-            "source_group": str(recipe["source_group"]),
-            "recipe_id": str(recipe["recipe_id"]),
-            "variant_index": variant_index,
-            "primary_competition_id": TARGET_IDS[variant_index],
-            "objects": list(rendered.objects),
-        }
-        meta_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-        written.append(image_path)
-    return tuple(written)
+    output_images.parent.mkdir(parents=True, exist_ok=True)
+    output_annotations.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".synthesis-images-", dir=output_images.parent
+    ) as staged_image_dir, tempfile.TemporaryDirectory(
+        prefix=".synthesis-annotations-", dir=output_annotations.parent
+    ) as staged_annotation_dir:
+        staged_images = Path(staged_image_dir)
+        staged_annotations = Path(staged_annotation_dir)
+        staged: List[Tuple[Path, Path, Path]] = []
+        failures: List[Tuple[int, str]] = []
+        for variant_index in range(len(TARGET_IDS)):
+            stem = "sample-{:03d}".format(variant_index)
+            image_path = staged_images / (stem + ".jpg")
+            label_path = staged_annotations / (stem + ".txt")
+            meta_path = staged_annotations / (stem + ".meta.json")
+            try:
+                rendered = render_recipe_variant(
+                    recipe,
+                    root,
+                    glyph_masks,
+                    bullseye,
+                    variant_index,
+                    custom_patterns,
+                )
+                _write_image(image_path, rendered.image, jpeg_quality)
+                label_path.write_text(
+                    "".join(
+                        "{} {:.8f} {:.8f} {:.8f} {:.8f}\n".format(*row)
+                        for row in rendered.annotations
+                    ),
+                    encoding="utf-8",
+                )
+                metadata = {
+                    "schema_version": SCHEMA_VERSION,
+                    "synthetic": True,
+                    "recipe": _resource_value(recipe_path, root),
+                    "recipe_sha256": file_sha256(recipe_path),
+                    "source_group": str(recipe["source_group"]),
+                    "recipe_id": str(recipe["recipe_id"]),
+                    "variant_index": variant_index,
+                    "primary_competition_id": TARGET_IDS[variant_index],
+                    "objects": list(rendered.objects),
+                }
+                meta_path.write_text(
+                    json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+                )
+                staged.append((image_path, label_path, meta_path))
+            except SynthesisError as error:
+                failures.append((variant_index, str(error)))
+        if failures:
+            details = "; ".join(
+                "sample-{:03d} (ID {}): {}".format(
+                    variant_index, TARGET_IDS[variant_index], message
+                )
+                for variant_index, message in failures
+            )
+            raise SynthesisError(
+                "{} of {} variants failed; no outputs were written: {}".format(
+                    len(failures), len(TARGET_IDS), details
+                )
+            )
+        written: List[Path] = []
+        for staged_trio, destination_trio in zip(staged, planned):
+            for staged_path, destination_path in zip(staged_trio, destination_trio):
+                destination_path.parent.mkdir(parents=True, exist_ok=True)
+                staged_path.replace(destination_path)
+            written.append(destination_trio[0])
+        return tuple(written)
 
 
 def create_audit_sheet(

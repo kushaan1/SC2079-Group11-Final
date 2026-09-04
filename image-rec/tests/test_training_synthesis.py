@@ -1,9 +1,12 @@
+import functools
 import json
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
+
+import training.synthesis as synthesis
 
 from training.synthesis import (
     DEFAULT_AUTO_PLACEMENT,
@@ -243,6 +246,65 @@ def test_automatic_recipe_balances_counts_and_primary_orientations(tmp_path):
     assert sum(edge_variants) == 9
 
 
+def test_automatic_recipe_retries_the_complete_layout(tmp_path, monkeypatch):
+    recipe = automatic_recipe_fixture(tmp_path)
+    recipe["placement"] = {"layout_attempts": 2}
+    original = synthesis._automatic_variant_recipe_once
+    calls = []
+
+    def fail_first_layout(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            raise synthesis._AutomaticPlacementError("forced greedy-placement dead end")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        synthesis, "_automatic_variant_recipe_once", fail_first_layout
+    )
+    expanded = _automatic_variant_recipe(recipe, tmp_path, 0)
+
+    assert expanded["stands"]
+    assert len(calls) == 2
+
+
+def test_checked_in_lab_recipes_expand_all_thirty_variants(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    original_trim = synthesis._trim_rgba_template
+    original_load_template = synthesis.load_template
+    original_load_image = synthesis.load_image
+    trim_cache = {}
+
+    @functools.lru_cache(maxsize=None)
+    def cached_load_template(path, resource_root):
+        return original_load_template(path, resource_root)
+
+    @functools.lru_cache(maxsize=None)
+    def cached_load_image(path, unchanged=False):
+        return original_load_image(path, unchanged)
+
+    def cached_trim(image):
+        key = id(image)
+        if key not in trim_cache:
+            trim_cache[key] = original_trim(image)
+        return trim_cache[key]
+
+    monkeypatch.setattr(synthesis, "load_template", cached_load_template)
+    monkeypatch.setattr(synthesis, "load_image", cached_load_image)
+    monkeypatch.setattr(synthesis, "_trim_rgba_template", cached_trim)
+
+    recipe_paths = sorted(
+        (root / "training/annotations/synthesis").glob("Lab_*-auto.json")
+    )
+    assert len(recipe_paths) == 11
+    for recipe_path in recipe_paths:
+        recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+        expanded = [
+            _automatic_variant_recipe(recipe, root, variant_index)
+            for variant_index in range(30)
+        ]
+        assert len(expanded) == 30, recipe_path.name
+
+
 def test_distant_scale_uses_steeper_than_linear_falloff():
     perspective = {"far_point": [0.5, 0.40], "near_point": [0.5, 0.95]}
     midpoint = (perspective["far_point"][1] + perspective["near_point"][1]) / 2.0
@@ -396,3 +458,62 @@ def test_generate_writes_thirty_mirrored_labels_and_provenance(tmp_path):
             tmp_path / "images",
             tmp_path / "labels",
         )
+
+
+def test_generate_reports_all_variant_failures_without_partial_outputs(
+    tmp_path, monkeypatch
+):
+    image_path = tmp_path / "base.jpg"
+    write_image(image_path, np.full((100, 140, 3), 170, dtype=np.uint8))
+    recipe_path = tmp_path / "recipe.json"
+    recipe_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "mode": "in_scene",
+                "recipe_id": "failure-report-test",
+                "source_group": "capture-z",
+                "source_image": str(image_path),
+                "source_sha256": file_sha256(image_path),
+                "target_quad": [
+                    [0.2, 0.15],
+                    [0.8, 0.15],
+                    [0.8, 0.85],
+                    [0.2, 0.85],
+                ],
+                "bullseye_quads": [],
+                "seed": 2079,
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_render = synthesis.render_recipe_variant
+
+    def fail_selected_variants(*args, **kwargs):
+        variant_index = args[4]
+        if variant_index in (2, 7):
+            raise SynthesisError("forced render failure")
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(
+        synthesis, "render_recipe_variant", fail_selected_variants
+    )
+    module_root = Path(__file__).resolve().parents[1]
+    output_images = tmp_path / "images"
+    output_annotations = tmp_path / "labels"
+
+    with pytest.raises(SynthesisError) as captured:
+        generate_recipe(
+            recipe_path,
+            module_root,
+            module_root / "misc/resources/glyphs",
+            output_images,
+            output_annotations,
+        )
+
+    message = str(captured.value)
+    assert "2 of 30 variants failed" in message
+    assert "sample-002 (ID 13)" in message
+    assert "sample-007 (ID 18)" in message
+    assert not list(output_images.rglob("*"))
+    assert not list(output_annotations.rglob("*"))
