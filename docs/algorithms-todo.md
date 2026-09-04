@@ -3,20 +3,14 @@
 Updated 2026-09-04 (week 4). Branch `kejun-structure` is the stable one; `kejun-experimental-algo` holds the eight-heading experiment in section 5. Checklist and quiz are Friday of week 7, about 25 Sep. The
 simulator and the shortest-time optimiser are built; what remains is yours to do or to ask.
 
-## 1. Commit the optimiser
+## 1. Commit the review fixes
 
-One commit from the repo root on `kejun-structure`:
-
-```sh
-git add algorithm/PROVENANCE.md algorithm/README.md algorithm/config.py algorithm/pathfinding algorithm/pathfinding_controller.py algorithm/simulator algorithm/smoke.py algorithm/testdata algorithm/tests docs/protocols docs/algorithms-todo.md docs/superpowers
-git commit -m "algorithm: shortest-time optimiser (B.3), optimal by default over http with a strategy field, sim gets a Shortest time source" -m "search core rewritten on int indices + cached arcs: 25x faster, byte-identical. 126 tests, smoke 5/5"
-```
-
-On `kejun-experimental-algo`, the eight-heading work commits separately:
+On `kejun-experimental-algo`, everything through the eight-heading experiment is committed
+(`f864c5f`). What is unstaged is the toggle plus the review fixes:
 
 ```sh
-git add algorithm docs/algorithms-todo.md
-git commit -m "experiment: eight headings and 45 degree turns behind a config flag, off by default" -m "derived the 16 turn cases into one formula first. optimal routes 22-34% quicker on testdata 02 and 04. blocked on whether the stm can do a 45 degree turn"
+git add algorithm docs
+git commit -m "fix: cardinal-only headings on the wire, true diagonal pricing, half-price 45 turns" -m "northwest face was a 500, now a 422. diagonal cells cost 1.41 in the search too, so routes are picked under the numbers they are driven under. 4-heading planning 27% quicker. 138 tests"
 ```
 
 If Kushaan's branch `kushaan-simulator` is ever merged, take only his `SERVER_PORT` change (if
@@ -46,6 +40,7 @@ No agent can see the window. From `algorithm/` (Windows: `.venv\Scripts\python`)
 | 11 | Open `testdata/03-unreachable.json`, Plan | Obstacle 13 red dashed with NO_OBJECTIVES. Correct: it faces a wall 40 cm away |
 | 12 | Remove all obstacles, Plan | No crash, hint says "Plan a route to begin." |
 | 13 | Save arena, then curl the file at the running service | Valid request body, 200 |
+| 14 | Pick "Shortest time", tick `8 headings, 45 deg turns`, Plan; untick, Plan | Each tick drops the route. Eight headings gives diagonal legs and about 32 s Driving time on testdata 02 against about 41 s for four |
 
 Screenshot anything odd. This list doubles as the demo script (place five obstacles live, Plan
 with both sources, Play, point at Captured and the clock).
@@ -72,10 +67,11 @@ with both sources, Play, point at Captured and the clock).
    order is now shortest-time).
 
 ### STM owner
-0. **Can the car execute and stop a 45 degree turn accurately?** This one decides whether the
-   experiment in section 5 is worth anything: it is worth 22 to 34 percent off the route time,
-   and nothing at all if the turn cannot be driven. If yes, also: does a 45 degree turn use the
-   same steering lock and radius as a 90, and take about half the time?
+0. **Can the car execute and stop a 45 degree turn accurately, and how many seconds does it
+   take?** This decides whether the experiment in section 5 is worth anything: 34 to 57 percent
+   off the route time if a 45 costs half a 90, far less if it costs the same, and nothing at all
+   if the turn cannot be driven cleanly. Also: does it use the same steering lock and radius as
+   a 90?
 1. Four turning radii at competition speed (forward-left, forward-right, backward-left,
    backward-right): centre displacement dx, dy in cm after a 90 degree turn from a tape mark.
    Current values are another team's car (39/40/37/39).
@@ -120,23 +116,36 @@ The planner used four headings and 90 degree turns. That branch adds the four di
 45 degree turn, behind `config.DIAGONAL_HEADINGS`, which is **off by default** so nothing
 changes until someone turns it on.
 
-Measured 2026-09-04 with the shortest-time planner, diagonal moves charged their true 1.41 cm
-per cell:
+Re-measured 2026-09-04 after the pricing fixes below, with the shortest-time planner:
 
 | Arena | Four headings | Eight headings | Change |
 |---|---|---|---|
-| `02-four-obstacles` | 41.50 s, 11 turns | 32.17 s, 9 turns | -22% |
-| `04-five-obstacles` | 62.33 s, 17 turns | 41.28 s, 11 turns | -34% |
-| `05-greedy-loses` | 30.33 s, 8 turns | 29.17 s, 8 turns | -4% |
-| `01-single-obstacle` | 7.83 s | 7.83 s | none |
+| `02-four-obstacles` | 41.50 s, 11 turns | 20.94 s, 11 turns | -50% |
+| `04-five-obstacles` | 62.33 s, 17 turns | 26.98 s, 14 turns | -57% |
+| `05-greedy-loses` | 30.33 s, 8 turns | 20.08 s, 10 turns | -34% |
+| `01-single-obstacle` | 7.83 s, 2 turns | 6.24 s, 2 turns | -20% |
 
-Planning takes about 2 to 3 seconds instead of 1. Two honest caveats. The greedy planner gets
-*worse* with more options on some arenas, which is greedy's nature and does not matter because
-optimal is the default. And the five-obstacle result hits the re-plan cap, so it is the best
-route tried rather than a proven optimum.
+The first measurement said 22 to 34 percent. It was wrong in both directions: the search priced
+a diagonal cell at 1 when it costs 1.41, so it chose routes it was not paying for, and it
+charged a 45 degree turn a full `TURN_TIME_S` when the model says half. Both are fixed, and the
+gain roughly doubled. Planning takes 0.8 to 1.3 s with the diagonals on, 0.3 to 0.5 s with them
+off.
 
-To try it: set `DIAGONAL_HEADINGS = True` in `algorithm/config.py`, then plan an arena in the
-simulator with both route sources.
+Three honest caveats.
+
+1. **The size of the win rests on a 45 costing half a 90 in seconds.** Turns dominate the time
+   model - 3 s a turn against 30 cm/s of driving - so if the STM's 45 degree turn costs the
+   same as a 90 (a fixed per-command overhead would do it), most of this table evaporates. That
+   is now the sharper half of STM question 0.
+2. The greedy planner gets *worse* with more options on some arenas. That is greedy's nature
+   and does not matter, because optimal is the default.
+3. The five-obstacle result hits the re-plan cap, so it is the best route tried rather than a
+   proven optimum.
+
+To try it: tick **8 headings, 45 deg turns** in the simulator's Route panel and plan again.
+The checkbox flips the flag for that simulator process only; it does not edit `config.py`, so
+the HTTP service the RPi talks to keeps planning with whatever the file says. To change what
+the service does, edit `DIAGONAL_HEADINGS` in `algorithm/config.py` and restart it.
 
 **It is blocked on STM question 0.** The 45 degree turn is modelled as the same steering lock
 held half as long: same radius, half the arc, half the time. If the car cannot do that

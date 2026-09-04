@@ -181,6 +181,15 @@ class Segment:
         instructions: list[TurnInstruction | MoveInstruction | MiscInstruction] = []
         vectors: list[Vector] = []
         moves: list[Turn | Move] = []
+        # Cells accumulated into the MoveInstruction at the end of `instructions`, so a run of
+        # merged chunks is converted to centimetres once. Converting each chunk and adding the
+        # rounded results would drift by a centimetre per merge on a diagonal.
+        run = 0
+
+        def centimetres(direction, cells: int) -> int:
+            """What the STM is told to drive. A diagonal cell is sqrt(2) cm of ground, so a
+            25-cell diagonal run is a 35 cm command, not a 25 cm one."""
+            return round(cost.straight_cells(direction, cells) * world.cell_size)
 
         for vector, move in parts:
             match move:
@@ -190,12 +199,15 @@ class Segment:
                     moves.append(move)
 
                 case Move() if instructions and isinstance(instructions[-1], MoveInstruction) and instructions[-1].move == move.move:
-                    instructions[-1].amount += len(move.vectors) * world.cell_size
+                    run += len(move.vectors)
+                    instructions[-1].amount = centimetres(move.vectors[0].direction, run)
                     vectors.extend(move.vectors)
                     moves.append(move)
 
                 case Move():
-                    instructions.append(MoveInstruction(move=move.move, amount=len(move.vectors) * world.cell_size))
+                    run = len(move.vectors)
+                    instructions.append(MoveInstruction(move=move.move,
+                                                        amount=centimetres(move.vectors[0].direction, run)))
                     vectors.extend(move.vectors)
                     moves.append(move)
 

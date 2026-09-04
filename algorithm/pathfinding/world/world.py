@@ -150,6 +150,19 @@ class Obstacle(Entity):
                 f"{config.IMAGE_ID_MIN}-{config.IMAGE_ID_MAX} (inclusive)."
             )
 
+        # An obstacle face is one of the four cardinals: the image is stuck to one side of a
+        # block that sits square to the arena. The diagonals in `Direction` are headings the
+        # search drives through, not faces anything can present. Checked here rather than left
+        # to fail later because `objective.py` matches on the four cardinals and a diagonal
+        # falls out of that match as None, which surfaces as an AttributeError deep in the
+        # world - a bug report about the wrong file. The HTTP layer rejects one earlier still,
+        # at the schema (see `CardinalDirection`), so over the wire this is unreachable.
+        if self.direction.diagonal:
+            raise ValueError(
+                f"an obstacle face must be NORTH, EAST, SOUTH or WEST; image_id {self.image_id} "
+                f"faces {self.direction.value}."
+            )
+
 
 @dataclass
 class Robot(Entity):

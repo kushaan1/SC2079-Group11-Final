@@ -54,6 +54,33 @@ def test_a_turn_swings_the_heading_by_its_own_size():
             assert path[-1].direction == Direction.of_degrees(direction.degrees + swing), (direction, instruction)
 
 
+@pytest.mark.parametrize("lock", ("FORWARD_LEFT", "FORWARD_RIGHT", "BACKWARD_LEFT", "BACKWARD_RIGHT"))
+def test_two_45_degree_turns_land_where_one_90_does(lock):
+    """
+    The claim the whole experiment rests on: a 45 is the same steering lock held for half as
+    long. If that is true then driving two of them must put the robot where one quarter turn
+    would have, and this is the test that would fail if the 45 traced the wrong radius, curved
+    the wrong way, or stopped at the wrong point along its arc - none of which the connectivity
+    and heading tests above can see.
+
+    One cell of tolerance because both sides are rasterised onto the integer grid.
+    """
+    world = empty_world()
+    for direction in Direction:
+        whole = turn(world, Vector(direction, 100, 100), TurnInstruction(lock))[-1]
+        first = turn(world, Vector(direction, 100, 100), TurnInstruction(lock + "_45"))[-1]
+        second = turn(world, first, TurnInstruction(lock + "_45"))[-1]
+
+        assert second.direction == whole.direction, (direction, lock)
+        assert max(abs(second.x - whole.x), abs(second.y - whole.y)) <= 1, (direction, lock)
+
+
+def test_a_45_degree_turn_costs_half_a_90():
+    """Half the swing, half the seconds - the time model's half of the same claim."""
+    assert (cost.TIME_SECONDS.turn(TurnInstruction.FORWARD_LEFT_45)
+            == pytest.approx(cost.TIME_SECONDS.turn(TurnInstruction.FORWARD_LEFT) / 2))
+
+
 def test_a_diagonal_cell_costs_root_two():
     cells = [Vector(Direction.NORTHEAST, i, i) for i in range(1, 6)]
     diagonal = cost.move_cost(Move(Straight.FORWARD, cells), cost.DISTANCE_CELLS, 1)
@@ -86,5 +113,7 @@ def test_playback_rotates_through_a_45_degree_turn():
     playback = Playback(route)
 
     assert any(isinstance(m, Turn) and m.turn.degrees == 45 for s in result.segments for m in s.moves)
-    headings = {round(frame.pose.heading_deg) % 45 for frame in playback.frames}
-    assert headings, "the route produced no frames"
+    # A frame actually facing a diagonal. The set of headings mod 45 was the earlier assertion
+    # and proved nothing: any non-empty frame list satisfies it.
+    assert any(round(frame.pose.heading_deg) % 90 != 0 for frame in playback.frames), \
+        "no frame faces a diagonal, so nothing drove through the 45 degree turn"

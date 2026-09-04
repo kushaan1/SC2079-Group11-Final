@@ -95,6 +95,7 @@ Three token types, mixed in one list:
 |---|---|
 | `{"move": "FORWARD"\|"BACKWARD", "amount": <cm>}` | Drive straight. `amount` is centimetres, always ≥ 1 |
 | `"FORWARD_LEFT"` `"FORWARD_RIGHT"` `"BACKWARD_LEFT"` `"BACKWARD_RIGHT"` | A quarter-turn arc |
+| `"FORWARD_LEFT_45"` `"FORWARD_RIGHT_45"` `"BACKWARD_LEFT_45"` `"BACKWARD_RIGHT_45"` | A 45° arc: the same steering lock, held half as long. **Experimental — only emitted when the planner runs with `DIAGONAL_HEADINGS` on, which is off by default.** Tell us before you rely on receiving these, and tell us if your decoder cannot ignore them |
 | `"CAPTURE_IMAGE"` | Stop and photograph. **Terminates every segment** |
 
 - Consecutive same-direction moves are already merged, so you will not receive two `FORWARD`s in a
@@ -176,6 +177,7 @@ integers (`0`, not `"0"`). Cases that return 422:
 | Robot or obstacle outside the 200×200 arena | `[]` |
 | Empty `obstacles` list | `["obstacles"]` |
 | `strategy` other than `"greedy"` or `"optimal"` | `["strategy"]` |
+| A `direction` other than `NORTH`/`EAST`/`SOUTH`/`WEST` on the robot or an obstacle | `["obstacles", <i>, "direction"]` or `["robot", "direction"]` |
 
 **No malformed request should ever produce a 500.** If you get one, that is an algorithms bug —
 send the request body and it will be fixed.
@@ -198,7 +200,7 @@ end before the planner is finished.
 ## Deviations from the prior-year contract
 
 The prior-year team's `openapi.json` is what an earlier generated client was built from. The
-**request shape is backward compatible**, so such a client still works. Six things differ, all
+**request shape is backward compatible**, so such a client still works. Seven things differ, all
 additive or error-path only:
 
 | # | Delta | Breaks a client? |
@@ -209,6 +211,7 @@ additive or error-path only:
 | 4 | 422 bodies use `type`, not `type_` | Only if you parse 422 bodies. The prior-year schema did not match its own framework's output; ours matches what is actually emitted |
 | 5 | `image_id` 1–10 accepted (was 422) | No. The field is the tablet's obstacle number, which starts at 1 |
 | 6 | `strategy` request field and `seconds` response field added | No for `strategy` — optional, and omitting it gives the better route. `seconds` carries the same risk as `unreachable`: a generator that rejects unknown response fields will trip on it |
+| 7 | `Direction` and `TurnInstruction` gained four values each, in **responses only** | Not today. Requests still accept exactly `NORTH`/`EAST`/`SOUTH`/`WEST` — a diagonal face is a 422, as it always was. The extra values reach you only if the planner is run with `DIAGONAL_HEADINGS` on, and then a `path` vector can read `NORTHEAST` and an instruction `FORWARD_LEFT_45`. **If your client validates response enums, say so before we switch it on** |
 
 Rationale for each is in [`algorithm/PROVENANCE.md`](../../algorithm/PROVENANCE.md) under "Design
 decisions".

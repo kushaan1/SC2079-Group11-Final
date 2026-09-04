@@ -50,7 +50,24 @@ from pathfinding.world.world import Obstacle, World
 # str comparison on a str enum - EAST, NORTH, SOUTH, WEST. Deriving it means a renamed
 # direction cannot silently desynchronise the heap's tie-breaking from the reference's.
 _RANKS: tuple[Direction, ...] = tuple(sorted(Direction))
-_RANK: dict[Direction, int] = {direction: rank for rank, direction in enumerate(_RANKS)}
+_CARDINAL_RANKS: tuple[Direction, ...] = tuple(d for d in _RANKS if not d.diagonal)
+
+
+def _ranks() -> tuple[Direction, ...]:
+    """
+    The headings a search may occupy, in the order that ranks them.
+
+    Call-time config rule: only a 45 degree turn enters a diagonal heading, so with the
+    diagonals off the four diagonal ranks are unreachable - and carrying them doubles the index
+    space, the four parallel state arrays over it, and the per-rank move tables, all to hold
+    states nothing can ever reach. Dropping them is what keeps the four-heading planner as fast
+    as it was before the diagonals existed.
+
+    The relative order of the cardinals is the same in both sets, and an index is monotone in
+    (rank, x, y), so every tie the frontier breaks between two cardinal states breaks the same
+    way either way. That is what makes this a speed change and not a behaviour change.
+    """
+    return _RANKS if config.DIAGONAL_HEADINGS else _CARDINAL_RANKS
 
 # One cell forward, per direction. Mirrors straight(), which is the only other place a
 # straight move's shape is written down.
@@ -210,9 +227,11 @@ class _Search:
         :param poses: Every other pose the caller will pass to :meth:`index` - the goals. They
             size the index space along with the sources, so no caller's pose falls outside it.
         """
-        self.pad, self.stride, self.tables, self.chunks = _tables(world, weights, chain(sources, poses))
+        self.ranks = _ranks()
+        self.rank = {direction: rank for rank, direction in enumerate(self.ranks)}
+        self.pad, self.stride, self.tables, self.chunks = _tables(world, weights, chain(sources, poses), self.ranks)
         self.cells = self.stride * self.stride
-        states = len(_RANKS) * self.cells
+        states = len(self.ranks) * self.cells
 
         self.costs: list[float] = [inf] * states
         self.parents: list[int] = [-1] * states
@@ -226,12 +245,12 @@ class _Search:
             self.costs[index] = 0.0
 
     def index(self, vector: Vector) -> int:
-        return (_RANK[vector.direction] * self.stride + vector.x + self.pad) * self.stride + vector.y + self.pad
+        return (self.rank[vector.direction] * self.stride + vector.x + self.pad) * self.stride + vector.y + self.pad
 
     def vector(self, index: int) -> Vector:
         rank, cell = divmod(index, self.cells)
         x, y = divmod(cell, self.stride)
-        return Vector(_RANKS[rank], x - self.pad, y - self.pad)
+        return Vector(self.ranks[rank], x - self.pad, y - self.pad)
 
     def run(self) -> Iterator[int]:
         """
@@ -311,6 +330,7 @@ def _tables(
     world: World,
     weights: cost.Weights,
     poses: Iterable[Vector],
+    ranks: tuple[Direction, ...],
 ) -> tuple[int, int, tuple[tuple[tuple[bytes, int, float, int], ...], ...], list[tuple[Straight, int]]]:
     """
     Everything :meth:`_Search.run` reads, built once per search.
@@ -324,6 +344,7 @@ def _tables(
     :param world: The world.
     :param weights: What a move costs.
     :param poses: Every pose the caller will index, so the padding can cover them.
+    :param ranks: The headings in play, in rank order - see :func:`_ranks`.
     :return: The padding, the index stride, the per-direction move tables, and the straight
         chunks in code order.
     """
@@ -337,8 +358,9 @@ def _tables(
 
     free = _FreeWorld(world)
     arcs: dict[tuple[Direction, TurnInstruction], tuple[list[tuple[int, int]], tuple[int, int], Direction]] = {}
-    for direction in _RANKS:
-        for instruction in _TURNS:
+    rank_of = {direction: rank for rank, direction in enumerate(ranks)}
+    for direction in ranks:
+        for instruction in turns:
             path = turn(free, Vector(direction, 0, 0), instruction)
             if path is not None:
                 arcs[direction, instruction] = ([(v.x, v.y) for v in path[:-1]],
@@ -377,7 +399,7 @@ def _tables(
         return legal.tobytes()
 
     tables = []
-    for rank, direction in enumerate(_RANKS):
+    for rank, direction in enumerate(ranks):
         moves: list[tuple[bytes, int, float, int]] = []
 
         for code, instruction in enumerate(turns, start=1):
@@ -385,7 +407,7 @@ def _tables(
             if arc is None:
                 continue
             offsets, (end_x, end_y), facing = arc
-            delta = (_RANK[facing] - rank) * cells + end_x * stride + end_y
+            delta = (rank_of[facing] - rank) * cells + end_x * stride + end_y
             moves.append((legality(offsets), delta, weights.turn(instruction, cell_size), code))
 
         step_x, step_y = _STEP[direction]
@@ -393,7 +415,10 @@ def _tables(
             modifier = 1 if move == Straight.FORWARD else -1
             offsets = [(step_x * modifier * i, step_y * modifier * i) for i in range(1, length + 1)]
             delta = modifier * length * (step_x * stride + step_y)
-            moves.append((legality(offsets), delta, weights.straight(length, cell_size), code))
+            # Priced as the ground it covers, not as its cell count: a diagonal cell is
+            # sqrt(2). Same helper the report and the driving instruction use.
+            moves.append((legality(offsets), delta,
+                          weights.straight(cost.straight_cells(direction, length), cell_size), code))
 
         tables.append(tuple(moves))
 

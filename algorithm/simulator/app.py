@@ -73,6 +73,9 @@ class SimulatorApp:
         self.playback: Playback | None = None
         self.source: RouteSource = SOURCES[0]
         self.source_var = tk.StringVar(value=self.source.name)
+        # The experimental eight-heading planner, switched from the panel. The search reads
+        # config at call time, so flipping this between plans is the whole mechanism.
+        self.diagonals_var = tk.BooleanVar(value=config.DIAGONAL_HEADINGS)
         self.speed_ms = SPEEDS[1][1]             # 1x
         self.timer: str | None = None            # the root.after handle while playing
         self.captured_seen = 0                   # captures already reflected in the static layer
@@ -224,6 +227,10 @@ class SimulatorApp:
                            command=self.on_source, font=self.fonts.ui(12), bg=av.PANEL, fg=av.INK,
                            activebackground=av.PANEL, selectcolor=av.PANEL, highlightthickness=0,
                            anchor="w").pack(fill="x")
+        tk.Checkbutton(self.route_frame, text="8 headings, 45 deg turns", variable=self.diagonals_var,
+                       command=self.on_diagonals, font=self.fonts.ui(12), bg=av.PANEL, fg=av.INK,
+                       activebackground=av.PANEL, selectcolor=av.PANEL, highlightthickness=0,
+                       anchor="w").pack(fill="x", pady=(6, 0))
         if self.route is not None:
             self._row(self.route_frame, "Total length", f"{self.route.total_cost * self.route.cell_size:,} cm")
             # Driving only. The transport clock adds the capture dwells on top, so the two
@@ -275,6 +282,20 @@ class SimulatorApp:
     def on_source(self) -> None:
         self.source = next(s for s in SOURCES if s.name == self.source_var.get())
         self.clear_route()
+
+    def on_diagonals(self) -> None:
+        """Switch the experimental eight-heading planner on or off between plans.
+
+        The search builds its move tables per call and reads `config.DIAGONAL_HEADINGS` there,
+        so there is nothing to rebuild: the next plan simply gets the 45 degree turns as well.
+        Simulator-only - the flag is a process global, so the HTTP service in another process
+        still plans with whatever `config.py` says on disk. The route on screen was planned
+        under the old setting, so it goes.
+        """
+        config.DIAGONAL_HEADINGS = self.diagonals_var.get()
+        self.clear_route()
+        self.status("Eight headings: 45 degree turns. Experimental - the STM has to be able to drive one."
+                    if config.DIAGONAL_HEADINGS else "Four headings: 90 degree turns only.")
 
     def on_plan(self) -> None:
         self.stop_timer()
@@ -502,6 +523,20 @@ def _schedule_selftest(root: tk.Tk, app: SimulatorApp) -> None:
         app.try_edit(lambda: app.arena.remove(last))
         assert len(app.arena.obstacles) == before
         app.on_plan()
+        root.after(100, diagonals)
+
+    def diagonals() -> None:
+        # The experimental toggle, end to end: it reaches config, drops the route planned under
+        # the old setting, and the next plan runs. Greedy, because this tests wiring, not routes.
+        app.diagonals_var.set(True)
+        app.on_diagonals()
+        assert config.DIAGONAL_HEADINGS, "the toggle did not reach config"
+        assert app.route is None, "toggling headings must drop the old route"
+        app.on_plan()
+        assert app.route is not None, app.status_var.get()
+        app.diagonals_var.set(False)
+        app.on_diagonals()
+        assert not config.DIAGONAL_HEADINGS, "the toggle did not reach config"
         root.after(100, optimal)
 
     def optimal() -> None:

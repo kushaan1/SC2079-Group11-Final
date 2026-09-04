@@ -39,6 +39,7 @@ import os
 from datetime import datetime
 from enum import Enum
 from http import HTTPStatus
+from typing import Literal
 
 import numpy as np
 from flask import current_app, make_response, request
@@ -86,6 +87,27 @@ class PathfindingPoint(BaseModel):
         return Point(self.x, self.y)
 
 
+# The only headings a REQUEST may name. An obstacle face and the robot's start pose are
+# physical facts about the arena, and all four are cardinal; the diagonals exist so the
+# experimental eight-heading search can drive and turn through them (see `Direction`), never so
+# a caller can declare one. Widening `Direction` for that experiment must not widen what the
+# RPi is allowed to send - and it did: a face of NORTHWEST parsed, then fell out of the
+# objective generator's match as None and became a 500 three frames later.
+#
+# A Literal of the four strings rather than a second enum: the published schema keeps exactly
+# the four values it has always had, and an unknown one is a 422 from the schema layer, in
+# pydantic's own error shape, before any of our code runs. The strings rather than the enum
+# members because pydantic renders the members into the error message by repr - "Input should
+# be <Direction.NORTH: 'NORTH'>, ..." - and the person reading that message is the RPi owner at
+# 2 am. The cost is one `Direction(...)` at each use, alongside the `to_point()` conversions
+# already there.
+#
+# Responses are NOT restricted: with the diagonals switched on, a path vector legitimately
+# carries NORTHEAST and an instruction legitimately carries FORWARD_LEFT_45. See
+# docs/protocols/algorithm-service.md.
+CardinalDirection = Literal["NORTH", "EAST", "SOUTH", "WEST"]
+
+
 class PathfindingVector(BaseModel):
     direction: Direction = Field(description="The direction")
     x: int = Field(ge=0)
@@ -126,13 +148,13 @@ class Strategy(str, Enum):
 
 
 class PathfindingRequestRobot(BaseModel):
-    direction: Direction = Field(description="The direction of the robot.")
+    direction: CardinalDirection = Field(description="The direction of the robot.")
     south_west: PathfindingPoint = Field(description="The south-west corner of the robot.")
     north_east: PathfindingPoint = Field(description="The north-east corner of the robot.")
 
     def to_robot(self) -> Robot:
         """Build the domain Robot. The parity bump lives in Robot.planned; see it for why."""
-        return Robot.planned(self.direction, self.south_west.to_point(), self.north_east.to_point())
+        return Robot.planned(Direction(self.direction), self.south_west.to_point(), self.north_east.to_point())
 
 
 class PathfindingRequestObstacle(BaseModel):
@@ -143,12 +165,13 @@ class PathfindingRequestObstacle(BaseModel):
     # Obstacle.__post_init__, and mapped to 422 by the route — see PROVENANCE.md and
     # `_construct_world`.
     image_id: int = Field(ge=1, description="The image ID.")
-    direction: Direction = Field(description="The direction of the image.")
+    direction: CardinalDirection = Field(description="The direction of the image.")
     south_west: PathfindingPoint = Field(description="The south-west corner of the obstacle.")
     north_east: PathfindingPoint = Field(description="The north-east corner of the obstacle.")
 
     def to_obstacle(self) -> Obstacle:
-        return Obstacle(self.direction, self.south_west.to_point(), self.north_east.to_point(), self.image_id)
+        return Obstacle(Direction(self.direction), self.south_west.to_point(), self.north_east.to_point(),
+                        self.image_id)
 
 
 class PathfindingRequest(BaseModel):
@@ -403,9 +426,11 @@ def _construct_world(body: PathfindingRequest) -> World:
         try:
             obstacles.append(requested.to_obstacle())
         except ValueError as error:
-            # An image_id of 1-10 satisfies the schema and violates the domain. This
-            # is the only route from a well-formed request to a domain ValueError, so the
-            # message from Obstacle names the range and is passed through as-is.
+            # An image_id above 40 satisfies the schema's `minimum: 1` and violates the domain's
+            # 1-40, which is the only ValueError a request can still reach: Obstacle also refuses
+            # a diagonal face, but `CardinalDirection` has already turned that into a 422 against
+            # `direction` at the schema. So the loc below is right for every reachable case, and
+            # the message from Obstacle names the range and is passed through as-is.
             raise _InvalidRequest(["obstacles", index, "image_id"], str(error)) from error
         except AssertionError as error:
             logger.warning("Rejected obstacle %s at index %s", requested.image_id, index, exc_info=True)

@@ -11,6 +11,7 @@ from typing import Iterable, Protocol
 
 import config
 from pathfinding.search.instructions import Move, Turn, TurnInstruction
+from pathfinding.world.primitives import Direction
 
 
 class Weights(Protocol):
@@ -35,10 +36,15 @@ class _Distance:
 
 
 class _Time:
-    """Estimated seconds: a flat charge per turn, distance over speed per straight."""
+    """Estimated seconds: a charge proportional to the swing per turn, distance over speed per
+    straight."""
 
     def turn(self, turn: TurnInstruction, cell_size: int = 1) -> float:
-        return config.TURN_TIME_S
+        # TURN_TIME_S is quoted per 90 degrees. A 45 is the same steering lock held for half as
+        # long - same radius, half the arc - so it is charged half. Flat-rating both would price
+        # two 45s exactly like one 90 that covers twice the ground, which is the sort of tie the
+        # optimiser resolves by picking the wrong one.
+        return config.TURN_TIME_S * turn.degrees / 90
 
     def straight(self, cells: float, cell_size: int = 1) -> float:
         return cells * cell_size / config.ROBOT_SPEED_CM_S
@@ -52,13 +58,27 @@ TIME_SECONDS: Weights = _Time()
 _DIAGONAL = sqrt(2)
 
 
+def straight_cells(direction: Direction, cells: float) -> float:
+    """
+    The ground covered by ``cells`` steps along ``direction``, in cells.
+
+    A diagonal step crosses both axes, so it covers sqrt(2) cells rather than one. Everything
+    that prices a straight goes through here - this function, the search's move tables, and the
+    centimetres in a MoveInstruction - so a route is chosen under the same numbers it is
+    reported and driven under. Pricing a diagonal at 1 in the search and 1.41 in the report is
+    not a rounding difference: it makes the search prefer diagonals it would not have chosen if
+    it were paying for them.
+    """
+    return cells * _DIAGONAL if direction.diagonal else cells
+
+
 def move_cost(move: Turn | Move, weights: Weights, cell_size: int) -> float:
     """The cost of one move under ``weights``."""
     if isinstance(move, Turn):
         return weights.turn(move.turn, cell_size)
     cells = len(move.vectors)
-    if move.vectors and move.vectors[0].direction.diagonal:
-        cells *= _DIAGONAL
+    if move.vectors:
+        cells = straight_cells(move.vectors[0].direction, cells)
     return weights.straight(cells, cell_size)
 
 

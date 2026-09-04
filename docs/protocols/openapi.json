@@ -2,11 +2,16 @@
     "components": {
         "schemas": {
             "Direction": {
+                "description": "A heading. The four cardinals are the only ones an obstacle face or a start pose may take;\nthe diagonals exist so the search can drive and turn through them.",
                 "enum": [
                     "NORTH",
+                    "NORTHEAST",
                     "EAST",
+                    "SOUTHEAST",
                     "SOUTH",
-                    "WEST"
+                    "SOUTHWEST",
+                    "WEST",
+                    "NORTHWEST"
                 ],
                 "title": "Direction",
                 "type": "string"
@@ -93,8 +98,15 @@
             "PathfindingRequestObstacle": {
                 "properties": {
                     "direction": {
-                        "$ref": "#/components/schemas/Direction",
-                        "description": "The direction of the image."
+                        "description": "The direction of the image.",
+                        "enum": [
+                            "NORTH",
+                            "EAST",
+                            "SOUTH",
+                            "WEST"
+                        ],
+                        "title": "Direction",
+                        "type": "string"
                     },
                     "image_id": {
                         "description": "The image ID.",
@@ -123,8 +135,15 @@
             "PathfindingRequestRobot": {
                 "properties": {
                     "direction": {
-                        "$ref": "#/components/schemas/Direction",
-                        "description": "The direction of the robot."
+                        "description": "The direction of the robot.",
+                        "enum": [
+                            "NORTH",
+                            "EAST",
+                            "SOUTH",
+                            "WEST"
+                        ],
+                        "title": "Direction",
+                        "type": "string"
                     },
                     "north_east": {
                         "$ref": "#/components/schemas/PathfindingPoint",
@@ -296,11 +315,16 @@
                 "type": "string"
             },
             "TurnInstruction": {
+                "description": "A turn. The bare names are the original quarter turns; the ``_45`` variants are the same\nsteering lock held for half as long, so they share a radius and cost half the arc.",
                 "enum": [
                     "FORWARD_LEFT",
                     "FORWARD_RIGHT",
                     "BACKWARD_LEFT",
-                    "BACKWARD_RIGHT"
+                    "BACKWARD_RIGHT",
+                    "FORWARD_LEFT_45",
+                    "FORWARD_RIGHT_45",
+                    "BACKWARD_LEFT_45",
+                    "BACKWARD_RIGHT_45"
                 ],
                 "title": "TurnInstruction",
                 "type": "string"
