@@ -36,12 +36,14 @@ DEFAULT_MIN_VISIBLE_FRACTION = 0.20
 DEFAULT_MIN_PRIMARY_FRACTION = 0.50
 MIN_GLYPH_BACKGROUND_LUMA = 48
 DEFAULT_AUTO_PLACEMENT = {
+    "placement_model": "perspective-v2",
     "minimum_stands": 1,
     "maximum_stands": 3,
-    "far_stand_height": 0.25,
+    "far_stand_height": 0.18,
     "near_stand_height": 0.65,
+    "perspective_exponent": 1.70,
     "primary_height_range": [0.45, 0.65],
-    "distractor_height_range": [0.25, 0.50],
+    "distractor_height_range": [0.18, 0.42],
     "minimum_depth_gap": 0.025,
     "edge_crop_fraction": 0.30,
     "edge_visible_fraction_range": [0.75, 0.90],
@@ -447,7 +449,7 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
                     raise SynthesisError("{} template does not declare orientation {}".format(orientation, orientation))
                 if template.get("bullseye_mode") != "baked":
                     raise SynthesisError("automatic orientation templates require baked bullseyes")
-            placement = recipe.get("placement", DEFAULT_AUTO_PLACEMENT)
+            placement = _effective_auto_placement(recipe.get("placement", {}))
             _validate_auto_placement(placement)
             _validate_perspective(recipe.get("perspective"), placement)
             _validate_contact_shadow(recipe.get("contact_shadow", DEFAULT_CONTACT_SHADOW))
@@ -509,6 +511,43 @@ def load_template(path: Path, root: Path) -> Mapping[str, Any]:
     return data
 
 
+def _trim_rgba_template(image: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int]]:
+    ys, xs = np.nonzero(image[:, :, 3] > 8)
+    if not len(xs):
+        raise SynthesisError("stand template alpha channel contains no visible content")
+    padding = max(2, int(round(max(image.shape[:2]) * 0.003)))
+    x1 = max(0, int(xs.min()) - padding)
+    y1 = max(0, int(ys.min()) - padding)
+    x2 = min(image.shape[1], int(xs.max()) + 1 + padding)
+    y2 = min(image.shape[0], int(ys.max()) + 1 + padding)
+    return image[y1:y2, x1:x2].copy(), (x1, y1)
+
+
+def _trimmed_surface_quad(
+    quad: Sequence[Sequence[float]],
+    full_width: int,
+    full_height: int,
+    offset: Tuple[int, int],
+    trimmed_width: int,
+    trimmed_height: int,
+) -> np.ndarray:
+    shifted = pixel_quad(quad, full_width, full_height) - np.asarray(offset, dtype=np.float32)
+    validate_pixel_quad(shifted, trimmed_width, trimmed_height)
+    return shifted
+
+
+def _effective_auto_placement(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise SynthesisError("placement settings must be an object")
+    supplied = dict(raw)
+    if supplied.get("placement_model") != "perspective-v2":
+        supplied.pop("far_stand_height", None)
+        supplied.pop("distractor_height_range", None)
+    settings = dict(DEFAULT_AUTO_PLACEMENT)
+    settings.update(supplied)
+    return settings
+
+
 def _validate_auto_placement(raw: Any) -> None:
     if not isinstance(raw, Mapping):
         raise SynthesisError("placement settings must be an object")
@@ -520,6 +559,7 @@ def _validate_auto_placement(raw: Any) -> None:
         overlap = float(raw["maximum_overlap"])
         far_height = float(raw["far_stand_height"])
         near_height = float(raw["near_stand_height"])
+        exponent = float(raw["perspective_exponent"])
         depth_gap = float(raw["minimum_depth_gap"])
         edge_fraction = float(raw["edge_crop_fraction"])
         ranges = [
@@ -541,6 +581,8 @@ def _validate_auto_placement(raw: Any) -> None:
     primary_range, distractor_range, edge_visible_range = ranges
     if not 0.0 < far_height < near_height <= 1.0:
         raise SynthesisError("far and near stand heights must be increasing fractions")
+    if raw.get("placement_model") != "perspective-v2" or not 1.0 < exponent <= 3.0:
+        raise SynthesisError("automatic placement requires perspective-v2 with exponent in (1, 3]")
     if not far_height <= distractor_range[0] <= distractor_range[1] <= near_height:
         raise SynthesisError("distractor heights must fit the calibrated perspective range")
     if not far_height <= primary_range[0] <= primary_range[1] <= near_height:
@@ -671,8 +713,7 @@ def _automatic_variant_recipe(
     root: Path,
     variant_index: int,
 ) -> Mapping[str, Any]:
-    settings = dict(DEFAULT_AUTO_PLACEMENT)
-    settings.update(dict(recipe.get("placement", {})))
+    settings = _effective_auto_placement(recipe.get("placement", {}))
     recipe_seed = int(recipe.get("seed", 2079))
     rng = np.random.default_rng(
         stable_seed(recipe_seed, recipe["recipe_id"], variant_index, "placement")
@@ -729,12 +770,16 @@ def _automatic_variant_recipe(
     )
     if maximum_distractor_height < float(distractor_range[0]):
         raise SynthesisError("perspective calibration leaves no valid distractor depth")
+    far_bottom = float(recipe["perspective"]["far_point"][1])
+    maximum_distractor_bottom = _perspective_bottom_for_height(
+        maximum_distractor_height, recipe["perspective"], settings
+    )
     for index in range(stand_count - 1):
         orientation = STAND_ORIENTATIONS[int(rng.integers(0, len(STAND_ORIENTATIONS)))]
-        height = float(
-            rng.uniform(float(distractor_range[0]), maximum_distractor_height)
+        bottom = float(rng.uniform(far_bottom, maximum_distractor_bottom))
+        height = _perspective_height_for_bottom(
+            bottom, recipe["perspective"], settings
         )
-        bottom = _perspective_bottom_for_height(height, recipe["perspective"], settings)
         edge_crop = edge_variant and cropped_distractor == index
         quad = _sample_automatic_quad(
             root,
@@ -805,12 +850,21 @@ def _sample_automatic_quad(
     edge_visible_range: Sequence[float],
 ) -> List[List[float]]:
     template_data = load_template(template_recipe_path, root)
-    template = load_image(resolve_resource(root, template_data["image"]), unchanged=True)
+    full_template = load_image(resolve_resource(root, template_data["image"]), unchanged=True)
+    template, offset = _trim_rgba_template(full_template)
     aspect_ratio = template.shape[1] / float(template.shape[0])
     width = height * aspect_ratio
     if width >= 0.94:
         raise SynthesisError("stand template is too wide for the requested perspective scale")
-    target_centre_x = float(np.asarray(template_data["target_quad"])[:, 0].mean())
+    target_quad = _trimmed_surface_quad(
+        template_data["target_quad"],
+        full_template.shape[1],
+        full_template.shape[0],
+        offset,
+        template.shape[1],
+        template.shape[0],
+    )
+    target_centre_x = float(target_quad[:, 0].mean() / template.shape[1])
     preferred_crop_left = target_centre_x >= 0.5
     for _ in range(attempts):
         if edge_crop:
@@ -841,7 +895,9 @@ def _sample_automatic_quad(
             continue
         if all(_quad_overlap(quad, other) <= maximum_overlap for other in occupied):
             return [[float(x), float(y)] for x, y in quad]
-    raise SynthesisError("could not place stands in the generic lower region without excessive overlap")
+    raise SynthesisError(
+        "could not place stands in the calibrated floor region without excessive overlap"
+    )
 
 
 def _perspective_bottom_for_height(
@@ -853,7 +909,9 @@ def _perspective_bottom_for_height(
     near_y = float(perspective["near_point"][1])
     far_height = float(settings["far_stand_height"])
     near_height = float(settings["near_stand_height"])
-    progress = (height - far_height) / (near_height - far_height)
+    exponent = float(settings["perspective_exponent"])
+    progress = max(0.0, min(1.0, (height - far_height) / (near_height - far_height)))
+    progress = progress ** (1.0 / exponent)
     return far_y + progress * (near_y - far_y)
 
 
@@ -866,8 +924,9 @@ def _perspective_height_for_bottom(
     near_y = float(perspective["near_point"][1])
     far_height = float(settings["far_stand_height"])
     near_height = float(settings["near_stand_height"])
-    progress = (bottom - far_y) / (near_y - far_y)
-    return far_height + progress * (near_height - far_height)
+    exponent = float(settings["perspective_exponent"])
+    progress = max(0.0, min(1.0, (bottom - far_y) / (near_y - far_y)))
+    return far_height + progress**exponent * (near_height - far_height)
 
 
 def _outside_fraction(quad: Sequence[Sequence[float]]) -> float:
@@ -922,17 +981,33 @@ def _render_separated(
         pattern_name = select_pattern(pattern_names, scene_key, variant_index, stand_index)
         pattern = render_pattern_card(glyph_masks[target_id], pattern_name, stable_seed(seed, scene_key, variant_index, stand_index), custom_patterns=custom_patterns)
         template_data = load_template(resolve_resource(root, stand["template"]), root)
-        template = load_image(resolve_resource(root, template_data["image"]), unchanged=True)
+        full_template = load_image(resolve_resource(root, template_data["image"]), unchanged=True)
+        template, template_offset = _trim_rgba_template(full_template)
         local_bgr = template[:, :, :3].copy()
         local_alpha = template[:, :, 3]
         local_height, local_width = local_bgr.shape[:2]
         local_objects: List[VisibleObject] = []
-        local_bgr, target_mask = warp_opaque_tile(local_bgr, pattern.image, pixel_quad(template_data["target_quad"], local_width, local_height))
+        target_quad = _trimmed_surface_quad(
+            template_data["target_quad"],
+            full_template.shape[1],
+            full_template.shape[0],
+            template_offset,
+            local_width,
+            local_height,
+        )
+        local_bgr, target_mask = warp_opaque_tile(local_bgr, pattern.image, target_quad)
         target_mask = cv2.bitwise_and(target_mask, local_alpha)
         orientation = stand.get("orientation", template_data.get("orientation"))
         local_objects.append(_visible_target(target_id, str(stand["instance_id"]), str(stand["role"]), target_mask, pattern, orientation))
         for bullseye_index, quad_data in enumerate(template_data.get("bullseye_quads", [])):
-            bullseye_quad = pixel_quad(quad_data, local_width, local_height)
+            bullseye_quad = _trimmed_surface_quad(
+                quad_data,
+                full_template.shape[1],
+                full_template.shape[0],
+                template_offset,
+                local_width,
+                local_height,
+            )
             if template_data.get("bullseye_mode", "generated") == "baked":
                 mask = polygon_mask((local_height, local_width), bullseye_quad)
             else:
