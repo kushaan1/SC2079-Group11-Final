@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "mode": "auto_background",
+  "recipe_id": "Lab_4-auto",
+  "source_group": "Lab-session-a",
+  "seed": 2079,
+  "background_image": "training/synthesis/backgrounds/Lab_4.jpeg",
+  "background_sha256": "e662d45d87192b4b1f59360a8373ba8e82058d8a72d3918cc5f31311cbb5e6f7",
+  "templates": {
+    "front": "training/annotations/synthesis/front-template.json",
+    "left": "training/annotations/synthesis/left-template.json",
+    "right": "training/annotations/synthesis/right-template.json"
+  },
+  "perspective": {
+    "far_point": [
+      0.5730742243089714,
+      0.48387280333198496
+    ],
+    "near_point": [
+      0.5868006331875786,
+      0.9077443095033785
+    ]
+  },
+  "placement": {
+    "placement_model": "perspective-v2",
+    "minimum_stands": 1,
+    "maximum_stands": 3,
+    "far_stand_height": 0.18,
+    "near_stand_height": 0.65,
+    "perspective_exponent": 1.7,
+    "primary_height_range": [
+      0.45,
+      0.65
+    ],
+    "distractor_height_range": [
+      0.18,
+      0.42
+    ],
+    "minimum_depth_gap": 0.025,
+    "edge_crop_fraction": 0.3,
+    "edge_visible_fraction_range": [
+      0.75,
+      0.9
+    ],
+    "maximum_roll_degrees": 3.0,
+    "maximum_overlap": 0.45,
+    "placement_attempts": 80
+  },
+  "contact_shadow": {
+    "enabled": true,
+    "opacity": 0.24,
+    "width_fraction": 0.82,
+    "height_fraction": 0.1,
+    "blur_fraction": 0.035
+  }
+}
