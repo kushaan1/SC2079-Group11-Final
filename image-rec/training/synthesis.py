@@ -29,10 +29,29 @@ PATTERN_FAMILIES = (
     "marble",
     "weave",
 )
+STAND_ORIENTATIONS = ("front", "left", "right")
 IMAGE_SUFFIXES = frozenset((".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"))
 DEFAULT_CARD_SIZE = 640
 DEFAULT_MIN_VISIBLE_FRACTION = 0.20
 DEFAULT_MIN_PRIMARY_FRACTION = 0.50
+DEFAULT_AUTO_PLACEMENT = {
+    "minimum_stands": 1,
+    "maximum_stands": 3,
+    "primary_height_range": [0.32, 0.48],
+    "distractor_height_range": [0.16, 0.29],
+    "primary_bottom_range": [0.91, 0.98],
+    "distractor_bottom_range": [0.68, 0.90],
+    "maximum_roll_degrees": 3.0,
+    "maximum_overlap": 0.45,
+    "placement_attempts": 80,
+}
+DEFAULT_CONTACT_SHADOW = {
+    "enabled": True,
+    "opacity": 0.24,
+    "width_fraction": 0.82,
+    "height_fraction": 0.10,
+    "blur_fraction": 0.035,
+}
 
 
 class SynthesisError(ValueError):
@@ -54,6 +73,7 @@ class VisibleObject:
     stand_id: str
     role: str
     kind: str
+    orientation: Optional[str]
     full_mask: np.ndarray
     visible_mask: np.ndarray
     pattern: Optional[Mapping[str, Any]]
@@ -372,11 +392,24 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
         pixel_quad(recipe.get("target_quad", ()), width, height)
         for quad in recipe.get("bullseye_quads", []):
             pixel_quad(quad, width, height)
-    elif mode == "separated":
+    elif mode in ("separated", "auto_background"):
         background_path = resolve_resource(root, recipe.get("background_image"))
         background = load_image(background_path)
         _validate_source_hash(background_path, recipe.get("background_sha256"))
         height, width = background.shape[:2]
+        if mode == "auto_background":
+            templates = recipe.get("templates")
+            if not isinstance(templates, dict) or set(templates) != set(STAND_ORIENTATIONS):
+                raise SynthesisError("auto_background requires front, left, and right templates")
+            for orientation in STAND_ORIENTATIONS:
+                template = load_template(resolve_resource(root, templates[orientation]), root)
+                if template.get("orientation") != orientation:
+                    raise SynthesisError("{} template does not declare orientation {}".format(orientation, orientation))
+                if template.get("bullseye_mode") != "baked":
+                    raise SynthesisError("automatic orientation templates require baked bullseyes")
+            _validate_auto_placement(recipe.get("placement", DEFAULT_AUTO_PLACEMENT))
+            _validate_contact_shadow(recipe.get("contact_shadow", DEFAULT_CONTACT_SHADOW))
+            return
         stands = recipe.get("stands")
         if not isinstance(stands, list) or not stands:
             raise SynthesisError("a separated recipe needs at least one stand")
@@ -395,7 +428,9 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
             pixel_quad(stand.get("destination_quad", ()), width, height)
             load_template(resolve_resource(root, stand.get("template")), root)
     else:
-        raise SynthesisError("recipe mode must be in_scene or separated")
+        raise SynthesisError(
+            "recipe mode must be in_scene, separated, or auto_background"
+        )
 
 
 def load_template(path: Path, root: Path) -> Mapping[str, Any]:
@@ -412,11 +447,57 @@ def load_template(path: Path, root: Path) -> Mapping[str, Any]:
     ):
         raise SynthesisError("stand template must be an RGBA image with transparency: {}".format(image_path))
     _validate_source_hash(image_path, data.get("image_sha256"))
+    if data.get("bullseye_mode", "generated") not in ("generated", "baked"):
+        raise SynthesisError("bullseye_mode must be generated or baked")
+    if data.get("orientation") is not None and data.get("orientation") not in STAND_ORIENTATIONS:
+        raise SynthesisError("stand template orientation must be front, left, or right")
     height, width = image.shape[:2]
     pixel_quad(data.get("target_quad", ()), width, height)
     for quad in data.get("bullseye_quads", []):
         pixel_quad(quad, width, height)
     return data
+
+
+def _validate_auto_placement(raw: Any) -> None:
+    if not isinstance(raw, Mapping):
+        raise SynthesisError("placement settings must be an object")
+    try:
+        minimum = int(raw["minimum_stands"])
+        maximum = int(raw["maximum_stands"])
+        attempts = int(raw["placement_attempts"])
+        roll = float(raw["maximum_roll_degrees"])
+        overlap = float(raw["maximum_overlap"])
+        ranges = [
+            tuple(float(value) for value in raw[name])
+            for name in (
+                "primary_height_range",
+                "distractor_height_range",
+                "primary_bottom_range",
+                "distractor_bottom_range",
+            )
+        ]
+    except (KeyError, TypeError, ValueError) as error:
+        raise SynthesisError("placement settings are incomplete or invalid") from error
+    if not 1 <= minimum <= maximum <= 3:
+        raise SynthesisError("automatic stand count must remain within 1..3")
+    if attempts <= 0 or not 0.0 <= roll <= 15.0 or not 0.0 <= overlap < 1.0:
+        raise SynthesisError("automatic placement attempts, roll, or overlap are invalid")
+    if any(len(values) != 2 or not 0.0 < values[0] <= values[1] <= 1.0 for values in ranges):
+        raise SynthesisError("automatic placement ranges must be ordered fractions in (0, 1]")
+
+
+def _validate_contact_shadow(raw: Any) -> None:
+    if not isinstance(raw, Mapping):
+        raise SynthesisError("contact_shadow settings must be an object")
+    try:
+        opacity = float(raw["opacity"])
+        width = float(raw["width_fraction"])
+        height = float(raw["height_fraction"])
+        blur = float(raw["blur_fraction"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise SynthesisError("contact_shadow settings are incomplete or invalid") from error
+    if not 0.0 <= opacity <= 1.0 or min(width, height, blur) <= 0.0:
+        raise SynthesisError("contact shadow opacity and dimensions are invalid")
 
 
 def resolve_resource(root: Path, value: Any) -> Path:
@@ -466,7 +547,7 @@ def render_recipe_variant(
             quad = pixel_quad(quad_data, width, height)
             base, mask = warp_opaque_tile(base, bullseye_tile, quad)
             objects.append(_visible_bullseye("primary", "primary", mask, bullseye_index))
-    else:
+    elif mode == "separated":
         base, objects = _render_separated(
             recipe,
             root,
@@ -478,7 +559,150 @@ def render_recipe_variant(
             custom_patterns,
             seed,
         )
+    else:
+        separated = _automatic_variant_recipe(recipe, root, variant_index)
+        base, objects = _render_separated(
+            separated,
+            root,
+            glyph_masks,
+            bullseye_tile,
+            primary_id,
+            variant_index,
+            names,
+            custom_patterns,
+            seed,
+        )
     return _finalize_sample(base, objects, min_visible_fraction, min_primary_fraction)
+
+
+def _automatic_variant_recipe(
+    recipe: Mapping[str, Any],
+    root: Path,
+    variant_index: int,
+) -> Mapping[str, Any]:
+    settings = dict(DEFAULT_AUTO_PLACEMENT)
+    settings.update(dict(recipe.get("placement", {})))
+    recipe_seed = int(recipe.get("seed", 2079))
+    rng = np.random.default_rng(
+        stable_seed(recipe_seed, recipe["recipe_id"], variant_index, "placement")
+    )
+    minimum = int(settings["minimum_stands"])
+    maximum = int(settings["maximum_stands"])
+    stand_count = minimum + ((variant_index + stable_seed(recipe["recipe_id"], "count")) % (maximum - minimum + 1))
+    orientation_schedule = np.tile(np.arange(len(STAND_ORIENTATIONS)), 10)
+    orientation_rng = np.random.default_rng(stable_seed(recipe["recipe_id"], "orientation"))
+    orientation_rng.shuffle(orientation_schedule)
+    primary_orientation = STAND_ORIENTATIONS[int(orientation_schedule[variant_index])]
+
+    primary_quad = _sample_automatic_quad(
+        root,
+        resolve_resource(root, recipe["templates"][primary_orientation]),
+        tuple(settings["primary_height_range"]),
+        tuple(settings["primary_bottom_range"]),
+        float(settings["maximum_roll_degrees"]),
+        float(settings["maximum_overlap"]),
+        int(settings["placement_attempts"]),
+        (),
+        rng,
+    )
+    distractor_stands: List[Mapping[str, Any]] = []
+    occupied: List[np.ndarray] = [np.asarray(primary_quad, dtype=np.float32)]
+    for index in range(stand_count - 1):
+        orientation = STAND_ORIENTATIONS[int(rng.integers(0, len(STAND_ORIENTATIONS)))]
+        quad = _sample_automatic_quad(
+            root,
+            resolve_resource(root, recipe["templates"][orientation]),
+            tuple(settings["distractor_height_range"]),
+            tuple(settings["distractor_bottom_range"]),
+            float(settings["maximum_roll_degrees"]),
+            float(settings["maximum_overlap"]),
+            int(settings["placement_attempts"]),
+            occupied,
+            rng,
+        )
+        occupied.append(np.asarray(quad, dtype=np.float32))
+        distractor_stands.append(
+            {
+                "instance_id": "distractor-{:02d}".format(index + 1),
+                "role": "distractor",
+                "orientation": orientation,
+                "z_index": index,
+                "template": recipe["templates"][orientation],
+                "destination_quad": quad,
+            }
+        )
+    primary = {
+        "instance_id": "primary",
+        "role": "primary",
+        "orientation": primary_orientation,
+        "z_index": stand_count - 1,
+        "template": recipe["templates"][primary_orientation],
+        "destination_quad": primary_quad,
+    }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "separated",
+        "recipe_id": recipe["recipe_id"],
+        "source_group": recipe["source_group"],
+        "seed": recipe_seed,
+        "background_image": recipe["background_image"],
+        "background_sha256": recipe["background_sha256"],
+        "stands": distractor_stands + [primary],
+        "contact_shadow": dict(recipe.get("contact_shadow", DEFAULT_CONTACT_SHADOW)),
+    }
+
+
+def _sample_automatic_quad(
+    root: Path,
+    template_recipe_path: Path,
+    height_range: Sequence[float],
+    bottom_range: Sequence[float],
+    maximum_roll: float,
+    maximum_overlap: float,
+    attempts: int,
+    occupied: Sequence[np.ndarray],
+    rng: np.random.Generator,
+) -> List[List[float]]:
+    template_data = load_template(template_recipe_path, root)
+    template = load_image(resolve_resource(root, template_data["image"]), unchanged=True)
+    aspect_ratio = template.shape[1] / float(template.shape[0])
+    for _ in range(attempts):
+        height = float(rng.uniform(float(height_range[0]), float(height_range[1])))
+        width = height * aspect_ratio
+        if width >= 0.94:
+            continue
+        bottom = float(rng.uniform(float(bottom_range[0]), float(bottom_range[1])))
+        centre_x = float(rng.uniform(width / 2.0 + 0.02, 1.0 - width / 2.0 - 0.02))
+        angle = math.radians(float(rng.uniform(-maximum_roll, maximum_roll)))
+        centre = np.asarray((centre_x, bottom - height / 2.0), dtype=np.float32)
+        corners = np.asarray(
+            ((-width / 2.0, -height / 2.0), (width / 2.0, -height / 2.0), (width / 2.0, height / 2.0), (-width / 2.0, height / 2.0)),
+            dtype=np.float32,
+        )
+        rotation = np.asarray(((math.cos(angle), -math.sin(angle)), (math.sin(angle), math.cos(angle))), dtype=np.float32)
+        quad = corners.dot(rotation.T) + centre
+        if np.any(quad < 0.01) or np.any(quad > 0.99):
+            continue
+        if all(_quad_overlap(quad, other) <= maximum_overlap for other in occupied):
+            return [[float(x), float(y)] for x, y in quad]
+    raise SynthesisError("could not place stands in the generic lower region without excessive overlap")
+
+
+def _quad_overlap(first: np.ndarray, second: np.ndarray) -> float:
+    first_x1, first_y1 = np.min(first, axis=0)
+    first_x2, first_y2 = np.max(first, axis=0)
+    second_x1, second_y1 = np.min(second, axis=0)
+    second_x2, second_y2 = np.max(second, axis=0)
+    intersection_width = max(0.0, min(float(first_x2), float(second_x2)) - max(float(first_x1), float(second_x1)))
+    intersection_height = max(0.0, min(float(first_y2), float(second_y2)) - max(float(first_y1), float(second_y1)))
+    intersection = intersection_width * intersection_height
+    if intersection <= 0.0:
+        return 0.0
+    smaller = min(
+        max(1e-9, float((first_x2 - first_x1) * (first_y2 - first_y1))),
+        max(1e-9, float((second_x2 - second_x1) * (second_y2 - second_y1))),
+    )
+    return intersection / smaller
 
 
 def _render_separated(
@@ -512,17 +736,25 @@ def _render_separated(
         local_objects: List[VisibleObject] = []
         local_bgr, target_mask = warp_opaque_tile(local_bgr, pattern.image, pixel_quad(template_data["target_quad"], local_width, local_height))
         target_mask = cv2.bitwise_and(target_mask, local_alpha)
-        local_objects.append(_visible_target(target_id, str(stand["instance_id"]), str(stand["role"]), target_mask, pattern))
+        orientation = stand.get("orientation", template_data.get("orientation"))
+        local_objects.append(_visible_target(target_id, str(stand["instance_id"]), str(stand["role"]), target_mask, pattern, orientation))
         for bullseye_index, quad_data in enumerate(template_data.get("bullseye_quads", [])):
-            local_bgr, mask = warp_opaque_tile(local_bgr, bullseye_tile, pixel_quad(quad_data, local_width, local_height))
+            bullseye_quad = pixel_quad(quad_data, local_width, local_height)
+            if template_data.get("bullseye_mode", "generated") == "baked":
+                mask = polygon_mask((local_height, local_width), bullseye_quad)
+            else:
+                local_bgr, mask = warp_opaque_tile(local_bgr, bullseye_tile, bullseye_quad)
             mask = cv2.bitwise_and(mask, local_alpha)
-            local_objects.append(_visible_bullseye(str(stand["instance_id"]), str(stand["role"]), mask, bullseye_index))
+            local_objects.append(_visible_bullseye(str(stand["instance_id"]), str(stand["role"]), mask, bullseye_index, orientation))
         rendered_rgba = np.dstack((local_bgr, local_alpha))
         destination = pixel_quad(stand["destination_quad"], base.shape[1], base.shape[0])
         warped_rgba, homography = warp_rgba(rendered_rgba, destination, (base.shape[1], base.shape[0]))
         occluder = warped_rgba[:, :, 3]
         for existing in objects:
             existing.visible_mask[occluder > 0] = 0
+        shadow_settings = recipe.get("contact_shadow", {})
+        if shadow_settings.get("enabled") is True:
+            base = apply_contact_shadow(base, occluder, shadow_settings)
         base = alpha_composite(base, warped_rgba)
         for local_object in local_objects:
             warped_mask = cv2.warpPerspective(local_object.full_mask, homography, (base.shape[1], base.shape[0]), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
@@ -532,21 +764,35 @@ def _render_separated(
     return base, objects
 
 
-def _visible_target(target_id: int, stand_id: str, role: str, mask: np.ndarray, pattern: PatternCard) -> VisibleObject:
+def _visible_target(
+    target_id: int,
+    stand_id: str,
+    role: str,
+    mask: np.ndarray,
+    pattern: PatternCard,
+    orientation: Optional[str] = None,
+) -> VisibleObject:
     return VisibleObject(
         class_index=target_id - 11,
         competition_id=target_id,
         stand_id=stand_id,
         role=role,
         kind="target",
+        orientation=orientation,
         full_mask=mask.copy(),
         visible_mask=mask.copy(),
         pattern={"family": pattern.family, "parameters": dict(pattern.parameters), "source_sha256": pattern.source_sha256},
     )
 
 
-def _visible_bullseye(stand_id: str, role: str, mask: np.ndarray, index: int) -> VisibleObject:
-    return VisibleObject(30, None, stand_id, role, "bullseye", mask.copy(), mask.copy(), {"surface_index": index})
+def _visible_bullseye(
+    stand_id: str,
+    role: str,
+    mask: np.ndarray,
+    index: int,
+    orientation: Optional[str] = None,
+) -> VisibleObject:
+    return VisibleObject(30, None, stand_id, role, "bullseye", orientation, mask.copy(), mask.copy(), {"surface_index": index})
 
 
 def warp_opaque_tile(base: np.ndarray, tile: np.ndarray, destination_quad: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -561,6 +807,12 @@ def warp_opaque_tile(base: np.ndarray, tile: np.ndarray, destination_quad: np.nd
     return result, mask
 
 
+def polygon_mask(shape: Tuple[int, int], quad: np.ndarray) -> np.ndarray:
+    mask = np.zeros(shape, dtype=np.uint8)
+    cv2.fillConvexPoly(mask, np.rint(quad).astype(np.int32), 255, cv2.LINE_AA)
+    return mask
+
+
 def warp_rgba(image: np.ndarray, destination_quad: np.ndarray, output_size: Tuple[int, int]) -> Tuple[np.ndarray, np.ndarray]:
     source = np.asarray(((0, 0), (image.shape[1] - 1, 0), (image.shape[1] - 1, image.shape[0] - 1), (0, image.shape[0] - 1)), dtype=np.float32)
     homography = cv2.getPerspectiveTransform(source, destination_quad.astype(np.float32))
@@ -571,6 +823,27 @@ def warp_rgba(image: np.ndarray, destination_quad: np.ndarray, output_size: Tupl
 def alpha_composite(base: np.ndarray, overlay: np.ndarray) -> np.ndarray:
     alpha = overlay[:, :, 3].astype(np.float32)[:, :, None] / 255.0
     return np.clip(overlay[:, :, :3].astype(np.float32) * alpha + base.astype(np.float32) * (1.0 - alpha), 0, 255).astype(np.uint8)
+
+
+def apply_contact_shadow(base: np.ndarray, stand_alpha: np.ndarray, settings: Mapping[str, Any]) -> np.ndarray:
+    ys, xs = np.nonzero(stand_alpha > 16)
+    if not len(xs):
+        return base
+    x1, x2 = int(xs.min()), int(xs.max()) + 1
+    y1, y2 = int(ys.min()), int(ys.max()) + 1
+    stand_width = max(1, x2 - x1)
+    stand_height = max(1, y2 - y1)
+    centre = ((x1 + x2) // 2, min(base.shape[0] - 1, y2 - 1))
+    axes = (
+        max(1, int(stand_width * float(settings["width_fraction"]) / 2.0)),
+        max(1, int(stand_height * float(settings["height_fraction"]) / 2.0)),
+    )
+    shadow = np.zeros(base.shape[:2], dtype=np.uint8)
+    cv2.ellipse(shadow, centre, axes, 0.0, 0.0, 360.0, 255, -1, cv2.LINE_AA)
+    sigma = max(1.0, stand_width * float(settings["blur_fraction"]))
+    shadow = cv2.GaussianBlur(shadow, (0, 0), sigmaX=sigma, sigmaY=max(1.0, sigma * 0.45))
+    strength = shadow.astype(np.float32)[:, :, None] / 255.0 * float(settings["opacity"])
+    return np.clip(base.astype(np.float32) * (1.0 - strength), 0, 255).astype(np.uint8)
 
 
 def _finalize_sample(
@@ -600,6 +873,7 @@ def _finalize_sample(
                 "stand_id": item.stand_id,
                 "role": item.role,
                 "kind": item.kind,
+                "orientation": item.orientation,
                 "visible_fraction": fraction,
                 "included": box is not None,
                 "box": list(box) if box is not None else None,

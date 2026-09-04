@@ -10,8 +10,11 @@ import numpy as np
 
 from .config import IMAGE_REC_ROOT
 from .synthesis import (
+    DEFAULT_AUTO_PLACEMENT,
+    DEFAULT_CONTACT_SHADOW,
     IMAGE_SUFFIXES,
     SCHEMA_VERSION,
+    STAND_ORIENTATIONS,
     SynthesisError,
     create_audit_sheet,
     file_sha256,
@@ -19,6 +22,7 @@ from .synthesis import (
     load_image,
     normalized_quad,
     save_glyph_masks,
+    validate_recipe,
 )
 
 
@@ -48,6 +52,16 @@ def parse_args() -> argparse.Namespace:
     template.add_argument("--bullseyes", type=int, default=0)
     template.add_argument("--overwrite", action="store_true")
 
+    orientation = subparsers.add_parser(
+        "configure-orientation",
+        help="register a front/left/right RGBA cutout whose bullseyes are already photographed",
+    )
+    orientation.add_argument("--orientation", choices=STAND_ORIENTATIONS, required=True)
+    orientation.add_argument("--image", type=Path, required=True)
+    orientation.add_argument("--output", type=Path, required=True)
+    orientation.add_argument("--bullseyes", type=int, default=0)
+    orientation.add_argument("--overwrite", action="store_true")
+
     scene = subparsers.add_parser("configure-scene", help="place one primary and any number of distractor stands")
     _add_recipe_arguments(scene)
     scene.add_argument("--background", type=Path, required=True)
@@ -58,6 +72,16 @@ def parse_args() -> argparse.Namespace:
         metavar="ROLE:TEMPLATE_JSON",
         help="stand in far-to-near order; ROLE is primary or distractor",
     )
+
+    automatic = subparsers.add_parser(
+        "configure-auto",
+        help="create the simple three-orientation automatic background recipe",
+    )
+    _add_recipe_arguments(automatic)
+    automatic.add_argument("--background", type=Path, required=True)
+    automatic.add_argument("--front", type=Path, required=True, help="front orientation template JSON")
+    automatic.add_argument("--left", type=Path, required=True, help="left orientation template JSON")
+    automatic.add_argument("--right", type=Path, required=True, help="right orientation template JSON")
 
     generate = subparsers.add_parser("generate", help="generate all 30 primary-target variants")
     generate.add_argument("--recipe", type=Path, required=True)
@@ -166,6 +190,29 @@ def _configure_template(args: argparse.Namespace) -> None:
     _write_json(args.output, payload, args.overwrite)
 
 
+def _configure_orientation(args: argparse.Namespace) -> None:
+    image = load_image(args.image, unchanged=True)
+    if (
+        image.ndim != 3
+        or image.shape[2] != 4
+        or not np.any(image[:, :, 3] < 255)
+        or not np.any(image[:, :, 3] > 0)
+    ):
+        raise SynthesisError("orientation templates must be RGBA PNGs with a real transparency mask")
+    target, bullseyes = _surface_quads(image, args.bullseyes)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "stand_template",
+        "orientation": args.orientation,
+        "bullseye_mode": "baked",
+        "image": _relative(args.image),
+        "image_sha256": file_sha256(args.image),
+        "target_quad": target,
+        "bullseye_quads": bullseyes,
+    }
+    _write_json(args.output, payload, args.overwrite)
+
+
 def _parse_stand(value: str) -> Tuple[str, Path]:
     role, separator, raw_path = value.partition(":")
     if separator != ":" or role not in ("primary", "distractor") or not raw_path:
@@ -203,6 +250,27 @@ def _configure_scene(args: argparse.Namespace) -> None:
     _write_json(args.output, payload, args.overwrite)
 
 
+def _configure_auto(args: argparse.Namespace) -> None:
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "auto_background",
+        "recipe_id": args.recipe_id,
+        "source_group": args.source_group,
+        "seed": args.seed,
+        "background_image": _relative(args.background),
+        "background_sha256": file_sha256(args.background),
+        "templates": {
+            "front": _relative(args.front),
+            "left": _relative(args.left),
+            "right": _relative(args.right),
+        },
+        "placement": dict(DEFAULT_AUTO_PLACEMENT),
+        "contact_shadow": dict(DEFAULT_CONTACT_SHADOW),
+    }
+    validate_recipe(payload, IMAGE_REC_ROOT)
+    _write_json(args.output, payload, args.overwrite)
+
+
 def _discover_images(directory: Path) -> Tuple[Path, ...]:
     if not directory.is_dir():
         raise SynthesisError("image directory does not exist: {}".format(directory))
@@ -221,8 +289,14 @@ def main() -> None:
         elif args.command == "configure-template":
             _configure_template(args)
             print(args.output)
+        elif args.command == "configure-orientation":
+            _configure_orientation(args)
+            print(args.output)
         elif args.command == "configure-scene":
             _configure_scene(args)
+            print(args.output)
+        elif args.command == "configure-auto":
+            _configure_auto(args)
             print(args.output)
         elif args.command == "generate":
             if not 1 <= args.jpeg_quality <= 100:
