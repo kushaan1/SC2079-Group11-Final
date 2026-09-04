@@ -230,6 +230,13 @@ Each recipe deterministically creates 30 images:
 - nine images per recipe contain one lateral edge crop with 75–90% of that stand visible;
 - remaining stands stay fully in frame, with at most three degrees of roll and soft contact shadows.
 
+Automatic placement retains a maximum overlap of 0.45. If the greedy placement of one stand reaches
+a dead end, the generator deterministically retries the complete layout, including the earlier stand
+positions, instead of relaxing that ceiling. All 30 variants are staged before they are published.
+If any variants still fail, the command checks the remaining variants, reports every failed sample
+and target ID together, and leaves the recipe's existing output set untouched rather than publishing
+a partial scene directory.
+
 The eight built-in pattern families are stripes, checks, dots, scales, diamonds, camouflage,
 marble/noise, and weave. Their scale, angle, phase, intensity, and restrained colour vary with the
 recipe seed. Pattern assignment is balanced independently of class. Darker patterns are allowed,
