@@ -95,6 +95,13 @@ with a predicted class label. At the end of a run, build the mandatory raw-image
 python -m pc_server.stitch --input captures/raw --output captures/stitched/task1.jpg
 ```
 
+When several target cards are visible, the detector still reports all of them. The selected
+`detection` is the nearest card by bounding-box height. Cards within
+`VISION_NEAREST_HEIGHT_TOLERANCE` of the largest height are ranked by an OpenCV quadrilateral
+frontality score so a head-on card wins; confidence is the final fallback. Training annotations must
+therefore cover the complete printed card consistently, not only the black glyph. Bullseyes remain a
+separate recovery class but never displace a valid target selection.
+
 ### PowerShell (Windows)
 
 From this directory:

@@ -101,6 +101,57 @@ python -m training.synthesize build-masks
 This writes ignored masks and `glyph-mask-audit.jpg` below `training/.generated/synthesis/`.
 Bullseye ID 41 remains a fixed black-and-white marker.
 
+### Default: three automatic stand orientations
+
+Prepare exactly three tightly cropped transparent RGBA stand images: `front`, `left`, and `right`.
+The photographed bullseye stays baked into the left/right cutouts; only the Number 1 card is
+replaced. Register each template once, clicking the Number 1 card first and then any baked bullseye:
+
+```powershell
+python -m training.synthesize configure-orientation `
+  --orientation front `
+  --image training/synthesis/stand-templates/front.png `
+  --output training/annotations/synthesis/front-template.json
+
+python -m training.synthesize configure-orientation `
+  --orientation left `
+  --image training/synthesis/stand-templates/left.png `
+  --output training/annotations/synthesis/left-template.json `
+  --bullseyes 1
+
+python -m training.synthesize configure-orientation `
+  --orientation right `
+  --image training/synthesis/stand-templates/right.png `
+  --output training/annotations/synthesis/right-template.json `
+  --bullseyes 1
+```
+
+Create one recipe for each stand-free background:
+
+```powershell
+python -m training.synthesize configure-auto `
+  --background training/synthesis/backgrounds/hallway-01.jpg `
+  --output training/annotations/synthesis/hallway-01-auto.json `
+  --recipe-id hallway-01-auto `
+  --source-group hallway-session-a `
+  --front training/annotations/synthesis/front-template.json `
+  --left training/annotations/synthesis/left-template.json `
+  --right training/annotations/synthesis/right-template.json
+```
+
+`generate` then creates exactly 30 images for that background. Each target ID is primary once;
+front/left/right primaries are balanced ten times each; and stand counts are balanced between one,
+two, and three. Orientations may repeat among distractors. Stands receive uniform scaling,
+translation, and at most three degrees of roll within the generic lower image region. The primary is
+always the largest and nearest layer. Every stand receives a soft contact shadow, and every visible
+target and baked bullseye receives a full-card YOLO box.
+
+The placement values are copied into the recipe so they can be reviewed or tuned without editing
+code. Generic lower-region placement assumes the background's lower portion is a usable floor; audit
+every generated scene for floating or geometrically implausible stands.
+
+The manual workflows below remain available for unusual scenes.
+
 ### Replace a card on a photographed stand
 
 Place the photo under `training/synthesis/`, then register its target card and visible adjacent
