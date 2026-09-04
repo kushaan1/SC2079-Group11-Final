@@ -282,7 +282,10 @@ not a different YOLO class.
 ### Step 7: validate and prepare the grouped dataset
 
 Validation rejects missing, TODO, or empty labels; malformed or out-of-frame boxes; invalid class
-indices; undecodable images; duplicate image contents; and classes with no examples.
+indices; undecodable images; duplicate image contents; and classes with no examples. Synthetic
+provenance objects must match YOLO labels one-to-one by class and box. Coordinate differences up to
+the shared eight-decimal YOLO serialization tolerance (`1e-8`) are accepted; larger differences are
+rejected.
 
 **Bash (Linux/macOS):**
 
