@@ -166,7 +166,10 @@ python -m training.synthesize configure-orientation `
   --bullseyes 1
 ```
 
-Create one recipe for each stand-free background:
+Create one recipe for each stand-free background. The command opens the background once: click a
+representative far floor-contact point first, then a near floor-contact point. The points must be
+separated vertically by at least 10% of the image height; keep the near point at least 2% above the
+bottom edge so a slightly rolled stand remains inside the frame.
 
 **Bash (Linux/macOS):**
 
@@ -196,14 +199,21 @@ python -m training.synthesize configure-auto `
 
 `generate` then creates exactly 30 images for that background. Each target ID is primary once;
 front/left/right primaries are balanced ten times each; and stand counts are balanced between one,
-two, and three. Orientations may repeat among distractors. Stands receive uniform scaling,
-translation, and at most three degrees of roll within the generic lower image region. The primary is
-always the largest and nearest layer. Every stand receives a soft contact shadow, and every visible
-target and baked bullseye receives a full-card YOLO box.
+two, and three. Orientations may repeat among distractors. The two clicked floor points calibrate a
+perspective curve: a stand at the far point is 25% of image height and one at the near point is 65%.
+Primary stands sample 45–65%; distractors sample 25–50%. Scale and ground position are no longer
+sampled independently, and the primary is always strictly larger and rendered nearest. Translation,
+at most three degrees of roll, and soft contact shadows remain enabled.
 
-The placement values are copied into the recipe so they can be reviewed or tuned without editing
-code. Generic lower-region placement assumes the background's lower portion is a usable floor; audit
-every generated scene for floating or geometrically implausible stands.
+Exactly nine of the 30 images (30%) contain one laterally edge-cropped stand. The crop retains
+75–90% of that stand and preferentially removes the side away from its target card. All other stands
+remain completely inside the image. Every visible target and baked bullseye receives a full-card
+YOLO box.
+
+The calibration and placement values are copied into the recipe so they can be reviewed or tuned
+without editing code. Recipes created before perspective calibration was introduced are rejected;
+rerun `configure-auto` with its scoped `--overwrite` flag to perform the two clicks. Audit every
+generated scene for floating or geometrically implausible stands.
 
 The manual workflows below remain available for unusual scenes.
 
@@ -323,9 +333,11 @@ python -m training.synthesize audit `
 ```
 
 Built-in patterns include stripes, checks, dots, scales, diamonds, camouflage, marble, and weave.
-Custom files must be clean pattern-only images with sufficient variation and contrast for a black
-glyph. Pattern assignment rotates independently of class, and each same-stem `.meta.json` records
-the pattern, objects, recipe hash, and `source_group`. Existing outputs require `--overwrite`.
+Their palettes now sample substantially darker colours while enforcing a minimum background luma of
+48 on the 0–255 scale against the black glyph. Custom files must be clean pattern-only images with
+sufficient variation and no pixel below the same luma floor. Pattern assignment rotates
+independently of class, and each same-stem `.meta.json` records the pattern, contrast floor, objects,
+recipe hash, and `source_group`. Existing outputs require `--overwrite`.
 
 ### Base-photo requirements
 
