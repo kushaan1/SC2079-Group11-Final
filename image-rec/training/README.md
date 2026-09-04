@@ -200,10 +200,12 @@ python -m training.synthesize configure-auto `
 `generate` then creates exactly 30 images for that background. Each target ID is primary once;
 front/left/right primaries are balanced ten times each; and stand counts are balanced between one,
 two, and three. Orientations may repeat among distractors. The two clicked floor points calibrate a
-perspective curve: a stand at the far point is 25% of image height and one at the near point is 65%.
-Primary stands sample 45–65%; distractors sample 25–50%. Scale and ground position are no longer
-sampled independently, and the primary is always strictly larger and rendered nearest. Translation,
-at most three degrees of roll, and soft contact shadows remain enabled.
+version 2 perspective curve with a 1.7 exponent, so distant stands shrink faster: a stand at the far
+point is 18% of image height and one at the near point is 65%. Primary stands sample 45–65%;
+distractors sample 18–42%. Scale is derived from ground position, and the primary is always strictly
+larger and rendered nearest. Transparent padding is trimmed from each RGBA template in memory before
+measuring, placing, and checking overlap, so these percentages describe the visible stand rather
+than its canvas. Translation, at most three degrees of roll, and soft contact shadows remain enabled.
 
 Exactly nine of the 30 images (30%) contain one laterally edge-cropped stand. The crop retains
 75–90% of that stand and preferentially removes the side away from its target card. All other stands
@@ -212,8 +214,11 @@ YOLO box.
 
 The calibration and placement values are copied into the recipe so they can be reviewed or tuned
 without editing code. Recipes created before perspective calibration was introduced are rejected;
-rerun `configure-auto` with its scoped `--overwrite` flag to perform the two clicks. Audit every
-generated scene for floating or geometrically implausible stands.
+rerun `configure-auto` with its scoped `--overwrite` flag to perform the two clicks. Existing
+perspective-calibrated recipes without `placement_model: perspective-v2` automatically receive the
+new far-distance defaults; rerun `configure-auto --overwrite` later if you want those effective
+values written into the recipe. Audit every generated scene for floating or geometrically
+implausible stands.
 
 The manual workflows below remain available for unusual scenes.
 
