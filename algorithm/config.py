@@ -197,6 +197,15 @@ STRAIGHT_CHUNK_CELLS = (5,)
 #   2 s at 30 cm/s, plus steering. Measure together with TURN_RADIUS_CM and ROBOT_SPEED_CM_S.
 TURN_TIME_S = 3.0
 
+# Whether the search may drive and turn through the four diagonal headings, using the 45
+# degree turns as well as the quarter turns. False is the four-heading planner exactly as it
+# was. EXPERIMENTAL: the STM has to be able to execute and stop a 45 degree turn for any plan
+# made with this on to survive contact with the robot.
+# SOURCE: ALGO | assumed | Measured 2026-09-04 on branch kejun-experimental-algo: the
+#   shortest-time planner saves 22% on testdata 02 and 34% on 04. OFF by default until the STM
+#   owner confirms the car can execute and stop a 45 degree turn - see docs/algorithms-todo.md.
+DIAGONAL_HEADINGS = False
+
 # ---------------------------------------------------------------------------------------
 # Image recognition
 # ---------------------------------------------------------------------------------------

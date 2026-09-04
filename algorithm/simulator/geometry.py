@@ -14,7 +14,7 @@ import config
 from pathfinding.world.primitives import Direction, Point
 
 # Compass heading in degrees, clockwise from north. The tablet uses the same convention.
-HEADING_DEG = {Direction.NORTH: 0, Direction.EAST: 90, Direction.SOUTH: 180, Direction.WEST: 270}
+HEADING_DEG = {direction: direction.degrees for direction in Direction}
 
 # Canvas size limits in pixels, and the vertical room left for the title bar and transport bar.
 _MIN_ARENA_PX, _MAX_ARENA_PX, _RESERVED_PX = 480, 720, 220

@@ -25,6 +25,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
 from pathfinding import cost
 from pathfinding.search.instructions import MiscInstruction, Move, MoveInstruction, Turn, TurnInstruction
 from pathfinding.search.search import search
@@ -149,6 +150,7 @@ def test_reach_is_fast_enough():
 
 
 if __name__ == "__main__":
+    config.DIAGONAL_HEADINGS = False        # the baseline is the four-heading planner
     data = {name: snapshot(name) for name in CASES}
     with open(BASELINE, "w") as handle:
         json.dump(data, handle, indent=1, sort_keys=True)

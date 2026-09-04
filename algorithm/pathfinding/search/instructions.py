@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from math import pi
+from math import radians
 
 from pydantic import BaseModel, Field
 
@@ -34,10 +34,29 @@ class Straight(str, Enum):
 
 
 class TurnInstruction(str, Enum):
+    """
+    A turn. The bare names are the original quarter turns; the ``_45`` variants are the same
+    steering lock held for half as long, so they share a radius and cost half the arc.
+    """
+
     FORWARD_LEFT = 'FORWARD_LEFT'
     FORWARD_RIGHT = 'FORWARD_RIGHT'
     BACKWARD_LEFT = 'BACKWARD_LEFT'
     BACKWARD_RIGHT = 'BACKWARD_RIGHT'
+    FORWARD_LEFT_45 = 'FORWARD_LEFT_45'
+    FORWARD_RIGHT_45 = 'FORWARD_RIGHT_45'
+    BACKWARD_LEFT_45 = 'BACKWARD_LEFT_45'
+    BACKWARD_RIGHT_45 = 'BACKWARD_RIGHT_45'
+
+    @property
+    def degrees(self) -> int:
+        """How far this turn swings the robot."""
+        return 45 if self.value.endswith('_45') else 90
+
+    @property
+    def lock(self) -> str:
+        """The steering lock, which is what decides the radius. Both variants share one."""
+        return self.value.removesuffix('_45')
 
     def radius(self, cell_size: int) -> int:
         """
@@ -49,10 +68,10 @@ class TurnInstruction(str, Enum):
         :param cell_size: the cell size
         :return: the turning radius in grid cells.
         """
-        return config.TURN_RADIUS_CM[self.value] // cell_size
+        return config.TURN_RADIUS_CM[self.lock] // cell_size
 
     def arc_length(self, cell_size: int) -> int:
-        return round(self.radius(cell_size) * (pi / 2))
+        return round(self.radius(cell_size) * radians(self.degrees))
 
 
 @dataclass

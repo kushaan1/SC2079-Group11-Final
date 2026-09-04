@@ -1,6 +1,6 @@
 # Algorithms: what is left to do
 
-Updated 2026-09-04 (week 4). Checklist and quiz are Friday of week 7, about 25 Sep. The
+Updated 2026-09-04 (week 4). Branch `kejun-structure` is the stable one; `kejun-experimental-algo` holds the eight-heading experiment in section 5. Checklist and quiz are Friday of week 7, about 25 Sep. The
 simulator and the shortest-time optimiser are built; what remains is yours to do or to ask.
 
 ## 1. Commit the optimiser
@@ -10,6 +10,13 @@ One commit from the repo root on `kejun-structure`:
 ```sh
 git add algorithm/PROVENANCE.md algorithm/README.md algorithm/config.py algorithm/pathfinding algorithm/pathfinding_controller.py algorithm/simulator algorithm/smoke.py algorithm/testdata algorithm/tests docs/protocols docs/algorithms-todo.md docs/superpowers
 git commit -m "algorithm: shortest-time optimiser (B.3), optimal by default over http with a strategy field, sim gets a Shortest time source" -m "search core rewritten on int indices + cached arcs: 25x faster, byte-identical. 126 tests, smoke 5/5"
+```
+
+On `kejun-experimental-algo`, the eight-heading work commits separately:
+
+```sh
+git add algorithm docs/algorithms-todo.md
+git commit -m "experiment: eight headings and 45 degree turns behind a config flag, off by default" -m "derived the 16 turn cases into one formula first. optimal routes 22-34% quicker on testdata 02 and 04. blocked on whether the stm can do a 45 degree turn"
 ```
 
 If Kushaan's branch `kushaan-simulator` is ever merged, take only his `SERVER_PORT` change (if
@@ -65,6 +72,10 @@ with both sources, Play, point at Captured and the clock).
    order is now shortest-time).
 
 ### STM owner
+0. **Can the car execute and stop a 45 degree turn accurately?** This one decides whether the
+   experiment in section 5 is worth anything: it is worth 22 to 34 percent off the route time,
+   and nothing at all if the turn cannot be driven. If yes, also: does a 45 degree turn use the
+   same steering lock and radius as a 90, and take about half the time?
 1. Four turning radii at competition speed (forward-left, forward-right, backward-left,
    backward-right): centre displacement dx, dy in cm after a 90 degree turn from a tape mark.
    Current values are another team's car (39/40/37/39).
@@ -103,7 +114,35 @@ centre in decimal cells, ids 1 to 8. Two confirmations:
 Also on your plate: quiz (week 7 Friday 08:30) on the deck's algorithm material; video footage
 (record the simulator now); commit under your own name.
 
-## 5. What I still owe you, in order
+## 5. The eight-heading experiment, on branch `kejun-experimental-algo`
+
+The planner used four headings and 90 degree turns. That branch adds the four diagonals and a
+45 degree turn, behind `config.DIAGONAL_HEADINGS`, which is **off by default** so nothing
+changes until someone turns it on.
+
+Measured 2026-09-04 with the shortest-time planner, diagonal moves charged their true 1.41 cm
+per cell:
+
+| Arena | Four headings | Eight headings | Change |
+|---|---|---|---|
+| `02-four-obstacles` | 41.50 s, 11 turns | 32.17 s, 9 turns | -22% |
+| `04-five-obstacles` | 62.33 s, 17 turns | 41.28 s, 11 turns | -34% |
+| `05-greedy-loses` | 30.33 s, 8 turns | 29.17 s, 8 turns | -4% |
+| `01-single-obstacle` | 7.83 s | 7.83 s | none |
+
+Planning takes about 2 to 3 seconds instead of 1. Two honest caveats. The greedy planner gets
+*worse* with more options on some arenas, which is greedy's nature and does not matter because
+optimal is the default. And the five-obstacle result hits the re-plan cap, so it is the best
+route tried rather than a proven optimum.
+
+To try it: set `DIAGONAL_HEADINGS = True` in `algorithm/config.py`, then plan an arena in the
+simulator with both route sources.
+
+**It is blocked on STM question 0.** The 45 degree turn is modelled as the same steering lock
+held half as long: same radius, half the arc, half the time. If the car cannot do that
+cleanly, the routes are prettier on screen and worse on the floor.
+
+## 6. What I still owe you, in order
 
 1. **Config numbers once teammates answer** (footprint, clearance, standoff, lateral tolerance,
    turning radii, speed, turn time, dwell). Today an obstacle facing a wall within about 45 cm is
@@ -112,7 +151,7 @@ Also on your plate: quiz (week 7 Friday 08:30) on the deck's algorithm material;
    case, if the RPi owner wants it.
 3. **Optional, quiz aid:** a small Dubins implementation. Not graded as code.
 
-## 6. Greedy vs shortest time, in one paragraph
+## 7. Greedy vs shortest time, in one paragraph
 
 Greedy plans from wherever the robot is to the nearest unvisited obstacle by true path cost in
 centimetres, and repeats. Shortest time first builds a table of estimated driving seconds

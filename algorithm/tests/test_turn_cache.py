@@ -25,7 +25,14 @@ from simulator.arena import load
 
 TESTDATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "testdata")
 BASELINE = os.path.join(os.environ.get("TMPDIR", "/tmp"), "baseline-turn.json")
-CASES = [(direction, instruction) for direction in Direction for instruction in TurnInstruction]
+# The oracle below is the pre-cache implementation, which only ever knew the four cardinal
+# headings and the quarter turns. The diagonals and the 45 degree turns have no reference to
+# compare against, so they are covered by tests/test_diagonals.py instead.
+CASES = [
+    (direction, instruction)
+    for direction in Direction if not direction.diagonal
+    for instruction in TurnInstruction if instruction.degrees == 90
+]
 
 
 def arena(footprint_cm: int = 31, obstacles: tuple[Obstacle, ...] = ()) -> World:
@@ -402,6 +409,20 @@ def reference_curve(
 # ---------------------------------------------------------------------------------------
 
 
+def same_arc(actual, expected) -> bool:
+    """
+    The same arc, allowing for the ordering change.
+
+    ``turn()`` now hands its cells back in driving order and drops consecutive duplicates,
+    where the oracle returns ``__offsets``' interleaved a, b pairs. Same cells, same end pose,
+    different sequence by construction - see ``test_arcs_come_out_in_driving_order``.
+    """
+    if actual is None or expected is None:
+        return actual == expected
+    cells = lambda arc: {(v.direction, v.x, v.y) for v in arc}
+    return cells(actual) == cells(expected) and actual[-1] == expected[-1]
+
+
 @pytest.mark.parametrize("direction,instruction", CASES, ids=lambda v: v.value)
 def test_every_case_matches_the_reference_on_an_empty_arena(direction, instruction):
     world = arena()
@@ -412,9 +433,7 @@ def test_every_case_matches_the_reference_on_an_empty_arena(direction, instructi
 
     assert expected is not None, "the reference itself must find this turn legal"
     assert actual is not None
-    assert actual[0] == expected[0]          # first cell of the arc
-    assert actual[-1] == expected[-1]        # end pose
-    assert actual == expected                # and every cell in between, in order
+    assert same_arc(actual, expected)        # same cells, same end pose
 
 
 def test_a_turn_that_clips_an_obstacle_is_none():
@@ -427,7 +446,7 @@ def test_a_turn_that_clips_an_obstacle_is_none():
             for y in range(60, 141, 10):
                 start = Vector(direction, x, y)
                 expected = reference_turn(world, start, instruction)
-                assert turn(world, start, instruction) == expected
+                assert same_arc(turn(world, start, instruction), expected)
                 if expected is None:
                     blocked += 1
 
@@ -450,7 +469,7 @@ def test_arcs_that_run_off_the_grid_are_none_not_wrapped():
         for x, y in ((0, 0), (5, 5), (14, 14), (14, 185), (185, 14), (185, 185), (199, 199)):
             start = Vector(direction, x, y)
             expected = reference_turn(world, start, instruction)
-            assert turn(world, start, instruction) == expected, (direction, instruction, x, y)
+            assert same_arc(turn(world, start, instruction), expected), (direction, instruction, x, y)
             off_grid += expected is None
 
     assert off_grid > 0, "these starts were supposed to push some arcs off the grid"
@@ -469,7 +488,7 @@ def test_matches_the_reference_across_a_populated_arena():
             for y in range(0, 200, 13):
                 start = Vector(direction, x, y)
                 expected = reference_turn(world, start, instruction)
-                assert turn(world, start, instruction) == expected, (direction, instruction, x, y)
+                assert same_arc(turn(world, start, instruction), expected), (direction, instruction, x, y)
                 legal += expected is not None
 
     assert legal > 0, "this sweep was supposed to find some legal turns"
@@ -484,8 +503,8 @@ def test_cache_does_not_leak_across_robot_sizes():
     big_arc = turn(big, start, TurnInstruction.FORWARD_LEFT)
     small_arc = turn(small, start, TurnInstruction.FORWARD_LEFT)
 
-    assert big_arc == reference_turn(big, start, TurnInstruction.FORWARD_LEFT)
-    assert small_arc == reference_turn(small, start, TurnInstruction.FORWARD_LEFT)
+    assert same_arc(big_arc, reference_turn(big, start, TurnInstruction.FORWARD_LEFT))
+    assert same_arc(small_arc, reference_turn(small, start, TurnInstruction.FORWARD_LEFT))
     assert big_arc != small_arc
 
 
@@ -498,7 +517,7 @@ def test_cache_follows_a_runtime_radius_change():
         first = turn(world, start, TurnInstruction.FORWARD_LEFT)
         config.TURN_RADIUS_CM["FORWARD_LEFT"] = original["FORWARD_LEFT"] - 10
         second = turn(world, start, TurnInstruction.FORWARD_LEFT)
-        assert second == reference_turn(world, start, TurnInstruction.FORWARD_LEFT)
+        assert same_arc(second, reference_turn(world, start, TurnInstruction.FORWARD_LEFT))
         assert second != first
     finally:
         config.TURN_RADIUS_CM.clear()
@@ -564,3 +583,16 @@ def test_replanning_the_testdata_arenas_matches_the_baseline():
 
         assert segments == json.loads(json.dumps(expected["segments"])), name
         assert unreachable == expected["unreachable"], name
+
+
+def test_arcs_come_out_in_driving_order():
+    """What the reordering buys: an arc is a path now, not a collision-check set."""
+    world = arena()
+    for direction, instruction in CASES:
+        path = turn(world, Vector(direction, 100, 100), instruction)
+        assert path is not None, (direction, instruction)
+        for before, after in zip(path, path[1:]):
+            assert max(abs(after.x - before.x), abs(after.y - before.y)) >= 1
+        arc = path[:-1]
+        for before, after in zip(arc, arc[1:]):
+            assert max(abs(after.x - before.x), abs(after.y - before.y)) == 1, (direction, instruction)

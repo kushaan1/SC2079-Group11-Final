@@ -35,7 +35,27 @@ CAPTURE_DWELL_FRAMES = 10
 # The turns whose compass heading DECREASES: driving forward-left and reversing to the right
 # both swing the nose anticlockwise. Used to recover the pre-turn heading from the post-turn
 # one, which is all the planner records on an arc cell.
-_ANTICLOCKWISE = (TurnInstruction.FORWARD_LEFT, TurnInstruction.BACKWARD_RIGHT)
+_ANTICLOCKWISE = ('FORWARD_LEFT', 'BACKWARD_RIGHT')
+# Which side the turning circle sits on. The steering lock decides that, and the
+# direction of travel decides which way the heading then swings, so the two differ.
+_LEFT_LOCK = ('FORWARD_LEFT', 'BACKWARD_LEFT')
+
+
+def _centre(
+    x0: float, y0: float, x1: float, y1: float, start_deg: float, swing: float, left: bool
+) -> tuple[float, float]:
+    """
+    The turning circle's centre for an arc from (x0, y0) to (x1, y1).
+
+    It sits perpendicular to the heading the arc sets off on, on the side of the steering lock.
+    A diagonal start has no axis to fall back on, so the radius comes from the chord: a chord
+    subtending `swing` degrees of a circle spans `2 r sin(swing / 2)`.
+    """
+    ux, uy = math.sin(math.radians(start_deg)), math.cos(math.radians(start_deg))
+    px, py = (-uy, ux) if left else (uy, -ux)
+    chord = math.hypot(x1 - x0, y1 - y0)
+    radius = chord / (2 * math.sin(math.radians(swing) / 2))
+    return x0 + radius * px, y0 + radius * py
 
 
 @dataclass(frozen=True)
@@ -69,8 +89,10 @@ class Playback:
                 if isinstance(move, Turn):
                     *arc, end = move.vectors
                     end_deg = HEADING_DEG[end.direction]
-                    start_deg = (end_deg + (90 if move.turn in _ANTICLOCKWISE else -90)) % 360
-                    delta = ((end_deg - start_deg + 180) % 360) - 180
+                    # The turn's own size, so a 45 degree turn sweeps 45 and not a quarter.
+                    swing = move.turn.degrees
+                    start_deg = (end_deg + (swing if move.turn.lock in _ANTICLOCKWISE else -swing)) % 360
+                    delta = -swing if move.turn.lock in _ANTICLOCKWISE else swing
                     m = len(arc)
                     step = move.turn.arc_length(cell_size) * cell_size / (m + 1)
                     # The turn's whole time charge, spread evenly over the m arc frames and the
@@ -84,7 +106,11 @@ class Playback:
                         # integer cells is what keeps a turn from stair-stepping.
                         x0, y0 = arc[0].x, arc[0].y
                         dx, dy = arc[-1].x - x0, arc[-1].y - y0
-                        cx, cy = (x0 + dx, y0) if start_deg % 180 == 0 else (x0, y0 + dy)
+                        # The centre is perpendicular to the heading the arc starts on. A
+                        # diagonal start has no axis to fall back on, so it is taken from
+                        # the chord instead: the centre is equidistant from both ends.
+                        cx, cy = _centre(x0, y0, x0 + dx, y0 + dy, start_deg, swing,
+                                         move.turn.lock in _LEFT_LOCK)
                         phi0 = math.atan2(y0 - cy, x0 - cx)
                         phi1 = math.atan2(arc[-1].y - cy, arc[-1].x - cx)
                         sweep = ((phi1 - phi0 + math.pi) % (2 * math.pi)) - math.pi   # signed, +-pi/2

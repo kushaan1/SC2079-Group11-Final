@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import atan2, ceil, cos, degrees, radians, sin
 
 import numpy as np
 
@@ -47,6 +48,20 @@ class _Arc:
 # change lands on a fresh key instead of reusing a stale arc. Bounded by 4 directions x 4
 # instructions x however many robot/radius combinations one process plans.
 _ARCS: dict[tuple, _Arc | None] = {}
+
+# Which side of the robot the turning circle sits on. The steering lock decides it, not the
+# direction of travel, so forward-left and backward-left share a centre.
+_LEFT_LOCK = ('FORWARD_LEFT', 'BACKWARD_LEFT')
+
+# The two locks that swing the nose anticlockwise. Reversing with the wheel held left swings
+# the nose right, which is why the backward pair are mirrored.
+_ANTICLOCKWISE = ('FORWARD_LEFT', 'BACKWARD_RIGHT')
+
+
+def __turned(instruction: TurnInstruction) -> int:
+    """How far this turn swings the compass heading, signed clockwise."""
+    magnitude = instruction.degrees
+    return -magnitude if instruction.lock in _ANTICLOCKWISE else magnitude
 
 
 # This turning function does not properly account for different points of the robot having different turning radii.
@@ -97,7 +112,11 @@ def turn(world: World, start: Vector, instruction: TurnInstruction) -> list[Vect
 
     direction = arc.direction
     path = [Vector(direction, x + dx, y + dy) for dx, dy in arc.cells]
-    path.append(Vector(direction, x + arc.end[0], y + arc.end[1]))
+    end_x, end_y = x + arc.end[0], y + arc.end[1]
+    # The end pose is dropped when the arc already finishes on that cell, which is what the
+    # de-interleaving in the search used to do before arcs left this module as paths.
+    if not path or (path[-1].x, path[-1].y) != (end_x, end_y):
+        path.append(Vector(direction, end_x, end_y))
     return path
 
 
@@ -113,8 +132,16 @@ def __arc(
     if geometry is None:
         return None
 
-    end, centre_x, centre_y, quadrant = geometry
-    cells = __offsets(turning_radius, centre_x, centre_y, quadrant)
+    end, centre_x, centre_y, starts, swept, rear = geometry
+
+    # The midpoint circle is kept for the quarter turns it was written for, so those arcs come
+    # out cell for cell as they always have; everything else is sampled.
+    if instruction.degrees == 90 and not direction.diagonal:
+        drawn = __offsets(turning_radius, round(centre_x), round(centre_y), __quadrant(starts, swept))
+        cells = __in_driving_order(drawn, rear)
+    else:
+        cells = __sampled(centre_x, centre_y, turning_radius, starts, swept)
+
     xs = [cell[0] for cell in cells]
     ys = [cell[1] for cell in cells]
 
@@ -134,246 +161,109 @@ def __geometry(
     turning_radius: int,
     offset: int,
     robot: Robot,
-) -> tuple[Vector, int, int, int] | None:
+) -> tuple[Vector, float, float, float, float, tuple[int, int]] | None:
     """
-    The turn's ``(end pose, centre_x, centre_y, quadrant)``, or None if there is no such turn.
+    The turn's ``(end pose, centre x, centre y, start angle, swept angle, rear point)``.
 
-    The sixteen cases are the reference's, unchanged; only the ``__curve`` call they used to
-    make has become the tuple it was going to be called with. Every coordinate here is
-    ``start.x`` or ``start.y`` plus a constant, which is why :func:`__arc` can evaluate this
-    at the origin once and translate the result.
+    Derived rather than written out. The reference had sixteen hand-written cases, one per
+    heading and turn type, and Fix 6 was a term in the wrong place in one of them that nothing
+    else could catch. They are all the same manoeuvre seen from four headings, so this states
+    it once, and it then serves eight headings and two turn sizes for free:
+
+    * the robot pivots about a point ``lead`` cells BEHIND its centre, roughly the rear axle;
+    * the turning circle's centre sits ``turning_radius`` to the left or right of that point,
+      chosen by the steering lock, which is why forward-left and backward-left share a centre;
+    * the rear point rides that circle through the same angle the robot turns through;
+    * the new centre is ``lead`` ahead of where the rear point lands, along the new heading.
+
+    Angles are maths angles, anticlockwise from the x axis, which is why the compass delta is
+    negated. Every coordinate is ``start.x`` or ``start.y`` plus a constant, which is why
+    :func:`__arc` can evaluate this at the origin once and translate the result.
+
+    Assumes a square robot, so that one ``lead`` serves every heading. ``Entity`` asserts the
+    corners are square and the parity bump keeps the extents equal, so that holds by
+    construction.
     """
-    match (start.direction, instruction):
-        # y facing north
-        case (Direction.NORTH, TurnInstruction.FORWARD_LEFT):
-            x = start.x
-            y = start.y - robot.south_length + offset
-            return (
-                Vector(
-                    Direction.WEST,
-                    x - turning_radius - robot.east_length + offset,
-                    y + turning_radius,
-                ),
-                x - turning_radius,
-                y,
-                1,
-            )
+    lead = robot.south_length - offset
+    ux, uy = start.direction.unit
 
-        case (Direction.NORTH, TurnInstruction.FORWARD_RIGHT):
-            x = start.x
-            y = start.y - robot.south_length + offset
-            return (
-                Vector(
-                    Direction.EAST,
-                    x + turning_radius + robot.west_length - offset,
-                    y + turning_radius,
-                ),
-                x + turning_radius,
-                y,
-                2,
-            )
+    # The rear point: what actually rides the circle.
+    rear_x = round(start.x - lead * ux)
+    rear_y = round(start.y - lead * uy)
 
-        case (Direction.NORTH, TurnInstruction.BACKWARD_LEFT):
-            x = start.x
-            y = start.y - robot.south_length + offset
-            return (
-                Vector(
-                    Direction.EAST,
-                    x - turning_radius + robot.west_length - offset,
-                    y - turning_radius,
-                ),
-                x - turning_radius,
-                y,
-                4,
-            )
+    # Left of the heading is (-uy, ux); right is its negation.
+    side_x, side_y = (-uy, ux) if instruction.lock in _LEFT_LOCK else (uy, -ux)
+    centre_x = rear_x + turning_radius * side_x
+    centre_y = rear_y + turning_radius * side_y
 
-        case (Direction.NORTH, TurnInstruction.BACKWARD_RIGHT):
-            x = start.x
-            y = start.y - robot.south_length + offset
-            return (
-                Vector(
-                    Direction.WEST,
-                    x + turning_radius - robot.west_length + offset,
-                    y - turning_radius,
-                ),
-                x + turning_radius,
-                y,
-                3,
-            )
+    turned = __turned(instruction)
+    swept = -turned
+    end_direction = Direction.of_degrees(start.direction.degrees + turned)
 
-        # y facing east
-        case (Direction.EAST, TurnInstruction.FORWARD_LEFT):
-            x = start.x - robot.west_length + offset
-            y = start.y
-            return (
-                Vector(
-                    Direction.NORTH,
-                    x + turning_radius,
-                    y + turning_radius + robot.south_length - offset,
-                ),
-                x,
-                y + turning_radius,
-                4,
-            )
+    starts = degrees(atan2(rear_y - centre_y, rear_x - centre_x))
+    finish = radians(starts + swept)
+    end_x = centre_x + turning_radius * cos(finish)
+    end_y = centre_y + turning_radius * sin(finish)
 
-        case (Direction.EAST, TurnInstruction.FORWARD_RIGHT):
-            x = start.x - robot.west_length + offset
-            y = start.y
-            return (
-                Vector(
-                    Direction.SOUTH,
-                    x + turning_radius,
-                    y - turning_radius - robot.north_length + offset,
-                ),
-                x,
-                y - turning_radius,
-                1,
-            )
+    fx, fy = end_direction.unit
+    end = Vector(end_direction, round(end_x + lead * fx), round(end_y + lead * fy))
 
-        case (Direction.EAST, TurnInstruction.BACKWARD_LEFT):
-            x = start.x - robot.west_length + offset
-            y = start.y
-            return (
-                Vector(
-                    Direction.SOUTH,
-                    x - turning_radius,
-                    y + turning_radius - robot.north_length + offset,
-                ),
-                x,
-                y + turning_radius,
-                3,
-            )
+    return end, centre_x, centre_y, starts, swept, (rear_x, rear_y)
 
-        # Fix 6: the reference put the robot-extent term on the circle centre instead of the end
-        # pose, so this arc was checked 12 cm off and the post-turn pose was wrong by 12 cm.
-        # Now mirrors (EAST, BACKWARD_LEFT).
-        case (Direction.EAST, TurnInstruction.BACKWARD_RIGHT):
-            x = start.x - robot.west_length + offset
-            y = start.y
-            return (
-                Vector(
-                    Direction.NORTH,
-                    x - turning_radius,
-                    y - turning_radius + robot.south_length - offset,
-                ),
-                x,
-                y - turning_radius,
-                2,
-            )
 
-        # y facing south
-        case (Direction.SOUTH, TurnInstruction.FORWARD_LEFT):
-            x = start.x
-            y = start.y + robot.north_length - offset
-            return (
-                Vector(
-                    Direction.EAST,
-                    x + turning_radius + robot.west_length - offset,
-                    y - turning_radius,
-                ),
-                x + turning_radius,
-                y,
-                3,
-            )
+def __sampled(
+    centre_x: float, centre_y: float, turning_radius: int, starts: float, swept: float
+) -> tuple[tuple[int, int], ...]:
+    """
+    An arc walked in driving order, about one cell per step.
 
-        case (Direction.SOUTH, TurnInstruction.FORWARD_RIGHT):
-            x = start.x
-            y = start.y + robot.north_length - offset
-            return (
-                Vector(
-                    Direction.WEST,
-                    x - turning_radius - robot.east_length + offset,
-                    y - turning_radius,
-                ),
-                x - turning_radius,
-                y,
-                4,
-            )
+    The midpoint-circle walk below only knows axis-aligned quarters, so anything starting on a
+    diagonal or sweeping 45 degrees is sampled instead. Consecutive duplicates are dropped, so
+    the result is a path rather than a set.
+    """
+    steps = max(1, ceil(abs(radians(swept)) * turning_radius))
+    cells: list[tuple[int, int]] = []
+    for step in range(steps + 1):
+        angle = radians(starts + swept * step / steps)
+        cell = (round(centre_x + turning_radius * cos(angle)),
+                round(centre_y + turning_radius * sin(angle)))
+        if not cells or cell != cells[-1]:
+            cells.append(cell)
+    return tuple(cells)
 
-        case (Direction.SOUTH, TurnInstruction.BACKWARD_LEFT):
-            x = start.x
-            y = start.y + robot.north_length - offset
-            return (
-                Vector(
-                    Direction.WEST,
-                    x + turning_radius - robot.east_length + offset,
-                    y + turning_radius,
-                ),
-                x + turning_radius,
-                y,
-                2,
-            )
 
-        case (Direction.SOUTH, TurnInstruction.BACKWARD_RIGHT):
-            x = start.x
-            y = start.y + robot.north_length - offset
-            return (
-                Vector(
-                    Direction.EAST,
-                    x - turning_radius + robot.west_length - offset,
-                    y + turning_radius,
-                ),
-                x - turning_radius,
-                y,
-                1,
-            )
+def __in_driving_order(
+    cells: tuple[tuple[int, int], ...], rear: tuple[int, int]
+) -> tuple[tuple[int, int], ...]:
+    """
+    Put :func:`__offsets`' interleaved output into driving order.
 
-        # y facing west
-        case (Direction.WEST, TurnInstruction.FORWARD_LEFT):
-            x = start.x + robot.east_length - offset
-            y = start.y
-            return (
-                Vector(
-                    Direction.SOUTH,
-                    x - turning_radius,
-                    y - turning_radius - robot.north_length + offset,
-                ),
-                x,
-                y - turning_radius,
-                2,
-            )
+    It fills the quarter from both ends at once, ``a0, b0, a1, b1, ...``, so the two halves are
+    de-interleaved and joined at the 45 degree point, starting from whichever end is nearest
+    the rear point the robot actually sets off from. Doing it here rather than in the search
+    means every arc leaves this module as a path, whichever way it was drawn.
+    """
+    a, b = list(cells[0::2]), list(cells[1::2])
+    forward = a + b[::-1]
+    backward = b + a[::-1]
 
-        case (Direction.WEST, TurnInstruction.FORWARD_RIGHT):
-            x = start.x + robot.east_length - offset
-            y = start.y
-            return (
-                Vector(
-                    Direction.NORTH,
-                    x - turning_radius,
-                    y + turning_radius + robot.south_length - offset,
-                ),
-                x,
-                y + turning_radius,
-                3,
-            )
+    def gap(cell: tuple[int, int]) -> int:
+        return abs(cell[0] - rear[0]) + abs(cell[1] - rear[1])
 
-        case (Direction.WEST, TurnInstruction.BACKWARD_LEFT):
-            x = start.x + robot.east_length - offset
-            y = start.y
-            return (
-                Vector(
-                    Direction.NORTH,
-                    x + turning_radius,
-                    y - turning_radius + robot.south_length - offset,
-                ),
-                x,
-                y - turning_radius,
-                1,
-            )
+    ordered = forward if gap(forward[0]) <= gap(backward[0]) else backward
 
-        case (Direction.WEST, TurnInstruction.BACKWARD_RIGHT):
-            x = start.x + robot.east_length - offset
-            y = start.y
-            return (
-                Vector(
-                    Direction.SOUTH,
-                    x + turning_radius,
-                    y + turning_radius - robot.north_length + offset,
-                ),
-                x,
-                y + turning_radius,
-                4,
-            )
+    walked: list[tuple[int, int]] = []
+    for cell in ordered:
+        if not walked or cell != walked[-1]:
+            walked.append(cell)
+    return tuple(walked)
+
+
+def __quadrant(starts: float, swept: float) -> int:
+    """
+    Which quarter of the circle an axis-aligned arc lies in, in :func:`__offsets`' numbering.
+    """
+    return (int(min(round(starts), round(starts + swept)) // 90) % 4) + 1
 
 
 def __offsets(turning_radius: int, centre_x: int, centre_y: int, quadrant: int) -> tuple[tuple[int, int], ...]:

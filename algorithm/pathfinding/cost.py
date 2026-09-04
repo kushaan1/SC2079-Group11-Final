@@ -5,6 +5,8 @@ simulator clock shows. Both read config at call time.
 """
 from __future__ import annotations
 
+from math import sqrt
+
 from typing import Iterable, Protocol
 
 import config
@@ -14,7 +16,7 @@ from pathfinding.search.instructions import Move, Turn, TurnInstruction
 class Weights(Protocol):
     def turn(self, turn: TurnInstruction, cell_size: int = 1) -> float: ...
 
-    def straight(self, cells: int, cell_size: int = 1) -> float: ...
+    def straight(self, cells: float, cell_size: int = 1) -> float: ...
 
 
 class _Distance:
@@ -28,7 +30,7 @@ class _Distance:
     def turn(self, turn: TurnInstruction, cell_size: int = 1) -> float:
         return turn.arc_length(cell_size)
 
-    def straight(self, cells: int, cell_size: int = 1) -> float:
+    def straight(self, cells: float, cell_size: int = 1) -> float:
         return cells
 
 
@@ -38,7 +40,7 @@ class _Time:
     def turn(self, turn: TurnInstruction, cell_size: int = 1) -> float:
         return config.TURN_TIME_S
 
-    def straight(self, cells: int, cell_size: int = 1) -> float:
+    def straight(self, cells: float, cell_size: int = 1) -> float:
         return cells * cell_size / config.ROBOT_SPEED_CM_S
 
 
@@ -46,11 +48,18 @@ DISTANCE_CELLS: Weights = _Distance()
 TIME_SECONDS: Weights = _Time()
 
 
+# A diagonal step crosses both axes, so one cell of it is this much ground.
+_DIAGONAL = sqrt(2)
+
+
 def move_cost(move: Turn | Move, weights: Weights, cell_size: int) -> float:
     """The cost of one move under ``weights``."""
     if isinstance(move, Turn):
         return weights.turn(move.turn, cell_size)
-    return weights.straight(len(move.vectors), cell_size)
+    cells = len(move.vectors)
+    if move.vectors and move.vectors[0].direction.diagonal:
+        cells *= _DIAGONAL
+    return weights.straight(cells, cell_size)
 
 
 def seconds(moves: Iterable[Turn | Move], cell_size: int) -> float:

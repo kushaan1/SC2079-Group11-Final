@@ -10,8 +10,9 @@ The representation is what this module is about. A pose is one int::
 
     index = (rank * stride + x + pad) * stride + y + pad
 
-with ``rank`` EAST 0, NORTH 1, SOUTH 2, WEST 3 - the order :class:`~pathfinding.world.
-primitives.Vector`'s dataclass ordering puts poses in, ``Direction`` being a ``str`` enum. So
+with ``rank`` the position of the heading in ``sorted(Direction)`` - the order :class:`~path
+finding.world.primitives.Vector`'s dataclass ordering puts poses in, ``Direction`` being a
+``str`` enum. So
 ``(cost, index)`` heap entries break ties EXACTLY as the ``(cost, Vector)`` entries they
 replaced, and this is a speed change only: same paths, same costs, same tie-breaks, pinned by
 ``tests/test_segment_fast.py`` against a dump of the previous implementation.
@@ -211,7 +212,7 @@ class _Search:
         """
         self.pad, self.stride, self.tables, self.chunks = _tables(world, weights, chain(sources, poses))
         self.cells = self.stride * self.stride
-        states = 4 * self.cells
+        states = len(_RANKS) * self.cells
 
         self.costs: list[float] = [inf] * states
         self.parents: list[int] = [-1] * states
@@ -327,6 +328,9 @@ def _tables(
         chunks in code order.
     """
     # Call-time config rule: read here so the chunk set can be re-tuned at runtime.
+    # Call-time config rule: the diagonal headings are only reachable through a 45 degree
+    # turn, so dropping those turns is enough to leave the four-heading planner behind.
+    turns = _TURNS if config.DIAGONAL_HEADINGS else tuple(t for t in _TURNS if t.degrees == 90)
     chunks = [(move, length) for move in Straight for length in config.STRAIGHT_CHUNK_CELLS]
     cell_size = world.cell_size
     size = world.size
@@ -376,7 +380,7 @@ def _tables(
     for rank, direction in enumerate(_RANKS):
         moves: list[tuple[bytes, int, float, int]] = []
 
-        for code, instruction in enumerate(_TURNS, start=1):
+        for code, instruction in enumerate(turns, start=1):
             arc = arcs.get((direction, instruction))
             if arc is None:
                 continue

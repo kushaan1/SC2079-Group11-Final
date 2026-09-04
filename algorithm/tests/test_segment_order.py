@@ -32,7 +32,7 @@ def test_moves_flatten_to_vectors_and_cover_all_four_turns():
         flat = [v for m in segment.moves for v in m.vectors]
         assert flat == segment.vectors
         seen |= {m.turn for m in segment.moves if isinstance(m, Turn)}
-    assert seen == set(TurnInstruction)
+    assert seen == {t for t in TurnInstruction if t.degrees == 90}
 
 
 def test_arc_is_the_rear_point_path_and_end_is_the_centre():
