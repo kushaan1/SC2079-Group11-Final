@@ -12,6 +12,7 @@ from training.synthesis import (
     SynthesisError,
     _automatic_variant_recipe,
     _perspective_height_for_bottom,
+    _trim_rgba_template,
     discover_custom_patterns,
     distractor_ids,
     extract_glyph_mask,
@@ -99,6 +100,16 @@ def test_custom_patterns_reject_pixels_below_the_minimum_contrast(tmp_path):
     write_image(texture_path, texture)
     with pytest.raises(SynthesisError, match="minimum black-glyph contrast"):
         discover_custom_patterns(texture_path.parent)
+
+
+def test_transparent_template_padding_is_trimmed_before_scaling():
+    image = np.zeros((240, 180, 4), dtype=np.uint8)
+    image[70:210, 45:135, :3] = 20
+    image[70:210, 45:135, 3] = 255
+    trimmed, offset = _trim_rgba_template(image)
+    assert trimmed.shape[0] < image.shape[0] * 0.65
+    assert trimmed.shape[1] < image.shape[1] * 0.65
+    assert offset[0] > 0 and offset[1] > 0
 
 
 def test_in_scene_replacement_labels_target_and_bullseye(tmp_path):
@@ -208,7 +219,7 @@ def test_automatic_recipe_balances_counts_and_primary_orientations(tmp_path):
         primary = next(item for item in expanded["stands"] if item["role"] == "primary")
         distractors = [item for item in expanded["stands"] if item["role"] == "distractor"]
         assert 0.45 <= primary["apparent_height"] <= 0.65
-        assert all(0.25 <= item["apparent_height"] <= 0.50 for item in distractors)
+        assert all(0.18 <= item["apparent_height"] <= 0.42 for item in distractors)
         assert all(primary["apparent_height"] > item["apparent_height"] for item in distractors)
         for stand in expanded["stands"]:
             expected_height = _perspective_height_for_bottom(
@@ -230,6 +241,19 @@ def test_automatic_recipe_balances_counts_and_primary_orientations(tmp_path):
         "right": 10,
     }
     assert sum(edge_variants) == 9
+
+
+def test_distant_scale_uses_steeper_than_linear_falloff():
+    perspective = {"far_point": [0.5, 0.40], "near_point": [0.5, 0.95]}
+    midpoint = (perspective["far_point"][1] + perspective["near_point"][1]) / 2.0
+    height = _perspective_height_for_bottom(
+        midpoint, perspective, DEFAULT_AUTO_PLACEMENT
+    )
+    linear_midpoint = (
+        DEFAULT_AUTO_PLACEMENT["far_stand_height"]
+        + DEFAULT_AUTO_PLACEMENT["near_stand_height"]
+    ) / 2.0
+    assert height < linear_midpoint
 
 
 def test_automatic_recipe_requires_two_click_perspective_calibration(tmp_path):
