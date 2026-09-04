@@ -32,6 +32,7 @@ class PCConfig:
     port: int
     confidence_threshold: float
     iou_threshold: float
+    nearest_height_tolerance: float
     max_upload_bytes: int
     save_workers: int
 
@@ -49,6 +50,9 @@ class PCConfig:
             port=_integer(source, "VISION_PC_PORT", 4000),
             confidence_threshold=_float(source, "VISION_PC_CONFIDENCE", 0.60),
             iou_threshold=_float(source, "VISION_PC_IOU", 0.45),
+            nearest_height_tolerance=_float(
+                source, "VISION_NEAREST_HEIGHT_TOLERANCE", 0.10
+            ),
             max_upload_bytes=_integer(source, "VISION_MAX_UPLOAD_BYTES", 8 * 1024 * 1024),
             save_workers=_integer(source, "VISION_SAVE_WORKERS", 2),
         )
@@ -62,6 +66,8 @@ class PCConfig:
             raise ValueError("VISION_PC_CONFIDENCE must be between 0 and 1")
         if not 0.0 <= self.iou_threshold <= 1.0:
             raise ValueError("VISION_PC_IOU must be between 0 and 1")
+        if not 0.0 <= self.nearest_height_tolerance <= 0.5:
+            raise ValueError("VISION_NEAREST_HEIGHT_TOLERANCE must be between 0 and 0.5")
         if self.max_upload_bytes <= 0 or self.save_workers <= 0:
             raise ValueError("upload size and save worker count must be positive")
 

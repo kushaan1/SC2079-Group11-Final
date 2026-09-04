@@ -35,6 +35,8 @@ class Detection:
     kind: str
     competition_id: Optional[int] = None
     model_class_id: Optional[int] = None
+    frontality_score: Optional[float] = None
+    is_primary: bool = False
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
@@ -45,6 +47,8 @@ class Detection:
             raise ValueError("target detections require an ID from 11 through 40")
         if self.kind != "target" and self.competition_id is not None:
             raise ValueError("non-target detections cannot have a competition ID")
+        if self.frontality_score is not None and not 0.0 <= self.frontality_score <= 1.0:
+            raise ValueError("frontality_score must be between 0 and 1")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -81,6 +85,9 @@ class DetectionResult:
             return None
         targets = [item for item in self.detections if item.kind == "target"]
         candidates: Sequence[Detection] = targets or self.detections
+        primary = [item for item in candidates if item.is_primary]
+        if primary:
+            return max(primary, key=lambda item: item.confidence)
         return max(candidates, key=lambda item: item.confidence)
 
     def to_dict(self) -> Dict[str, Any]:

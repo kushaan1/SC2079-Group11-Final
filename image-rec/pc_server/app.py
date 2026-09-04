@@ -28,6 +28,7 @@ def create_app(
         resolved.model_path,
         resolved.confidence_threshold,
         resolved.iou_threshold,
+        nearest_height_tolerance=resolved.nearest_height_tolerance,
     )
     image_store = image_store or AsyncImageStore(resolved.capture_dir, resolved.save_workers)
 
