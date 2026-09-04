@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .config import TaskConfig
+from .yolo import YOLO_COORDINATE_TOLERANCE
 
 
 IMAGE_SUFFIXES = frozenset((".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"))
@@ -329,10 +330,112 @@ def _validate_provenance_labels(
             provenance_rows.append((class_index,) + tuple(float(value) for value in box))
         except (TypeError, ValueError):
             return [DatasetIssue("invalid_provenance", path, "object box values must be numeric")]
-    key = lambda row: (row[0],) + tuple(round(value, 6) for value in row[1:])
-    if sorted(map(key, provenance_rows)) != sorted(map(key, labels)):
-        return [DatasetIssue("provenance_mismatch", path, "included provenance objects do not match the YOLO label")]
+    provenance_counts = Counter(row[0] for row in provenance_rows)
+    label_counts = Counter(row[0] for row in labels)
+    if provenance_counts != label_counts:
+        return [
+            DatasetIssue(
+                "provenance_mismatch",
+                path,
+                "included provenance class counts {} do not match YOLO label class counts {}".format(
+                    dict(sorted(provenance_counts.items())),
+                    dict(sorted(label_counts.items())),
+                ),
+            )
+        ]
+    if not _has_one_to_one_row_match(provenance_rows, labels):
+        return [
+            DatasetIssue(
+                "provenance_mismatch",
+                path,
+                _describe_provenance_mismatch(provenance_rows, labels),
+            )
+        ]
     return []
+
+
+def _has_one_to_one_row_match(
+    provenance_rows: Sequence[Tuple[int, float, float, float, float]],
+    labels: Sequence[Tuple[int, float, float, float, float]],
+) -> bool:
+    candidates = {
+        provenance_index: sorted(
+            (
+                label_index
+                for label_index, label in enumerate(labels)
+                if _rows_match(provenance, label)
+            ),
+            key=lambda label_index: _row_distance(provenance, labels[label_index]),
+        )
+        for provenance_index, provenance in enumerate(provenance_rows)
+    }
+    provenance_by_label: Dict[int, int] = {}
+
+    def assign(provenance_index: int, visited_labels: set) -> bool:
+        for label_index in candidates[provenance_index]:
+            if label_index in visited_labels:
+                continue
+            visited_labels.add(label_index)
+            previous = provenance_by_label.get(label_index)
+            if previous is None or assign(previous, visited_labels):
+                provenance_by_label[label_index] = provenance_index
+                return True
+        return False
+
+    return all(assign(index, set()) for index in range(len(provenance_rows)))
+
+
+def _rows_match(
+    left: Tuple[int, float, float, float, float],
+    right: Tuple[int, float, float, float, float],
+) -> bool:
+    return left[0] == right[0] and all(
+        math.isclose(
+            left_value,
+            right_value,
+            rel_tol=0.0,
+            abs_tol=YOLO_COORDINATE_TOLERANCE,
+        )
+        for left_value, right_value in zip(left[1:], right[1:])
+    )
+
+
+def _row_distance(
+    left: Tuple[int, float, float, float, float],
+    right: Tuple[int, float, float, float, float],
+) -> float:
+    return max(abs(left_value - right_value) for left_value, right_value in zip(left[1:], right[1:]))
+
+
+def _describe_provenance_mismatch(
+    provenance_rows: Sequence[Tuple[int, float, float, float, float]],
+    labels: Sequence[Tuple[int, float, float, float, float]],
+) -> str:
+    coordinate_names = ("x_center", "y_center", "width", "height")
+    for provenance in provenance_rows:
+        same_class = [label for label in labels if label[0] == provenance[0]]
+        if not same_class or any(_rows_match(provenance, label) for label in same_class):
+            continue
+        nearest = min(same_class, key=lambda label: _row_distance(provenance, label))
+        differences = [
+            abs(provenance_value - label_value)
+            for provenance_value, label_value in zip(provenance[1:], nearest[1:])
+        ]
+        coordinate_index = max(range(len(differences)), key=differences.__getitem__)
+        return (
+            "class {} {} differs: provenance={:.12g}, label={:.12g}, delta={:.3g}, "
+            "tolerance={:.3g}"
+        ).format(
+            provenance[0],
+            coordinate_names[coordinate_index],
+            provenance[coordinate_index + 1],
+            nearest[coordinate_index + 1],
+            differences[coordinate_index],
+            YOLO_COORDINATE_TOLERANCE,
+        )
+    return "included provenance objects cannot be matched one-to-one with the YOLO label within tolerance {:.3g}".format(
+        YOLO_COORDINATE_TOLERANCE
+    )
 
 
 def _sha256(path: Path) -> str:

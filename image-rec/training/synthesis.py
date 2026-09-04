@@ -16,6 +16,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
+from .yolo import format_yolo_row
+
 
 SCHEMA_VERSION = "1.0"
 TARGET_IDS = tuple(range(11, 41))
@@ -1277,10 +1279,7 @@ def generate_recipe(
                 )
                 _write_image(image_path, rendered.image, jpeg_quality)
                 label_path.write_text(
-                    "".join(
-                        "{} {:.8f} {:.8f} {:.8f} {:.8f}\n".format(*row)
-                        for row in rendered.annotations
-                    ),
+                    "".join(format_yolo_row(row) for row in rendered.annotations),
                     encoding="utf-8",
                 )
                 metadata = {

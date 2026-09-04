@@ -116,3 +116,81 @@ def test_reads_valid_source_group_and_rejects_bad_provenance(tmp_path):
     report = validate_dataset(config)
     assert [sample.source_group for sample in report.samples] == ["capture-a"]
     assert [issue.code for issue in report.issues] == ["invalid_provenance"]
+
+
+def test_accepts_yolo_serialization_noise_and_reordered_provenance(tmp_path):
+    config = build_config(tmp_path, classes=("target",))
+    write_image(config.dataset.source_images / "synthetic.jpg", 10)
+    config.dataset.annotations.mkdir(parents=True)
+    (config.dataset.annotations / "synthetic.txt").write_text(
+        "0 0.20000000 0.30000000 0.10000000 0.12000000\n"
+        "0 0.67358193 0.26984127 0.03623950 0.07096172\n",
+        encoding="utf-8",
+    )
+    (config.dataset.annotations / "synthetic.meta.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "synthetic": True,
+                "recipe_sha256": "0" * 64,
+                "source_group": "synthetic-a",
+                "objects": [
+                    {
+                        "class_index": 0,
+                        "included": True,
+                        "box": [
+                            0.6735819327731093,
+                            0.2698412698412698,
+                            0.03623949579831933,
+                            0.07096171802054155,
+                        ],
+                    },
+                    {
+                        "class_index": 0,
+                        "included": True,
+                        "box": [0.2, 0.3, 0.1, 0.12],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = validate_dataset(config)
+
+    assert report.valid
+    assert len(report.samples) == 1
+
+
+def test_rejects_material_provenance_coordinate_difference(tmp_path):
+    config = build_config(tmp_path, classes=("target",))
+    write_image(config.dataset.source_images / "synthetic.jpg", 10)
+    config.dataset.annotations.mkdir(parents=True)
+    (config.dataset.annotations / "synthetic.txt").write_text(
+        "0 0.5 0.5 0.4 0.4\n",
+        encoding="utf-8",
+    )
+    (config.dataset.annotations / "synthetic.meta.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "synthetic": True,
+                "recipe_sha256": "0" * 64,
+                "source_group": "synthetic-a",
+                "objects": [
+                    {
+                        "class_index": 0,
+                        "included": True,
+                        "box": [0.5, 0.5, 0.400001, 0.4],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = validate_dataset(config)
+
+    assert [issue.code for issue in report.issues] == ["provenance_mismatch", "missing_class"]
+    assert "class 0 width differs" in report.issues[0].message
+    assert "tolerance=1e-08" in report.issues[0].message
