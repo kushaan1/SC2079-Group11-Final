@@ -34,3 +34,27 @@ def test_status_keeps_bullseye_distinct_from_no_detection():
 def test_invalid_target_id_is_rejected():
     with pytest.raises(ValueError):
         Detection("bad", 0.9, BoundingBox(0, 0, 2, 2), "target", 41)
+
+
+def test_result_uses_detector_selected_primary_before_confidence():
+    low_confidence_primary = Detection(
+        "Number 1",
+        0.7,
+        BoundingBox(0, 0, 30, 50),
+        "target",
+        11,
+        is_primary=True,
+    )
+    high_confidence_background = Detection(
+        "Number 2",
+        0.95,
+        BoundingBox(40, 10, 60, 40),
+        "target",
+        12,
+    )
+    result = DetectionResult(
+        object_id="obstacle-1",
+        status="target",
+        detections=(high_confidence_background, low_confidence_primary),
+    )
+    assert result.best_detection.competition_id == 11

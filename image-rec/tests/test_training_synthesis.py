@@ -8,6 +8,7 @@ import pytest
 from training.synthesis import (
     PATTERN_FAMILIES,
     SynthesisError,
+    _automatic_variant_recipe,
     discover_custom_patterns,
     distractor_ids,
     extract_glyph_mask,
@@ -16,6 +17,7 @@ from training.synthesis import (
     render_pattern_card,
     render_recipe_variant,
     select_pattern,
+    validate_recipe,
 )
 
 
@@ -125,6 +127,84 @@ def template_fixture(tmp_path):
         encoding="utf-8",
     )
     return template_path
+
+
+def orientation_template_fixture(tmp_path, orientation):
+    image_path = tmp_path / "{}-stand.png".format(orientation)
+    image = np.zeros((120, 80, 4), dtype=np.uint8)
+    image[4:116, 4:76, :3] = 18
+    image[4:116, 4:76, 3] = 255
+    cv2.rectangle(image, (16, 12), (64, 57), (245, 245, 245, 255), -1)
+    cv2.rectangle(image, (20, 70), (60, 104), (230, 230, 230, 255), 3)
+    write_image(image_path, image)
+    template_path = tmp_path / "{}-template.json".format(orientation)
+    template_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "stand_template",
+                "orientation": orientation,
+                "bullseye_mode": "baked",
+                "image": image_path.name,
+                "image_sha256": file_sha256(image_path),
+                "target_quad": [[0.2, 0.1], [0.8, 0.1], [0.8, 0.48], [0.2, 0.48]],
+                "bullseye_quads": [[[0.25, 0.58], [0.75, 0.58], [0.75, 0.88], [0.25, 0.88]]],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return template_path
+
+
+def automatic_recipe_fixture(tmp_path):
+    background_path = tmp_path / "empty-background.jpg"
+    write_image(background_path, np.full((300, 480, 3), 190, dtype=np.uint8))
+    templates = {
+        orientation: orientation_template_fixture(tmp_path, orientation).name
+        for orientation in ("front", "left", "right")
+    }
+    return {
+        "schema_version": "1.0",
+        "mode": "auto_background",
+        "recipe_id": "automatic-scene",
+        "source_group": "background-session",
+        "seed": 2079,
+        "background_image": background_path.name,
+        "background_sha256": file_sha256(background_path),
+        "templates": templates,
+    }
+
+
+def test_automatic_recipe_balances_counts_and_primary_orientations(tmp_path):
+    recipe = automatic_recipe_fixture(tmp_path)
+    validate_recipe(recipe, tmp_path)
+    stand_counts = []
+    orientations = []
+    for variant in range(30):
+        expanded = _automatic_variant_recipe(recipe, tmp_path, variant)
+        stand_counts.append(len(expanded["stands"]))
+        orientations.append(next(item["orientation"] for item in expanded["stands"] if item["role"] == "primary"))
+    assert {count: stand_counts.count(count) for count in set(stand_counts)} == {1: 10, 2: 10, 3: 10}
+    assert {orientation: orientations.count(orientation) for orientation in set(orientations)} == {
+        "front": 10,
+        "left": 10,
+        "right": 10,
+    }
+
+
+def test_automatic_recipe_preserves_baked_bullseyes_and_adds_shadow(tmp_path):
+    recipe = automatic_recipe_fixture(tmp_path)
+    variant = next(
+        index
+        for index in range(30)
+        if len(_automatic_variant_recipe(recipe, tmp_path, index)["stands"]) == 3
+    )
+    rendered = render_recipe_variant(recipe, tmp_path, glyph_masks(), bullseye_tile(), variant)
+    included = [item for item in rendered.objects if item["included"]]
+    assert sum(item["kind"] == "target" for item in included) == 3
+    assert sum(item["kind"] == "bullseye" for item in included) == 3
+    assert len({item["competition_id"] for item in included if item["kind"] == "target"}) == 3
+    assert int(rendered.image.min()) < 18
 
 
 def test_separated_scene_renders_and_labels_multiple_stands(tmp_path):
