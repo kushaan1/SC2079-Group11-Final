@@ -79,6 +79,15 @@ The nine existing Task 1 images have `.txt.todo` files. A TODO is intentionally 
 cannot silently turn an unannotated target into a negative image. After reviewing an image, create
 the corresponding `.txt` and remove its `.txt.todo`. Generate TODOs for newly added images with:
 
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.create_placeholders --task task1
+python -m training.create_placeholders --task task2
+```
+
+**PowerShell (Windows):**
+
 ```powershell
 python -m training.create_placeholders --task task1
 python -m training.create_placeholders --task task2
@@ -94,6 +103,14 @@ The synthesis pipeline separates the black glyph mask, fuzzing pattern, stand, a
 none becomes an accidental class shortcut. IDs 11–40 currently share a diagonal-stripe background.
 Extract and visually inspect their reusable masks before generating a dataset:
 
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.synthesize build-masks
+```
+
+**PowerShell (Windows):**
+
 ```powershell
 python -m training.synthesize build-masks
 ```
@@ -106,6 +123,29 @@ Bullseye ID 41 remains a fixed black-and-white marker.
 Prepare exactly three tightly cropped transparent RGBA stand images: `front`, `left`, and `right`.
 The photographed bullseye stays baked into the left/right cutouts; only the Number 1 card is
 replaced. Register each template once, clicking the Number 1 card first and then any baked bullseye:
+
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.synthesize configure-orientation \
+  --orientation front \
+  --image training/synthesis/stand-templates/front.png \
+  --output training/annotations/synthesis/front-template.json
+
+python -m training.synthesize configure-orientation \
+  --orientation left \
+  --image training/synthesis/stand-templates/left.png \
+  --output training/annotations/synthesis/left-template.json \
+  --bullseyes 1
+
+python -m training.synthesize configure-orientation \
+  --orientation right \
+  --image training/synthesis/stand-templates/right.png \
+  --output training/annotations/synthesis/right-template.json \
+  --bullseyes 1
+```
+
+**PowerShell (Windows):**
 
 ```powershell
 python -m training.synthesize configure-orientation `
@@ -127,6 +167,21 @@ python -m training.synthesize configure-orientation `
 ```
 
 Create one recipe for each stand-free background:
+
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.synthesize configure-auto \
+  --background training/synthesis/backgrounds/hallway-01.jpg \
+  --output training/annotations/synthesis/hallway-01-auto.json \
+  --recipe-id hallway-01-auto \
+  --source-group hallway-session-a \
+  --front training/annotations/synthesis/front-template.json \
+  --left training/annotations/synthesis/left-template.json \
+  --right training/annotations/synthesis/right-template.json
+```
+
+**PowerShell (Windows):**
 
 ```powershell
 python -m training.synthesize configure-auto `
@@ -157,6 +212,19 @@ The manual workflows below remain available for unusual scenes.
 Place the photo under `training/synthesis/`, then register its target card and visible adjacent
 bullseye cards. Click each surface top-left, top-right, bottom-right, then bottom-left.
 
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.synthesize configure-in-scene \
+  --image training/synthesis/in-scene/hallway-01.jpg \
+  --output training/annotations/synthesis/hallway-01.json \
+  --recipe-id hallway-01 \
+  --source-group hallway-session-a \
+  --bullseyes 1
+```
+
+**PowerShell (Windows):**
+
 ```powershell
 python -m training.synthesize configure-in-scene `
   --image training/synthesis/in-scene/hallway-01.jpg `
@@ -174,6 +242,17 @@ when the original photograph shows blank black material there.
 Stand templates must be tightly cropped RGBA PNGs with genuine transparency. Register their target
 and visible bullseye surfaces once:
 
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.synthesize configure-template \
+  --image training/synthesis/stand-templates/right-facing.png \
+  --output training/annotations/synthesis/right-facing-template.json \
+  --bullseyes 1
+```
+
+**PowerShell (Windows):**
+
 ```powershell
 python -m training.synthesize configure-template `
   --image training/synthesis/stand-templates/right-facing.png `
@@ -183,6 +262,21 @@ python -m training.synthesize configure-template `
 
 Supply stands in far-to-near order. Exactly one must be `primary`; the rest are `distractor` stands.
 The interactive windows register the destination quadrilateral for each tightly cropped template.
+
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.synthesize configure-scene \
+  --background training/synthesis/backgrounds/lab-03.jpg \
+  --output training/annotations/synthesis/lab-03-multi.json \
+  --recipe-id lab-03-multi \
+  --source-group lab-session-b \
+  --stand distractor:training/annotations/synthesis/right-facing-template.json \
+  --stand distractor:training/annotations/synthesis/left-facing-template.json \
+  --stand primary:training/annotations/synthesis/front-template.json
+```
+
+**PowerShell (Windows):**
 
 ```powershell
 python -m training.synthesize configure-scene `
@@ -201,6 +295,21 @@ ones according to the supplied order. To move, reorder, or remove stands, rerun 
 desired far-to-near `--stand` list and the scoped `--overwrite` flag.
 
 Generate the variants and inspect their annotations:
+
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.synthesize generate \
+  --recipe training/annotations/synthesis/lab-03-multi.json \
+  --custom-patterns training/synthesis/custom-patterns
+
+python -m training.synthesize audit \
+  --images training/training_set/synthetic \
+  --annotations training/annotations/task1/synthetic \
+  --output training/.generated/synthesis/dataset-audit.jpg
+```
+
+**PowerShell (Windows):**
 
 ```powershell
 python -m training.synthesize generate `
@@ -238,6 +347,16 @@ the pattern, objects, recipe hash, and `source_group`. Existing outputs require 
 Use Python 3.10 on the training PC. Install the accelerator-specific PyTorch build before the
 remaining training packages. From `image-rec/`:
 
+**Bash (Linux/macOS):**
+
+```bash
+python3.10 -m venv .venv-training
+source .venv-training/bin/activate
+python -m pip install --upgrade pip
+```
+
+**PowerShell (Windows):**
+
 ```powershell
 py -3.10 -m venv .venv-training
 .\.venv-training\Scripts\Activate.ps1
@@ -249,11 +368,27 @@ the assumed Radeon RX 9070 XT, select the supported ROCm PyTorch command for the
 version from [AMD's ROCm PyTorch guide](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html),
 then install the ROCm profile:
 
+**Bash (Linux with ROCm):**
+
+```bash
+python -m pip install -r requirements-training-rocm.txt
+```
+
+**PowerShell (Windows):**
+
 ```powershell
 python -m pip install -r requirements-training-rocm.txt
 ```
 
 Verify the GPU environment before training:
+
+**Bash (Linux CUDA/ROCm host):**
+
+```bash
+python -c 'import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0)); print(torch.version.hip)'
+```
+
+**PowerShell (Windows):**
 
 ```powershell
 python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0)); print(torch.version.hip)"
@@ -277,6 +412,15 @@ name. For the RX 9070 XT, `--backend rocm` is a useful smoke test before a long 
 
 Validation must pass before splitting or training:
 
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.validate --task task1
+python -m training.validate --task task2
+```
+
+**PowerShell (Windows):**
+
 ```powershell
 python -m training.validate --task task1
 python -m training.validate --task task2
@@ -286,6 +430,15 @@ It rejects missing/TODO/empty annotations, malformed or out-of-frame boxes, inva
 undecodable images, duplicate image contents, and classes with no examples.
 
 Preparation repeats validation and creates deterministic splits:
+
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.prepare --task task1
+python -m training.prepare --task task2
+```
+
+**PowerShell (Windows):**
 
 ```powershell
 python -m training.prepare --task task1
@@ -306,12 +459,29 @@ or annotation set changes.
 
 These commands validate and prepare again before starting Ultralytics:
 
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.train --task task1
+python -m training.train --task task2
+```
+
+**PowerShell (Windows):**
+
 ```powershell
 python -m training.train --task task1
 python -m training.train --task task2
 ```
 
 Useful controlled overrides are available, and are written to each run's metadata:
+
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.train --task task2 --backend cpu --epochs 5 --batch-size 4
+```
+
+**PowerShell (Windows):**
 
 ```powershell
 python -m training.train --task task2 --backend cpu --epochs 5 --batch-size 4
@@ -331,6 +501,16 @@ Task 1's best weights are normally copied manually from its run directory to
 ## Export Task 2 as full INT8 TFLite
 
 After selecting Task 2's best checkpoint:
+
+**Bash (Linux/macOS):**
+
+```bash
+python -m training.export_int8 \
+  --weights training/runs/task2/yolov8n-arrows/weights/best.pt \
+  --publish
+```
+
+**PowerShell (Windows):**
 
 ```powershell
 python -m training.export_int8 `
