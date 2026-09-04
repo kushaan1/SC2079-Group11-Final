@@ -78,6 +78,45 @@ For a robust first dataset, target 60–100 distinct environments across at leas
 Keep a separate set of real photographs containing physically printed fuzzed glyphs for final
 acceptance testing.
 
+#### How to choose source groups
+
+A source group is the smallest collection of samples that must stay in one dataset split. The
+splitter assigns the complete group to train, validation, or test; it never divides a group between
+them. This makes validation and test results more honest by preventing the model from seeing a
+near-duplicate of an evaluation scene during training.
+
+Use the same `source_group` for:
+
+- photos from the same capture session with substantially the same location, camera setup, and
+  surroundings;
+- adjacent frames or burst photos, even when their framing or lighting differs slightly;
+- crops, augmentations, or other derivatives of the same original image; and
+- every synthetic scene generated from backgrounds belonging to that capture group.
+
+Start a new group when the images were captured independently—for example, in another location, on
+another visit, or after a meaningful change to the camera setup or environment. Group by shared
+visual origin, not by class, recipe, filename, or desired split. Do not create a different group for
+each generated sample, because that would allow variants of the same background into multiple
+splits.
+
+Use short, stable, descriptive names such as `hallway-session-a`, `lab-daylight-b`, or
+`canteen-evening-c`. Choose the group before configuring synthesis and pass it with
+`--source-group`; generation copies that value into every sample's `.meta.json` provenance record.
+If a manually labelled real image has no `.meta.json`, it is treated as its own independent group.
+For related real images, add same-stem provenance files and give them the same non-empty group:
+
+```json
+{
+  "schema_version": "1.0",
+  "source_group": "hallway-session-a"
+}
+```
+
+Because Task 1 requires every class in train, validation, and test, each class must occur in at
+least three independent source groups. More than three is strongly preferred: group atomicity may
+move the final sample counts away from the nominal 70/20/10 ratios, and extra groups give the
+splitter more freedom to balance them.
+
 ### Step 2: build and audit glyph masks
 
 The existing glyph tiles for IDs 11–40 contain a diagonal-stripe background. Extract only their
