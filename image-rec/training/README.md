@@ -29,7 +29,7 @@ The complete loop is:
 2. Extract and visually audit the 30 black glyph masks.
 3. Register the replaceable card and baked bull's-eye surfaces on each stand orientation.
 4. Calibrate perspective for each background with two floor-contact clicks.
-5. Generate 30 balanced images from every background recipe.
+5. Generate 90 balanced images from every background recipe.
 6. Audit the rendered images, labels, placement, and provenance.
 7. Validate Task 1 annotations.
 8. Prepare grouped train, validation, and test splits.
@@ -257,36 +257,45 @@ Get-ChildItem training/annotations/synthesis/*-auto.json | ForEach-Object {
 }
 ```
 
-Each recipe deterministically creates 30 images:
+Each recipe deterministically creates 90 images:
 
-- every target ID 11–40 is the primary target once;
-- primary orientations are balanced at ten front, ten left, and ten right;
-- stand counts are balanced at ten images each with one, two, and three stands;
+- every target ID 11–40 is the primary target three times;
+- each target appears once at a far, medium, and near primary distance;
+- each target appears once in each primary orientation: front, left, and right;
+- each target appears once with one, two, and three total stands;
 - distractor glyphs and fuzzing patterns rotate independently of the primary;
 - the primary is always the largest and is rendered nearest;
-- primary stands occupy 45–65% of image height and distractors 18–42%;
-- the calibrated perspective curve uses a 1.7 exponent, shrinking distant stands more quickly;
-- nine images per recipe contain one lateral edge crop with 75–90% of that stand visible;
+- primary apparent heights are split equally between far (30–44%), medium (44–54%), and near
+  (54–65%) bands, while distractors occupy 18–42%;
+- the calibrated perspective curve uses a 2.2 exponent, increasing the scale falloff for distant
+  stands;
+- 27 images per recipe contain one lateral edge crop with 75–90% of that stand visible;
 - remaining stands stay fully in frame, with at most three degrees of roll and soft contact shadows.
 
 Automatic placement retains a maximum overlap of 0.45. If the greedy placement of one stand reaches
 a dead end, the generator deterministically retries the complete layout, including the earlier stand
-positions, instead of relaxing that ceiling. All 30 variants are staged before they are published.
+positions, instead of relaxing that ceiling. All 90 variants are staged before they are published.
 If any variants still fail, the command checks the remaining variants, reports every failed sample
 and target ID together, and leaves the recipe's existing output set untouched rather than publishing
 a partial scene directory.
 
 The eight built-in pattern families are stripes, checks, dots, scales, diamonds, camouflage,
 marble/noise, and weave. Their scale, angle, phase, intensity, and restrained colour vary with the
-recipe seed. Pattern assignment is balanced independently of class. Darker patterns are allowed,
-but their background luma must remain at least 48 on the 0–255 scale so a black glyph retains a
-minimum usable contrast.
+recipe seed. Pattern assignment rotates independently of class. Every built-in or custom texture
+receives a deterministic 0.55–0.80 exposure multiplier so the black glyph has less contrast against
+the fuzzing pattern. The post-transform background luma floor is 24 on the 0–255 scale, permitting
+much darker card regions while preventing them from collapsing completely to black.
 
 Optional custom patterns must be pattern-only images that decode, tile cleanly, contain sufficient
-variation, and have no pixel below the same luma floor. Every generated image has a mirrored YOLO
-`.txt` label and `.meta.json` provenance record containing its recipe hash, `source_group`, objects,
-patterns, contrast floor, and generation parameters. Existing outputs are refused unless the
-specific generation command includes `--overwrite`.
+variation, and have no source pixel below the same luma floor. Every generated image has a mirrored
+YOLO `.txt` label and `.meta.json` provenance record containing its recipe hash, `source_group`,
+objects, primary distance band, pattern exposure, contrast floor, and generation parameters.
+Existing outputs are refused unless the specific generation command includes `--overwrite`.
+
+Changing a recipe changes its `scene-<hash>` output directory. Before regenerating a changed recipe,
+move or remove its old scene directory from both `training/training_set/synthetic/` and
+`training/annotations/task1/synthetic/`; otherwise validation will include both the old and new
+variants. Keep the two trees in sync, then run generation, audit, validation, and preparation again.
 
 When `training/synthesis/custom-patterns/` exists and contains reviewed textures, add
 `--custom-patterns training/synthesis/custom-patterns` to each `generate` command.
