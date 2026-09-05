@@ -27,11 +27,21 @@
     "maximum_stands": 3,
     "far_stand_height": 0.18,
     "near_stand_height": 0.65,
-    "perspective_exponent": 1.7,
-    "primary_height_range": [
-      0.45,
-      0.65
-    ],
+    "perspective_exponent": 2.2,
+    "primary_height_bands": {
+      "far": [
+        0.3,
+        0.44
+      ],
+      "medium": [
+        0.44,
+        0.54
+      ],
+      "near": [
+        0.54,
+        0.65
+      ]
+    },
     "distractor_height_range": [
       0.18,
       0.42

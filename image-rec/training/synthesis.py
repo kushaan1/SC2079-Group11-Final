@@ -22,6 +22,9 @@ from .yolo import format_yolo_row
 SCHEMA_VERSION = "1.0"
 TARGET_IDS = tuple(range(11, 41))
 BULLSEYE_ID = 41
+PRIMARY_DISTANCE_BANDS = ("far", "medium", "near")
+VARIANTS_PER_TARGET = len(PRIMARY_DISTANCE_BANDS)
+DEFAULT_VARIANT_COUNT = len(TARGET_IDS) * VARIANTS_PER_TARGET
 PATTERN_FAMILIES = (
     "stripes",
     "checks",
@@ -37,15 +40,20 @@ IMAGE_SUFFIXES = frozenset((".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".
 DEFAULT_CARD_SIZE = 640
 DEFAULT_MIN_VISIBLE_FRACTION = 0.20
 DEFAULT_MIN_PRIMARY_FRACTION = 0.50
-MIN_GLYPH_BACKGROUND_LUMA = 48
+MIN_GLYPH_BACKGROUND_LUMA = 24
+PATTERN_EXPOSURE_RANGE = (0.55, 0.80)
 DEFAULT_AUTO_PLACEMENT = {
     "placement_model": "perspective-v2",
     "minimum_stands": 1,
     "maximum_stands": 3,
     "far_stand_height": 0.18,
     "near_stand_height": 0.65,
-    "perspective_exponent": 1.70,
-    "primary_height_range": [0.45, 0.65],
+    "perspective_exponent": 2.20,
+    "primary_height_bands": {
+        "far": [0.30, 0.44],
+        "medium": [0.44, 0.54],
+        "near": [0.54, 0.65],
+    },
     "distractor_height_range": [0.18, 0.42],
     "minimum_depth_gap": 0.025,
     "edge_crop_fraction": 0.30,
@@ -286,6 +294,11 @@ def render_pattern_card(
     )
     parameters = dict(parameters)
     parameters["rotation_degrees"] = rotation
+    exposure_scale = float(transform_rng.uniform(*PATTERN_EXPOSURE_RANGE))
+    pattern = np.clip(pattern.astype(np.float32) * exposure_scale, 0, 255).astype(
+        np.uint8
+    )
+    parameters["exposure_scale"] = exposure_scale
     pattern = _enforce_minimum_luma(pattern, MIN_GLYPH_BACKGROUND_LUMA)
     parameters["minimum_background_luma"] = MIN_GLYPH_BACKGROUND_LUMA
     parameters["observed_minimum_background_luma"] = int(
@@ -551,9 +564,30 @@ def _effective_auto_placement(raw: Any) -> Dict[str, Any]:
     if supplied.get("placement_model") != "perspective-v2":
         supplied.pop("far_stand_height", None)
         supplied.pop("distractor_height_range", None)
+    legacy_primary_range = supplied.pop("primary_height_range", None)
+    if "primary_height_bands" not in supplied and legacy_primary_range is not None:
+        supplied["primary_height_bands"] = _split_primary_height_range(
+            legacy_primary_range
+        )
     settings = dict(DEFAULT_AUTO_PLACEMENT)
     settings.update(supplied)
     return settings
+
+
+def _split_primary_height_range(raw: Any) -> Dict[str, List[float]]:
+    try:
+        lower, upper = (float(value) for value in raw)
+    except (TypeError, ValueError) as error:
+        raise SynthesisError("primary_height_range must contain two numbers") from error
+    width = (upper - lower) / len(PRIMARY_DISTANCE_BANDS)
+    boundaries = [
+        lower + width * index
+        for index in range(len(PRIMARY_DISTANCE_BANDS) + 1)
+    ]
+    return {
+        name: [boundaries[index], boundaries[index + 1]]
+        for index, name in enumerate(PRIMARY_DISTANCE_BANDS)
+    }
 
 
 def _validate_auto_placement(raw: Any) -> None:
@@ -571,14 +605,21 @@ def _validate_auto_placement(raw: Any) -> None:
         exponent = float(raw["perspective_exponent"])
         depth_gap = float(raw["minimum_depth_gap"])
         edge_fraction = float(raw["edge_crop_fraction"])
-        ranges = [
-            tuple(float(value) for value in raw[name])
-            for name in (
-                "primary_height_range",
-                "distractor_height_range",
-                "edge_visible_fraction_range",
-            )
+        primary_bands = raw["primary_height_bands"]
+        if not isinstance(primary_bands, Mapping) or set(primary_bands) != set(
+            PRIMARY_DISTANCE_BANDS
+        ):
+            raise TypeError
+        primary_ranges = [
+            tuple(float(value) for value in primary_bands[name])
+            for name in PRIMARY_DISTANCE_BANDS
         ]
+        distractor_range = tuple(
+            float(value) for value in raw["distractor_height_range"]
+        )
+        edge_visible_range = tuple(
+            float(value) for value in raw["edge_visible_fraction_range"]
+        )
     except (KeyError, TypeError, ValueError) as error:
         raise SynthesisError("placement settings are incomplete or invalid") from error
     if not 1 <= minimum <= maximum <= 3:
@@ -592,18 +633,26 @@ def _validate_auto_placement(raw: Any) -> None:
         raise SynthesisError(
             "automatic stand, layout, roll, or overlap settings are invalid"
         )
+    ranges = primary_ranges + [distractor_range, edge_visible_range]
     if any(len(values) != 2 or not 0.0 < values[0] <= values[1] <= 1.0 for values in ranges):
         raise SynthesisError("automatic placement ranges must be ordered fractions in (0, 1]")
-    primary_range, distractor_range, edge_visible_range = ranges
+    if any(
+        primary_ranges[index][1] > primary_ranges[index + 1][0]
+        for index in range(len(primary_ranges) - 1)
+    ):
+        raise SynthesisError("primary height bands must be ordered and non-overlapping")
     if not 0.0 < far_height < near_height <= 1.0:
         raise SynthesisError("far and near stand heights must be increasing fractions")
     if raw.get("placement_model") != "perspective-v2" or not 1.0 < exponent <= 3.0:
         raise SynthesisError("automatic placement requires perspective-v2 with exponent in (1, 3]")
     if not far_height <= distractor_range[0] <= distractor_range[1] <= near_height:
         raise SynthesisError("distractor heights must fit the calibrated perspective range")
-    if not far_height <= primary_range[0] <= primary_range[1] <= near_height:
-        raise SynthesisError("primary heights must fit the calibrated perspective range")
-    if primary_range[0] <= distractor_range[0]:
+    if any(
+        not far_height <= primary_range[0] <= primary_range[1] <= near_height
+        for primary_range in primary_ranges
+    ):
+        raise SynthesisError("primary height bands must fit the calibrated perspective range")
+    if primary_ranges[0][0] <= distractor_range[0]:
         raise SynthesisError("the primary height range must start above the smallest distractor")
     if not 0.0 < depth_gap < 0.25 or not 0.0 <= edge_fraction <= 0.5:
         raise SynthesisError("automatic depth gap or edge crop fraction is invalid")
@@ -674,11 +723,13 @@ def render_recipe_variant(
     min_primary_fraction: float = DEFAULT_MIN_PRIMARY_FRACTION,
 ) -> RenderedSample:
     validate_recipe(recipe, root)
-    if not 0 <= variant_index < len(TARGET_IDS):
-        raise SynthesisError("variant_index must be in 0..29")
+    if not 0 <= variant_index < DEFAULT_VARIANT_COUNT:
+        raise SynthesisError(
+            "variant_index must be in 0..{}".format(DEFAULT_VARIANT_COUNT - 1)
+        )
     if not 0.0 < min_visible_fraction <= 1.0 or not 0.0 < min_primary_fraction <= 1.0:
         raise SynthesisError("visibility fractions must be in (0, 1]")
-    primary_id = TARGET_IDS[variant_index]
+    primary_id = TARGET_IDS[variant_index % len(TARGET_IDS)]
     scene_key = str(recipe["recipe_id"])
     names = available_pattern_names(custom_patterns)
     seed = int(recipe.get("seed", 2079))
@@ -771,22 +822,23 @@ def _automatic_variant_recipe_once(
 ) -> Mapping[str, Any]:
     minimum = int(settings["minimum_stands"])
     maximum = int(settings["maximum_stands"])
-    stand_count = minimum + ((variant_index + stable_seed(recipe["recipe_id"], "count")) % (maximum - minimum + 1))
-    orientation_schedule = np.tile(np.arange(len(STAND_ORIENTATIONS)), 10)
-    orientation_rng = np.random.default_rng(stable_seed(recipe["recipe_id"], "orientation"))
-    orientation_rng.shuffle(orientation_schedule)
-    primary_orientation = STAND_ORIENTATIONS[int(orientation_schedule[variant_index])]
+    plan = _automatic_variant_plan(
+        str(recipe["recipe_id"]), variant_index, minimum, maximum
+    )
+    stand_count = int(plan["stand_count"])
+    primary_orientation = str(plan["primary_orientation"])
 
-    edge_schedule = np.arange(len(TARGET_IDS))
-    edge_rng = np.random.default_rng(stable_seed(recipe["recipe_id"], "edge-crop"))
-    edge_rng.shuffle(edge_schedule)
-    edge_count = int(round(len(TARGET_IDS) * float(settings["edge_crop_fraction"])))
-    edge_variant = variant_index in set(int(value) for value in edge_schedule[:edge_count])
+    edge_variant = variant_index in _automatic_edge_variants(
+        str(recipe["recipe_id"]), float(settings["edge_crop_fraction"])
+    )
     cropped_distractor = (
         int(rng.integers(0, stand_count - 1)) if edge_variant and stand_count > 1 else None
     )
 
-    primary_range = tuple(settings["primary_height_range"])
+    primary_distance_band = str(plan["primary_distance_band"])
+    primary_range = tuple(
+        settings["primary_height_bands"][primary_distance_band]
+    )
     primary_height = float(rng.uniform(float(primary_range[0]), float(primary_range[1])))
     primary_bottom = _perspective_bottom_for_height(
         primary_height, recipe["perspective"], settings
@@ -873,6 +925,7 @@ def _automatic_variant_recipe_once(
         "destination_quad": primary_quad,
         "apparent_height": primary_height,
         "ground_contact_y": primary_bottom,
+        "distance_band": primary_distance_band,
         "edge_cropped": primary_edge_crop,
         "allowed_outside_fraction": _outside_fraction(primary_quad),
     }
@@ -887,6 +940,44 @@ def _automatic_variant_recipe_once(
         "stands": distractor_stands + [primary],
         "contact_shadow": dict(recipe.get("contact_shadow", DEFAULT_CONTACT_SHADOW)),
     }
+
+
+def _automatic_variant_plan(
+    recipe_id: str,
+    variant_index: int,
+    minimum_stands: int,
+    maximum_stands: int,
+) -> Mapping[str, Any]:
+    target_index = variant_index % len(TARGET_IDS)
+    repetition_index = variant_index // len(TARGET_IDS)
+    stand_count = minimum_stands + (
+        (
+            target_index
+            + repetition_index
+            + stable_seed(recipe_id, "count")
+        )
+        % (maximum_stands - minimum_stands + 1)
+    )
+    orientation_index = (
+        target_index
+        + repetition_index
+        + stable_seed(recipe_id, "orientation")
+    ) % len(STAND_ORIENTATIONS)
+    return {
+        "target_index": target_index,
+        "repetition_index": repetition_index,
+        "primary_distance_band": PRIMARY_DISTANCE_BANDS[repetition_index],
+        "primary_orientation": STAND_ORIENTATIONS[orientation_index],
+        "stand_count": stand_count,
+    }
+
+
+def _automatic_edge_variants(recipe_id: str, edge_fraction: float) -> frozenset:
+    edge_schedule = np.arange(DEFAULT_VARIANT_COUNT)
+    edge_rng = np.random.default_rng(stable_seed(recipe_id, "edge-crop"))
+    edge_rng.shuffle(edge_schedule)
+    edge_count = int(round(DEFAULT_VARIANT_COUNT * edge_fraction))
+    return frozenset(int(value) for value in edge_schedule[:edge_count])
 
 
 def _sample_automatic_quad(
@@ -1246,7 +1337,7 @@ def generate_recipe(
     scene_hash = hashlib.sha256(json.dumps(recipe, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:12]
     relative_dir = Path("scene-{}".format(scene_hash))
     planned: List[Tuple[Path, Path, Path]] = []
-    for variant_index in range(len(TARGET_IDS)):
+    for variant_index in range(DEFAULT_VARIANT_COUNT):
         stem = "sample-{:03d}".format(variant_index)
         planned.append((output_images / relative_dir / (stem + ".jpg"), output_annotations / relative_dir / (stem + ".txt"), output_annotations / relative_dir / (stem + ".meta.json")))
     existing = [path for trio in planned for path in trio if path.exists()]
@@ -1263,7 +1354,7 @@ def generate_recipe(
         staged_annotations = Path(staged_annotation_dir)
         staged: List[Tuple[Path, Path, Path]] = []
         failures: List[Tuple[int, str]] = []
-        for variant_index in range(len(TARGET_IDS)):
+        for variant_index in range(DEFAULT_VARIANT_COUNT):
             stem = "sample-{:03d}".format(variant_index)
             image_path = staged_images / (stem + ".jpg")
             label_path = staged_annotations / (stem + ".txt")
@@ -1290,7 +1381,14 @@ def generate_recipe(
                     "source_group": str(recipe["source_group"]),
                     "recipe_id": str(recipe["recipe_id"]),
                     "variant_index": variant_index,
-                    "primary_competition_id": TARGET_IDS[variant_index],
+                    "primary_competition_id": TARGET_IDS[
+                        variant_index % len(TARGET_IDS)
+                    ],
+                    "primary_distance_band": PRIMARY_DISTANCE_BANDS[
+                        variant_index // len(TARGET_IDS)
+                    ]
+                    if recipe["mode"] == "auto_background"
+                    else None,
                     "objects": list(rendered.objects),
                 }
                 meta_path.write_text(
@@ -1302,13 +1400,15 @@ def generate_recipe(
         if failures:
             details = "; ".join(
                 "sample-{:03d} (ID {}): {}".format(
-                    variant_index, TARGET_IDS[variant_index], message
+                    variant_index,
+                    TARGET_IDS[variant_index % len(TARGET_IDS)],
+                    message,
                 )
                 for variant_index, message in failures
             )
             raise SynthesisError(
                 "{} of {} variants failed; no outputs were written: {}".format(
-                    len(failures), len(TARGET_IDS), details
+                    len(failures), DEFAULT_VARIANT_COUNT, details
                 )
             )
         written: List[Path] = []

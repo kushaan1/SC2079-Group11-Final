@@ -22,17 +22,29 @@
     ]
   },
   "placement": {
+    "placement_model": "perspective-v2",
     "minimum_stands": 1,
     "maximum_stands": 3,
-    "far_stand_height": 0.25,
+    "far_stand_height": 0.18,
     "near_stand_height": 0.65,
-    "primary_height_range": [
-      0.45,
-      0.65
-    ],
+    "perspective_exponent": 2.2,
+    "primary_height_bands": {
+      "far": [
+        0.3,
+        0.44
+      ],
+      "medium": [
+        0.44,
+        0.54
+      ],
+      "near": [
+        0.54,
+        0.65
+      ]
+    },
     "distractor_height_range": [
-      0.25,
-      0.5
+      0.18,
+      0.42
     ],
     "minimum_depth_gap": 0.025,
     "edge_crop_fraction": 0.3,

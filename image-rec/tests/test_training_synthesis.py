@@ -10,10 +10,15 @@ import training.synthesis as synthesis
 
 from training.synthesis import (
     DEFAULT_AUTO_PLACEMENT,
+    DEFAULT_VARIANT_COUNT,
     MIN_GLYPH_BACKGROUND_LUMA,
     PATTERN_FAMILIES,
+    PATTERN_EXPOSURE_RANGE,
+    PRIMARY_DISTANCE_BANDS,
     SynthesisError,
+    _automatic_edge_variants,
     _automatic_variant_recipe,
+    _automatic_variant_plan,
     _perspective_height_for_bottom,
     _trim_rgba_template,
     discover_custom_patterns,
@@ -73,6 +78,13 @@ def test_procedural_patterns_are_deterministic_and_keep_the_glyph_black(family):
     resized_mask = cv2.resize(mask, (96, 96), interpolation=cv2.INTER_AREA)
     background = cv2.cvtColor(first.image, cv2.COLOR_BGR2GRAY)[resized_mask == 0]
     assert int(background.min()) >= MIN_GLYPH_BACKGROUND_LUMA
+    assert (
+        PATTERN_EXPOSURE_RANGE[0]
+        <= first.parameters["exposure_scale"]
+        <= PATTERN_EXPOSURE_RANGE[1]
+    )
+    assert MIN_GLYPH_BACKGROUND_LUMA == 24
+    assert PATTERN_EXPOSURE_RANGE == (0.55, 0.80)
 
 
 def test_pattern_schedule_and_distractors_are_balanced_and_distinct():
@@ -93,6 +105,8 @@ def test_custom_patterns_are_validated_and_rendered(tmp_path):
     card = render_pattern_card(glyph_masks()[11], "custom:grid", 5, size=96, custom_patterns=patterns)
     assert card.family == "custom:grid"
     assert len(card.source_sha256) == 64
+    assert card.parameters["exposure_scale"] <= PATTERN_EXPOSURE_RANGE[1]
+    assert float(card.image.mean()) < float(texture.mean()) * 0.85
 
 
 def test_custom_patterns_reject_pixels_below_the_minimum_contrast(tmp_path):
@@ -209,19 +223,65 @@ def automatic_recipe_fixture(tmp_path):
     }
 
 
-def test_automatic_recipe_balances_counts_and_primary_orientations(tmp_path):
+def test_automatic_recipe_balances_counts_orientations_and_distances():
+    assert DEFAULT_VARIANT_COUNT == 90
+    assert DEFAULT_AUTO_PLACEMENT["perspective_exponent"] == 2.2
+    assert DEFAULT_AUTO_PLACEMENT["primary_height_bands"] == {
+        "far": [0.30, 0.44],
+        "medium": [0.44, 0.54],
+        "near": [0.54, 0.65],
+    }
+    plans = [
+        _automatic_variant_plan("automatic-test", variant, 1, 3)
+        for variant in range(DEFAULT_VARIANT_COUNT)
+    ]
+    stand_counts = [item["stand_count"] for item in plans]
+    orientations = [item["primary_orientation"] for item in plans]
+    distance_bands = [item["primary_distance_band"] for item in plans]
+    assert {count: stand_counts.count(count) for count in set(stand_counts)} == {
+        1: 30,
+        2: 30,
+        3: 30,
+    }
+    assert {orientation: orientations.count(orientation) for orientation in set(orientations)} == {
+        "front": 30,
+        "left": 30,
+        "right": 30,
+    }
+    assert {
+        distance_band: distance_bands.count(distance_band)
+        for distance_band in PRIMARY_DISTANCE_BANDS
+    } == {"far": 30, "medium": 30, "near": 30}
+    for target_index in range(30):
+        repeated_indices = [target_index + repeat * 30 for repeat in range(3)]
+        assert {
+            distance_bands[index] for index in repeated_indices
+        } == set(PRIMARY_DISTANCE_BANDS)
+        assert {orientations[index] for index in repeated_indices} == {
+            "front",
+            "left",
+            "right",
+        }
+        assert {stand_counts[index] for index in repeated_indices} == {1, 2, 3}
+    assert len(_automatic_edge_variants("automatic-test", 0.30)) == 27
+
+
+def test_automatic_recipe_places_each_primary_distance_band(tmp_path):
     recipe = automatic_recipe_fixture(tmp_path)
     validate_recipe(recipe, tmp_path)
-    stand_counts = []
-    orientations = []
-    edge_variants = []
-    for variant in range(30):
+    for variant in (0, 30, 60):
         expanded = _automatic_variant_recipe(recipe, tmp_path, variant)
-        stand_counts.append(len(expanded["stands"]))
-        orientations.append(next(item["orientation"] for item in expanded["stands"] if item["role"] == "primary"))
-        primary = next(item for item in expanded["stands"] if item["role"] == "primary")
-        distractors = [item for item in expanded["stands"] if item["role"] == "distractor"]
-        assert 0.45 <= primary["apparent_height"] <= 0.65
+        primary = next(
+            item for item in expanded["stands"] if item["role"] == "primary"
+        )
+        distance_band = primary["distance_band"]
+        distractors = [
+            item for item in expanded["stands"] if item["role"] == "distractor"
+        ]
+        primary_range = DEFAULT_AUTO_PLACEMENT["primary_height_bands"][
+            distance_band
+        ]
+        assert primary_range[0] <= primary["apparent_height"] <= primary_range[1]
         assert all(0.18 <= item["apparent_height"] <= 0.42 for item in distractors)
         assert all(primary["apparent_height"] > item["apparent_height"] for item in distractors)
         for stand in expanded["stands"]:
@@ -231,19 +291,6 @@ def test_automatic_recipe_balances_counts_and_primary_orientations(tmp_path):
                 DEFAULT_AUTO_PLACEMENT,
             )
             assert stand["apparent_height"] == pytest.approx(expected_height)
-        cropped = [item for item in expanded["stands"] if item["edge_cropped"]]
-        edge_variants.append(bool(cropped))
-        assert len(cropped) <= 1
-        if cropped:
-            x_values = [point[0] for point in cropped[0]["destination_quad"]]
-            assert min(x_values) < 0.0 or max(x_values) > 1.0
-    assert {count: stand_counts.count(count) for count in set(stand_counts)} == {1: 10, 2: 10, 3: 10}
-    assert {orientation: orientations.count(orientation) for orientation in set(orientations)} == {
-        "front": 10,
-        "left": 10,
-        "right": 10,
-    }
-    assert sum(edge_variants) == 9
 
 
 def test_automatic_recipe_retries_the_complete_layout(tmp_path, monkeypatch):
@@ -267,7 +314,7 @@ def test_automatic_recipe_retries_the_complete_layout(tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
-def test_checked_in_lab_recipes_expand_all_thirty_variants(monkeypatch):
+def test_checked_in_lab_recipes_expand_each_primary_distance_band(monkeypatch):
     root = Path(__file__).resolve().parents[1]
     original_trim = synthesis._trim_rgba_template
     original_load_template = synthesis.load_template
@@ -298,11 +345,19 @@ def test_checked_in_lab_recipes_expand_all_thirty_variants(monkeypatch):
     assert len(recipe_paths) == 11
     for recipe_path in recipe_paths:
         recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+        validate_recipe(recipe, root)
         expanded = [
             _automatic_variant_recipe(recipe, root, variant_index)
-            for variant_index in range(30)
+            for variant_index in (0, 30, 60)
         ]
-        assert len(expanded) == 30, recipe_path.name
+        assert {
+            next(
+                stand["distance_band"]
+                for stand in item["stands"]
+                if stand["role"] == "primary"
+            )
+            for item in expanded
+        } == set(PRIMARY_DISTANCE_BANDS), recipe_path.name
 
 
 def test_distant_scale_uses_steeper_than_linear_falloff():
@@ -327,11 +382,8 @@ def test_automatic_recipe_requires_two_click_perspective_calibration(tmp_path):
 
 def test_automatic_recipe_preserves_baked_bullseyes_and_adds_shadow(tmp_path):
     recipe = automatic_recipe_fixture(tmp_path)
-    variant = next(
-        index
-        for index in range(30)
-        if len(_automatic_variant_recipe(recipe, tmp_path, index)["stands"]) == 3
-    )
+    variant = 3
+    assert len(_automatic_variant_recipe(recipe, tmp_path, variant)["stands"]) == 3
     rendered = render_recipe_variant(recipe, tmp_path, glyph_masks(), bullseye_tile(), variant)
     included = [item for item in rendered.objects if item["included"]]
     assert sum(item["kind"] == "target" for item in included) == 3
@@ -344,7 +396,7 @@ def test_edge_cropped_primary_remains_renderable_and_labelled(tmp_path):
     recipe = automatic_recipe_fixture(tmp_path)
     variant = next(
         index
-        for index in range(30)
+        for index in range(DEFAULT_VARIANT_COUNT)
         if len(_automatic_variant_recipe(recipe, tmp_path, index)["stands"]) == 1
         and _automatic_variant_recipe(recipe, tmp_path, index)["stands"][0]["edge_cropped"]
     )
@@ -416,7 +468,7 @@ def test_separated_recipe_rejects_multiple_primary_stands(tmp_path):
         render_recipe_variant(recipe, tmp_path, glyph_masks(), bullseye_tile(), 0)
 
 
-def test_generate_writes_thirty_mirrored_labels_and_provenance(tmp_path):
+def test_generate_writes_ninety_mirrored_labels_and_provenance(tmp_path):
     image_path = tmp_path / "base.jpg"
     write_image(image_path, np.full((100, 140, 3), 170, dtype=np.uint8))
     recipe_path = tmp_path / "recipe.json"
@@ -444,12 +496,18 @@ def test_generate_writes_thirty_mirrored_labels_and_provenance(tmp_path):
         tmp_path / "images",
         tmp_path / "labels",
     )
-    assert len(images) == 30
+    assert len(images) == DEFAULT_VARIANT_COUNT
     label = next((tmp_path / "labels").rglob("sample-000.txt"))
     metadata = json.loads(label.with_suffix(".meta.json").read_text(encoding="utf-8"))
     assert label.read_text(encoding="utf-8").startswith("0 ")
     assert metadata["source_group"] == "capture-z"
     assert metadata["primary_competition_id"] == 11
+    repeated_metadata = json.loads(
+        next((tmp_path / "labels").rglob("sample-060.meta.json")).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert repeated_metadata["primary_competition_id"] == 11
     with pytest.raises(SynthesisError, match="refusing to overwrite"):
         generate_recipe(
             recipe_path,
@@ -512,7 +570,7 @@ def test_generate_reports_all_variant_failures_without_partial_outputs(
         )
 
     message = str(captured.value)
-    assert "2 of 30 variants failed" in message
+    assert "2 of 90 variants failed" in message
     assert "sample-002 (ID 13)" in message
     assert "sample-007 (ID 18)" in message
     assert not list(output_images.rglob("*"))

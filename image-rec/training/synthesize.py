@@ -83,7 +83,9 @@ def parse_args() -> argparse.Namespace:
     automatic.add_argument("--left", type=Path, required=True, help="left orientation template JSON")
     automatic.add_argument("--right", type=Path, required=True, help="right orientation template JSON")
 
-    generate = subparsers.add_parser("generate", help="generate all 30 primary-target variants")
+    generate = subparsers.add_parser(
+        "generate", help="generate all 90 balanced primary-target variants"
+    )
     generate.add_argument("--recipe", type=Path, required=True)
     generate.add_argument("--glyph-dir", type=Path, default=DEFAULT_GLYPH_DIR)
     generate.add_argument("--custom-patterns", type=Path)
