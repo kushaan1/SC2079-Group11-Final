@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "mode": "auto_background",
   "recipe_id": "Lab_7-auto",
-  "source_group": "Lab-session-a",
+  "source_group": "Lab-session-c",
   "seed": 2079,
   "background_image": "training/synthesis/backgrounds/Lab_7.jpeg",
   "background_sha256": "5f1f4629e4fea5ae9b9b4b4e834a7f94eb8f661872edd20d40c6e0dac602d1fe",
