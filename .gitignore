@@ -14,6 +14,8 @@ image-rec/captures/
 image-rec/**/models/*
 !image-rec/**/models/.gitkeep
 !image-rec/**/models/*.json
+image-rec/.venv-export
+
 
 # Training datasets and generated ML artifacts (labels/config/manifests stay tracked)
 image-rec/training/**/*.[jJ][pP][gG]
@@ -27,6 +29,8 @@ image-rec/training/**/*.[hH][eE][iI][cC]
 image-rec/training/.generated/
 image-rec/training/runs/
 image-rec/training/exports/
+image-rec/training/annotations/task1
+image-rec/training/annotations/task2
 image-rec/training/**/*.cache
 image-rec/training/**/*.pt
 image-rec/training/**/*.pth
