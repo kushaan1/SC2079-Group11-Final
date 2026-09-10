@@ -13,14 +13,14 @@
     "allow_empty_labels": false
   },
   "training": {
-    "checkpoint": "yolov8n.pt",
+    "checkpoint": "yolov8s.pt",
     "epochs": 100,
     "image_size": 640,
-    "batch_size": 8,
+    "batch_size": 16,
     "patience": 25,
-    "workers": 0,
+    "workers": 4,
     "project": "training/runs/task1",
-    "run_name": "yolov8n-targets",
+    "run_name": "yolov8s-targets",
     "backend_preference": ["cuda", "rocm", "directml", "mps", "cpu"]
   },
   "export": {
