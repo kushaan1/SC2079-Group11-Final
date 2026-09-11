@@ -10,6 +10,7 @@ import com.mdp.grp11.connection.ConnectionRepository
 import com.mdp.grp11.connection.TrafficLine
 import com.mdp.grp11.protocol.Face
 import com.mdp.grp11.protocol.Inbound
+import com.mdp.grp11.protocol.ObstacleEntry
 import com.mdp.grp11.protocol.Outbound
 import com.mdp.grp11.protocol.imageLabel
 import com.mdp.grp11.session.Algorithm
@@ -301,20 +302,33 @@ class ArenaViewModel(
     }
 
     /**
-     * Starts the clock AND sends the task token as one action. A start button
-     * that moves the robot without starting the clock, or the reverse, is worse
-     * than useless mid-run: the operator cannot tell which happened.
+     * Starts the clock AND sends the start message as one action. A start
+     * button that moves the robot without starting the clock, or the reverse,
+     * is worse than useless mid-run: the operator cannot tell which happened.
+     *
+     * The image-rec start is the whole layout plus the chosen planner, and it
+     * is refused - clock untouched, blocks named - while any block has no
+     * face, for the reason [sendArena] gives. The refusal comes BEFORE the
+     * clock is touched: a stopwatch running over a run the robot was never
+     * told to begin is the one thing worse than a run that did not start.
      *
      * The clock is zeroed first because [RunTimer.start] banks the previous
      * elapsed time and counts up from it, so a practice run followed by the
      * scored attempt would otherwise display the sum. Only [kind] is zeroed.
      */
     fun startRun(kind: RunKind) {
+        val start: Outbound = when (kind) {
+            RunKind.Exploration -> {
+                val entries = facedEntries("starting") ?: return
+                Outbound.BeginImageRec(algorithmTokenFor(_algorithm.value), entries)
+            }
+            RunKind.FastestCar -> Outbound.Move(Config.taskTokens.beginFastest)
+        }
         runTimer.reset(kind)
         runTimer.start(kind)
         _runTimes.value = runTimer.times()
         startTicking()
-        move(taskTokenFor(kind))
+        scope.launch { repo.send(start) }
     }
 
     /** Drives the on-screen reading while a run is active. */
@@ -353,8 +367,33 @@ class ArenaViewModel(
         super.onCleared()
     }
 
+    /**
+     * The whole layout as one JSON line - every block with its cell and face,
+     * in id order whatever order they were placed in.
+     *
+     * Refused, with the blocks named, while any block has no face. A planner
+     * handed a layout with a face missing would plan a run that skips that
+     * image or guesses at it, and neither failure is visible until the robot
+     * is already moving. Naming the blocks makes the fix one compass tap each.
+     */
     fun sendArena() {
-        move(Config.taskTokens.sendArena)
+        val entries = facedEntries("sending") ?: return
+        scope.launch { repo.send(Outbound.SendArena(entries)) }
+    }
+
+    /**
+     * Every block as a wire entry, in id order - or null, having told the
+     * operator which blocks still need a face. [verb] finishes the sentence:
+     * "before sending", "before starting".
+     */
+    private fun facedEntries(verb: String): List<ObstacleEntry>? {
+        val blocks = _arena.value.obstacles.sortedBy { it.id }
+        val unfaced = blocks.filter { it.imageFace == null }
+        if (unfaced.isNotEmpty()) {
+            _statusText.value = "Set a face on ${unfaced.joinToString { "B${it.id}" }} before $verb"
+            return null
+        }
+        return blocks.map { ObstacleEntry(it.id, it.cell.x, it.cell.y, it.imageFace!!) }
     }
 
     fun saveLayout(name: String) {
@@ -495,8 +534,9 @@ class ArenaViewModel(
         }
     }
 
-    private fun taskTokenFor(kind: RunKind): String = when (kind) {
-        RunKind.Exploration -> Config.taskTokens.beginExploration
-        RunKind.FastestCar -> Config.taskTokens.beginFastest
+    private fun algorithmTokenFor(algorithm: Algorithm): String = when (algorithm) {
+        Algorithm.Greedy -> Config.algorithmTokens.greedy
+        Algorithm.Optimal -> Config.algorithmTokens.optimal
+        Algorithm.TurnInPlace -> Config.algorithmTokens.turnInPlace
     }
 }

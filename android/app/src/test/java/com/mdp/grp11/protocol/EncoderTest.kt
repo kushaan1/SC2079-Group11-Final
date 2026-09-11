@@ -44,4 +44,44 @@ class EncoderTest {
     @Test fun `move robot does not reuse the inbound verb`() {
         assertTrue(encode(Outbound.MoveRobot(0f, 0f, 0f)).startsWith("MOVEROBOT,"))
     }
+
+    /**
+     * The exact bytes matter here more than anywhere: this is the one message
+     * the RPi parses as JSON rather than splitting on commas, so a stray space
+     * or a quoted number is a different contract, not a cosmetic difference.
+     */
+    @Test fun `send arena is one JSON object with every obstacle`() {
+        val msg = Outbound.SendArena(
+            listOf(
+                ObstacleEntry(1, 10, 6, Face.N),
+                ObstacleEntry(3, 14, 15, Face.E),
+            )
+        )
+        assertEquals(
+            """{"obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":3,"x":14,"y":15,"face":"E"}]}""",
+            encode(msg),
+        )
+    }
+
+    @Test fun `send arena with nothing placed is an empty list, not an absent key`() {
+        assertEquals("""{"obstacles":[]}""", encode(Outbound.SendArena(emptyList())))
+    }
+
+    @Test fun `begin image rec leads with the command, then the algorithm, then the layout`() {
+        val msg = Outbound.BeginImageRec(
+            algorithm = "greedy",
+            obstacles = listOf(ObstacleEntry(1, 10, 6, Face.N), ObstacleEntry(2, 14, 15, Face.E)),
+        )
+        assertEquals(
+            """{"command":"imageRec","algorithm":"greedy","obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}""",
+            encode(msg),
+        )
+    }
+
+    @Test fun `begin image rec on an empty arena still carries the command and algorithm`() {
+        assertEquals(
+            """{"command":"imageRec","algorithm":"optimal","obstacles":[]}""",
+            encode(Outbound.BeginImageRec("optimal", emptyList())),
+        )
+    }
 }

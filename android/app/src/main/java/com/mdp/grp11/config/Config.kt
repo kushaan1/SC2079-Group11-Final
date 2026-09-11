@@ -139,14 +139,32 @@ object Config {
 
     val moveTokens = MoveTokens()
 
-    /** Task-level commands, as distinct from movement. These start a run. */
+    /**
+     * Task-level commands, as distinct from movement. These start a run.
+     *
+     * [imageRec] is not sent bare: it is the `command` value inside the
+     * image-rec start JSON, which carries the algorithm and the whole layout
+     * with it (see `Outbound.BeginImageRec`). [beginFastest] is still a bare
+     * token. SEND ARENA has no token at all - it transmits the layout as JSON.
+     */
     data class TaskTokens(
-        val beginExploration: String = "beginExplore",
+        val imageRec: String = "imageRec",
         val beginFastest: String = "beginFastest",
-        val sendArena: String = "sendArena",
     )
 
     val taskTokens = TaskTokens()
+
+    /**
+     * How each image-rec planner is spelled in the start JSON. camelCase to
+     * match the command value beside it. Respell here, nowhere else.
+     */
+    data class AlgorithmTokens(
+        val greedy: String = "greedy",
+        val optimal: String = "optimal",
+        val turnInPlace: String = "turnInPlace",
+    )
+
+    val algorithmTokens = AlgorithmTokens()
 
     /** Persisted layout format version. Bump on any breaking change to it. */
     const val ARENA_FORMAT_VERSION = "V1"

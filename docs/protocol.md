@@ -45,8 +45,9 @@ arrives rather than acting on a fragment.
 ## 1. Tablet → RPi
 
 Fourteen distinct messages in four groups: three arena verbs, one robot verb,
-seven movement tokens and three task commands. Everything is plain ASCII with
-no spaces around the commas.
+seven movement tokens, one task token and two JSON messages. Everything is
+plain ASCII with no spaces around the commas - except the two JSON messages,
+which are each one line of JSON.
 
 ### 1.1 Arena editing
 
@@ -140,18 +141,77 @@ flush into the arena's bottom-left corner.
 
 ### 1.4 Task control
 
-| Command | Token | Meaning |
+| Command | Sent as | Meaning |
 |---|---|---|
-| Start image recognition | `beginExplore` | Begin Task 1. The tablet starts its own clock in the same action. |
-| Start fastest car | `beginFastest` | Begin Task 2, same. |
-| Send arena | `sendArena` | Re-transmit the whole layout / signal that the arena is final. |
+| Start image recognition | JSON, below | Begin Task 1 with the chosen planner and the whole layout. The tablet starts its own clock in the same action. |
+| Start fastest car | `beginFastest` | Begin Task 2. Bare token, as before. |
 
 **There is no end-run command.** Ending a run stops the tablet's clock and
 sends nothing, because the AMD tool has no slot for it. Say if the RPi needs
 one and we will add it.
 
-**`sendArena` currently sends only the token**, not the layout — the obstacles
-were already streamed as `ADD` lines as they were placed.
+#### Start image recognition
+
+One line of JSON, when the operator presses IMAGE REC. It carries everything
+the planner needs, so the RPi never has to pair a "go" with a layout it
+received earlier:
+
+```json
+{"command":"imageRec","algorithm":"greedy","obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `command` | string | Always `imageRec`. This is what tells the message apart from [SEND ARENA's](#15-send-arena), which has no `command` key. |
+| `algorithm` | string | The planner the operator chose by holding the IMAGE REC button: `greedy`, `optimal` or `turnInPlace`. Default `greedy`. |
+| `obstacles` | array | Exactly the array [SEND ARENA](#15-send-arena) sends: every placed block, **sorted by id**, cells 0–19, `face` one of `N`/`E`/`S`/`W` and never null. |
+
+Key order is fixed - `command`, `algorithm`, `obstacles` - but a JSON parser
+should not depend on it.
+
+**Refused while any block has no face**, exactly as SEND ARENA is: nothing is
+sent, the operator sees `Set a face on B2 before starting`, and **the tablet's
+clock does not start**. So a received start is a complete, faced layout.
+
+**A full sample for the algorithms team** - eight obstacles, one per id:
+
+```json
+{"command":"imageRec","algorithm":"greedy","obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":12,"y":8,"face":"E"},{"id":3,"x":5,"y":15,"face":"S"},{"id":4,"x":15,"y":3,"face":"W"},{"id":5,"x":3,"y":10,"face":"E"},{"id":6,"x":17,"y":17,"face":"S"},{"id":7,"x":8,"y":12,"face":"N"},{"id":8,"x":14,"y":14,"face":"W"}]}
+```
+
+The robot's start pose is **not** included. The tablet knows it (see
+[§1.3](#13-robot-position)) and can add a `robot` object if the planner wants
+it - say so.
+
+### 1.5 Send arena
+
+The whole layout in one line, when the operator presses SEND ARENA. The only
+message that is **JSON** rather than comma fields - hand it to the planner.
+
+```json
+{"obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":3,"x":14,"y":15,"face":"E"}]}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `obstacles` | array | Every placed block, **sorted by id**. Empty array if nothing is placed. |
+| `id` | int | **1–8**, bare - no `B` prefix here, unlike the comma messages. |
+| `x`, `y` | int | Arena cells **0–19**, same units and origin as `ADD` - see [§3](#3-coordinates). |
+| `face` | string | `N` / `E` / `S` / `W`. **Never absent and never null** - see below. |
+
+**Always one line, no whitespace, newline-terminated** like everything else.
+Split on `\n` and each line is a complete document; a pretty-printed object
+would arrive as a dozen fragments.
+
+**Every block has a face, guaranteed.** The tablet refuses to send while any
+placed block has no face set - the operator sees `Set a face on B2, B5 before
+sending` and nothing reaches the wire. So the parser can treat `face` as
+required; a layout with a missing face is a tablet bug, not a case to handle.
+
+**It replaces nothing and retracts nothing.** The `ADD` / `FACE` lines
+streamed while the layout was being built are still the running record; this
+is the same information restated in one place, for a planner that wants the
+whole arena at once rather than a history of edits.
 
 ---
 
@@ -346,8 +406,10 @@ TX  FACE,B2,(10,11),E         operator sets B2's image face
 TX  ADD,B2,(12,11)            B2 dragged two cells right
 TX  MOVEROBOT,1.0,1.0,90.0    operator turns it east on the compass -
                               a heading pick re-sends the CURRENT position
-TX  sendArena                 layout is final
-TX  beginExplore              run starts, tablet clock starts
+TX  {"obstacles":[{"id":1,"x":5,"y":5,"face":"N"},{"id":2,"x":12,"y":11,"face":"E"}]}
+                              SEND ARENA: the whole layout, one line
+TX  {"command":"imageRec","algorithm":"greedy","obstacles":[{"id":1,"x":5,"y":5,"face":"N"},{"id":2,"x":12,"y":11,"face":"E"}]}
+                              IMAGE REC: run starts, tablet clock starts
 RX  MSG,[Moving to obstacle 1]
 RX  ROBOT,1,1,90              robot confirms the pose it was placed at
 RX  ROBOT,1.62,2.40,14        mid-arc: neither cell-aligned nor cardinal
@@ -377,10 +439,12 @@ these, so they are decisions rather than questions.
    chassis?
 
 And one thing nobody has asked yet, flagged because it is larger than either:
-**the entire outbound vocabulary above comes from the AMD debug tool's fixed
-slot names**, not from the RPi. `f`/`r`/`tl`/`tr`/`sl`/`sr`, `beginExplore`,
-`beginFastest` and `sendArena` were taken from AMD's Commands screen. Confirm
-the RPi parser actually speaks them, rather than assuming it does.
+**the outbound token vocabulary above comes from the AMD debug tool's fixed
+slot names**, not from the RPi. `f`/`r`/`tl`/`tr`/`sl`/`sr` and `beginFastest`
+were taken from AMD's Commands screen. Confirm the RPi parser actually speaks
+them, rather than assuming it does. (The two JSON messages - the image-rec
+start in [§1.4](#14-task-control) and SEND ARENA in [§1.5](#15-send-arena) -
+are ours, not AMD's.)
 
 Anything the RPi wants to send that is not `MSG`, `TARGET` or `ROBOT` needs a
 decoder change on our side — send the format and we will add it.

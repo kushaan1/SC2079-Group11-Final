@@ -23,10 +23,10 @@ import com.mdp.grp11.ui.theme.MdpTokens
  *
  * This composable only signals intent - [onStart] carries the [RunKind] the
  * operator picked and [onSendArena] is a bare trigger. It never inlines a
- * command string; the caller (ArenaViewModel) is what maps a [RunKind] to
- * `Config.taskTokens.beginExploration` / `.beginFastest`, and maps
- * [onSendArena] to `Config.taskTokens.sendArena`, so the token vocabulary
- * stays defined in exactly one place.
+ * command string; the caller (ArenaViewModel) is what turns a [RunKind] into
+ * the image-rec start JSON or the `beginFastest` token, and [onSendArena]
+ * into the layout JSON, so the wire vocabulary stays defined in exactly one
+ * place.
  *
  * IMAGE REC also carries the image-rec [algorithm]: shown under the label so
  * the current pick is never hidden, and changed by holding the button, which

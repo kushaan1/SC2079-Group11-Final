@@ -21,4 +21,29 @@ sealed interface Outbound {
      * two would then be indistinguishable in the log.
      */
     data class MoveRobot(val x: Float, val y: Float, val headingDegrees: Float) : Outbound
+
+    /**
+     * The whole layout in one line, for SEND ARENA. The only message that is
+     * JSON rather than comma fields: the RPi hands it to the planner as-is.
+     *
+     * Every entry carries a face. That is the caller's promise, not this
+     * type's check - the ViewModel refuses to build one while a block is
+     * unfaced, and says so to the operator, because a planner given half a
+     * layout plans half a run.
+     */
+    data class SendArena(val obstacles: List<ObstacleEntry>) : Outbound
+
+    /**
+     * Start the image-recognition run: which planner, and the whole layout
+     * it is to plan over, in one line. Replaces a bare start token so the
+     * RPi never has to pair a "go" with a layout it received earlier.
+     *
+     * [algorithm] is already the wire spelling (see `Config.algorithmTokens`);
+     * the protocol layer does not know the session-level enum. Same promise
+     * as [SendArena] about faces: every entry has one, or this is not built.
+     */
+    data class BeginImageRec(val algorithm: String, val obstacles: List<ObstacleEntry>) : Outbound
 }
+
+/** One obstacle as SEND ARENA states it: id, cell, and the face carrying the image. */
+data class ObstacleEntry(val id: Int, val x: Int, val y: Int, val face: Face)

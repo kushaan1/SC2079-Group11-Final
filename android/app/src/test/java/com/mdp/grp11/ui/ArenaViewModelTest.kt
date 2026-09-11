@@ -418,7 +418,7 @@ class ArenaViewModelTest {
 
     // --- Task-start commands and run timers -----------------------------------
 
-    @Test fun `startRun starts the timer and sends the matching task token atomically`() = runTest {
+    @Test fun `startRun starts the timer and sends the image-rec JSON atomically`() = runTest {
         val fake = FakeTransport()
         val vm = connectedViewModel(fake)
 
@@ -426,7 +426,7 @@ class ArenaViewModelTest {
         runCurrent()
 
         assertEquals(RunKind.Exploration, vm.runTimes.value.running)
-        assertEquals(listOf(Config.taskTokens.beginExploration), fake.sent)
+        assertEquals(listOf("""{"command":"imageRec","algorithm":"greedy","obstacles":[]}"""), fake.sent)
 
         // startRun's tick coroutine re-schedules itself forever (while(true) {
         // delay(...) }); runTest drains the shared virtual-time scheduler at
@@ -435,6 +435,51 @@ class ArenaViewModelTest {
         // must also end it before the test body returns.
         vm.endRun()
         runCurrent()
+    }
+
+    @Test fun `startRun for image rec carries the chosen algorithm and every faced block, by id`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))        // B1
+        vm.place(Cell(14, 15))       // B2
+        vm.select(2); vm.pickFace(Face.E)
+        vm.select(1); vm.pickFace(Face.N)
+        vm.selectAlgorithm(Algorithm.TurnInPlace)
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.startRun(RunKind.Exploration)
+        runCurrent()
+
+        assertEquals(
+            listOf("""{"command":"imageRec","algorithm":"turnInPlace","obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}"""),
+            fake.sent.drop(before),
+        )
+
+        vm.endRun()
+        runCurrent()
+    }
+
+    @Test fun `startRun for image rec is refused while a block has no face, and the clock stays stopped`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))        // B1, faced
+        vm.place(Cell(14, 15))       // B2, not faced
+        vm.select(1); vm.pickFace(Face.N)
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.startRun(RunKind.Exploration)
+        runCurrent()
+
+        // Nothing out, and - the part that matters under a stopwatch - no
+        // clock running for a run the robot was never told to begin.
+        assertEquals(before, fake.sent.size)
+        assertNull(vm.runTimes.value.running)
+        assertEquals(0L, vm.runTimes.value.exploration)
+        assertEquals("Set a face on B2 before starting", vm.statusText.value)
     }
 
     @Test fun `startRun for FastestCar sends the fastest token`() = runTest {
@@ -628,14 +673,61 @@ class ArenaViewModelTest {
         )
     }
 
-    @Test fun `sendArena sends the sendArena token`() = runTest {
+    @Test fun `sendArena transmits every obstacle as one JSON line, sorted by id`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        // Placed out of id order on purpose: B1 is placed, removed and B3
+        // takes a cell first, then B1 is re-placed - so the arena list holds
+        // B3 before B1 and the message must not.
+        vm.place(Cell(10, 6))        // B1
+        vm.place(Cell(14, 15))       // B2
+        vm.place(Cell(5, 5))         // B3
+        vm.setObstacle(1, null)      // drop B1
+        vm.setObstacle(1, Cell(10, 6))
+        vm.select(1); vm.pickFace(Face.N)
+        vm.select(2); vm.pickFace(Face.E)
+        vm.select(3); vm.pickFace(Face.S)
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.sendArena()
+        runCurrent()
+
+        assertEquals(
+            listOf("""{"obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"},{"id":3,"x":5,"y":5,"face":"S"}]}"""),
+            fake.sent.drop(before),
+        )
+    }
+
+    @Test fun `sendArena on an empty arena transmits an empty list`() = runTest {
         val fake = FakeTransport()
         val vm = connectedViewModel(fake)
 
         vm.sendArena()
         runCurrent()
 
-        assertEquals(listOf(Config.taskTokens.sendArena), fake.sent)
+        assertEquals(listOf("""{"obstacles":[]}"""), fake.sent)
+    }
+
+    @Test fun `sendArena refuses while any block has no face, naming the blocks`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))        // B1, faced below
+        vm.place(Cell(14, 15))       // B2, no face
+        vm.place(Cell(5, 5))         // B3, no face
+        vm.select(1); vm.pickFace(Face.N)
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.sendArena()
+        runCurrent()
+
+        // Nothing goes out - a planner handed half a layout would plan half
+        // a run - and the status line says exactly which blocks to fix.
+        assertEquals(before, fake.sent.size)
+        assertEquals("Set a face on B2, B3 before sending", vm.statusText.value)
     }
 
     // --- Arena persistence --------------------------------------------------

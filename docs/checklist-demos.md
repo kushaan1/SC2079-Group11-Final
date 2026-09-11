@@ -31,7 +31,7 @@ kind of thing that looks fine to a supervisor watching from across the table.
 | 1 | ~~Anchor: bottom-left cell or centre?~~ **SETTLED — centre.** | The pose names the footprint's **centre**, in decimal cells, heading in degrees clockwise from north. Both `ROBOT,5.55,6.55,20` and legacy `ROBOT,7,2,N` parse, and both mean the centre. | — the RPi team is matching our format | ✅ decided |
 | 2 | Should `FACE` carry the obstacle coordinate? The checklist text demands "target face **and** obstacle coordinate"; the briefing slide shows a format without it. | We send the superset: `FACE,B3,(14,15),E`. | If the RPi parser is written against the slide's shorter format, it may reject or mis-parse every `FACE` line we send. | Y / N — accepts the superset ⬜ |
 | 3 | Must the stitched verification image (Task 1) display **on the Android tablet**, or is the **PC display** sufficient? | This app was built assuming PC. There is no stitched-image screen in the Android module. | If the answer is "must be on Android," that is new scope, not a bug in what exists today — it will not appear in any of the sections below. | Y (PC is fine) / N (needs Android) ⬜ |
-| 4 | **Does the RPi parser actually speak our command vocabulary at all?** | `f`/`r`/`tl`/`tr`/`sl`/`sr`, `beginExplore`, `beginFastest`, `sendArena` were all taken from the **AMD debug tool's** fixed slot names, not from the RPi. Nobody has confirmed the RPi side recognises any of them. | Every outbound command is ignored. The tablet looks fine and the robot does nothing — the single worst failure on this list. | Y / N — confirmed ⬜ |
+| 4 | **Does the RPi parser actually speak our command vocabulary at all?** | `f`/`r`/`tl`/`tr`/`sl`/`sr`, `beginFastest` were all taken from the **AMD debug tool's** fixed slot names, not from the RPi. Nobody has confirmed the RPi side recognises any of them. | Every outbound command is ignored. The tablet looks fine and the robot does nothing — the single worst failure on this list. | Y / N — confirmed ⬜ |
 
 None of these block running the demo below — they change what "correct" looks like for C.10 (#1),
 for whether the RPi actually acts on our `FACE` messages (#2), for whether Task 1's stitched
@@ -101,7 +101,9 @@ Get answers before the supervisor sees this, not during.
 | Outbound | `ADD,B<id>,(<x>,<y>)` | `ADD,B1,(10,6)` |
 | Outbound | `SUB,B<id>` | `SUB,B1` |
 | Outbound | `FACE,B<id>,(<x>,<y>),<N\|E\|S\|W\|NONE>` | `FACE,B3,(14,15),E` |
-| Outbound | movement / task tokens | `f`, `r`, `tl`, `tr`, `sl`, `sr`, `s`, `beginExplore`, `beginFastest`, `sendArena` |
+| Outbound | movement / task tokens | `f`, `b`, `tl`, `tr`, `sl`, `sr`, `s`, `beginFastest` |
+| Outbound | IMAGE REC start, one JSON line | `{"command":"imageRec","algorithm":"greedy","obstacles":[{"id":1,"x":10,"y":6,"face":"N"}]}` |
+| Outbound | SEND ARENA layout, one JSON line | `{"obstacles":[{"id":1,"x":10,"y":6,"face":"N"}]}` |
 | Inbound | `MSG,[<text>]` | `MSG,[Moving]` |
 | Inbound | `TARGET,<id>,<targetId>` or `TARGET,<id>,<targetId>,<face>` | `TARGET,B2,11` / `TARGET,B2,11,N` |
 | Inbound | `ROBOT,<x>,<y>,<face>` | `ROBOT,7,2,E` |
