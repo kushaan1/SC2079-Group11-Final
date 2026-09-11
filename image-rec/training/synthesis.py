@@ -9,7 +9,7 @@ import hashlib
 import json
 import math
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -70,6 +70,12 @@ DEFAULT_CONTACT_SHADOW = {
     "height_fraction": 0.10,
     "blur_fraction": 0.035,
 }
+DEFAULT_SHAKE_BLUR = {
+    "enabled": True,
+    "fraction": 0.30,
+    "length_range_px": [3.0, 5.0],
+    "reference_size_px": 640,
+}
 
 
 class SynthesisError(ValueError):
@@ -106,6 +112,7 @@ class RenderedSample:
     image: np.ndarray
     annotations: Tuple[Tuple[int, float, float, float, float], ...]
     objects: Tuple[Mapping[str, Any], ...]
+    shake_blur: Mapping[str, Any] = field(default_factory=dict)
 
 
 def file_sha256(path: Path) -> str:
@@ -440,6 +447,7 @@ def distractor_ids(primary_id: int, count: int, scene_key: str, variant_index: i
 
 
 def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
+    _effective_shake_blur(recipe.get("shake_blur", {}))
     if recipe.get("schema_version") != SCHEMA_VERSION:
         raise SynthesisError("unsupported synthesis recipe schema_version")
     if not str(recipe.get("recipe_id", "")).strip():
@@ -712,6 +720,61 @@ def _validate_source_hash(path: Path, expected: Any) -> None:
         raise SynthesisError("source hash changed for {}".format(path))
 
 
+def _effective_shake_blur(raw: Mapping[str, Any]) -> Dict[str, Any]:
+    if not isinstance(raw, Mapping) or set(raw) - set(DEFAULT_SHAKE_BLUR):
+        raise SynthesisError("shake_blur must be an object with supported settings")
+    settings = dict(DEFAULT_SHAKE_BLUR, **raw)
+    if not isinstance(settings["enabled"], bool):
+        raise SynthesisError("shake_blur enabled must be a boolean")
+    try:
+        fraction = float(settings["fraction"])
+        low, high = map(float, settings["length_range_px"])
+        reference = float(settings["reference_size_px"])
+    except (TypeError, ValueError):
+        raise SynthesisError("shake_blur requires numeric fraction, length range and reference size")
+    if (not all(math.isfinite(value) for value in (fraction, low, high, reference))
+            or not 0.0 <= fraction <= 1.0 or not 0.0 < low <= high <= reference
+            or reference <= 0.0):
+        raise SynthesisError("shake_blur requires fraction in [0, 1] and 0 < lengths <= reference size")
+    settings.update(fraction=fraction, length_range_px=[low, high], reference_size_px=reference)
+    return settings
+
+
+def _apply_shake_blur(
+    image: np.ndarray, recipe: Mapping[str, Any], variant_index: int
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Integrate a short centred camera translation after all compositing."""
+    settings = _effective_shake_blur(recipe.get("shake_blur", {}))
+    seed = stable_seed(recipe.get("seed", 2079), recipe["recipe_id"], "shake-blur-v1")
+    schedule = np.random.default_rng(seed).permutation(DEFAULT_VARIANT_COUNT)
+    count = int(round(DEFAULT_VARIANT_COUNT * settings["fraction"]))
+    applied = settings["enabled"] and variant_index in schedule[:count]
+    metadata = dict(settings, applied=bool(applied), model="linear-motion-v1")
+    if not applied:
+        return image, metadata
+    rng = np.random.default_rng(stable_seed(seed, variant_index))
+    reference_length = float(rng.uniform(*settings["length_range_px"]))
+    length = reference_length * max(image.shape[:2]) / settings["reference_size_px"]
+    angle = float(rng.uniform(0.0, 180.0))
+    radians = math.radians(angle)
+    # Bilinear splatting gives subpixel motion without rasterised angle jumps.
+    radius = int(math.ceil(length / 2.0)) + 1
+    kernel = np.zeros((2 * radius + 1, 2 * radius + 1), dtype=np.float32)
+    for offset in np.linspace(-length / 2.0, length / 2.0, max(16, int(math.ceil(length * 8)))):
+        x = radius + offset * math.cos(radians)
+        y = radius + offset * math.sin(radians)
+        ix, iy = int(math.floor(x)), int(math.floor(y))
+        dx, dy = x - ix, y - iy
+        kernel[iy:iy + 2, ix:ix + 2] += np.array(
+            [[(1 - dx) * (1 - dy), dx * (1 - dy)], [(1 - dx) * dy, dx * dy]],
+            dtype=np.float32,
+        )
+    kernel /= kernel.sum()
+    blurred = cv2.filter2D(image, -1, kernel, borderType=cv2.BORDER_REFLECT_101)
+    metadata.update(length_px=length, reference_length_px=reference_length, angle_degrees=angle)
+    return blurred, metadata
+
+
 def render_recipe_variant(
     recipe: Mapping[str, Any],
     root: Path,
@@ -772,7 +835,9 @@ def render_recipe_variant(
             custom_patterns,
             seed,
         )
-    return _finalize_sample(base, objects, min_visible_fraction, min_primary_fraction)
+    sample = _finalize_sample(base, objects, min_visible_fraction, min_primary_fraction)
+    image, shake_blur = _apply_shake_blur(sample.image, recipe, variant_index)
+    return RenderedSample(image, sample.annotations, sample.objects, shake_blur)
 
 
 def _automatic_variant_recipe(
@@ -1390,6 +1455,7 @@ def generate_recipe(
                     if recipe["mode"] == "auto_background"
                     else None,
                     "objects": list(rendered.objects),
+                    "shake_blur": dict(rendered.shake_blur),
                 }
                 meta_path.write_text(
                     json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
