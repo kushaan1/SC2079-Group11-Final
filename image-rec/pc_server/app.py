@@ -70,6 +70,17 @@ def create_app(
             LOGGER.exception("Task 1 inference failed for object_id=%s", object_id)
             return _error(jsonify, "inference failed", 500)
 
+    @app.post("/captures/flush")
+    def flush_captures() -> Any:
+        """Wait until every image accepted before this request is durable."""
+
+        try:
+            image_store.flush()
+            return jsonify({"schema_version": SCHEMA_VERSION, "status": "completed"})
+        except Exception:
+            LOGGER.exception("Failed to persist queued captures")
+            return _error(jsonify, "capture persistence failed", 500)
+
     return app
 
 

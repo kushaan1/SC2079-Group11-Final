@@ -57,6 +57,26 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Error'}
+  /captures/flush:
+    post:
+      operationId: flushCaptures
+      description: Wait for all previously accepted raw and annotated capture writes to finish.
+      responses:
+        '200':
+          description: All previously accepted captures are durable and safe to stitch.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema_version, status]
+                properties:
+                  schema_version: {type: string, enum: ['1.0']}
+                  status: {type: string, enum: [completed]}
+        '500':
+          description: At least one queued capture could not be persisted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
 components:
   schemas:
     Detection:

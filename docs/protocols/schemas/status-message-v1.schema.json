@@ -10,5 +10,35 @@
     "type": {"enum": ["status", "detection", "error", "ack"]},
     "timestamp": {"type": "string", "format": "date-time"},
     "payload": {"type": "object"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"type": {"const": "detection"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["object_id", "status", "competition_id"],
+            "additionalProperties": false,
+            "properties": {
+              "object_id": {"type": "string", "minLength": 1},
+              "status": {"enum": ["target", "bullseye", "no_detection"]},
+              "competition_id": {
+                "type": ["integer", "null"],
+                "minimum": 11,
+                "maximum": 40
+              }
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"status": {"const": "target"}}},
+                "then": {"properties": {"competition_id": {"type": "integer"}}},
+                "else": {"properties": {"competition_id": {"type": "null"}}}
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
 }

@@ -26,6 +26,7 @@ class BusterCameraStream:
         self._thread: Optional[threading.Thread] = None
         self._camera: Any = None
         self._raw_capture: Any = None
+        self._failure: Optional[Exception] = None
 
     def start(self) -> "BusterCameraStream":
         if self._thread is not None:
@@ -44,6 +45,7 @@ class BusterCameraStream:
         self._camera.rotation = self.rotation
         self._raw_capture = PiRGBArray(self._camera, size=(self.width, self.height))
         self._stopped.clear()
+        self._failure = None
         self._thread = threading.Thread(target=self._capture_loop, name="buster-camera")
         self._thread.daemon = True
         self._thread.start()
@@ -66,7 +68,10 @@ class BusterCameraStream:
                     self._condition.notify_all()
                 self._raw_capture.truncate(0)
                 self._raw_capture.seek(0)
+        except Exception as error:
+            self._failure = error
         finally:
+            self._stopped.set()
             with self._condition:
                 self._condition.notify_all()
 
@@ -80,6 +85,11 @@ class BusterCameraStream:
                 if remaining is not None and remaining <= 0:
                     raise TimeoutError("timed out waiting for a camera frame")
                 self._condition.wait(remaining)
+            if self._sequence <= after_sequence:
+                message = "camera stream stopped before producing a newer frame"
+                if self._failure is not None:
+                    raise RuntimeError(message) from self._failure
+                raise RuntimeError(message)
             if self._frame is None:
                 raise RuntimeError("camera stream stopped before producing a frame")
             return self._sequence, self._frame.copy()

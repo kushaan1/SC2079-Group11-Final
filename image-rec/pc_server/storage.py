@@ -2,6 +2,7 @@
 
 import atexit
 import re
+import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ class AsyncImageStore:
         self.annotated_dir.mkdir(parents=True, exist_ok=True)
         self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="image-save")
         self._futures: List[Future] = []
+        self._lock = threading.Lock()
         atexit.register(self.close)
 
     def schedule(self, image: Any, result: DetectionResult) -> Tuple[str, str]:
@@ -30,14 +32,17 @@ class AsyncImageStore:
         stem = "{}_{}_{}".format(timestamp, safe_object_id or "object", uuid4().hex[:8])
         raw_path = self.raw_dir / "{}.jpg".format(stem)
         annotated_path = self.annotated_dir / "{}.jpg".format(stem)
-        future = self._executor.submit(
-            self._write_pair,
-            image.copy(),
-            result,
-            raw_path,
-            annotated_path,
-        )
-        self._futures.append(future)
+        with self._lock:
+            if self._executor is None:
+                raise RuntimeError("image store is closed")
+            future = self._executor.submit(
+                self._write_pair,
+                image.copy(),
+                result,
+                raw_path,
+                annotated_path,
+            )
+            self._futures.append(future)
         return str(raw_path), str(annotated_path)
 
     @staticmethod
@@ -77,7 +82,8 @@ class AsyncImageStore:
             raise OSError("failed to save annotated image to {}".format(annotated_path))
 
     def flush(self) -> None:
-        pending, self._futures = self._futures, []
+        with self._lock:
+            pending, self._futures = self._futures, []
         for future in pending:
             future.result()
 

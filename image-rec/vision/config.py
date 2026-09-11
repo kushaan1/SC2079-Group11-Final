@@ -128,6 +128,8 @@ class RPiConfig:
         return config
 
     def validate(self) -> None:
+        if self.request_timeout_seconds <= 0:
+            raise ValueError("VISION_HTTP_TIMEOUT_SECONDS must be positive")
         if min(self.camera_width, self.camera_height, self.camera_framerate) <= 0:
             raise ValueError("camera dimensions and frame rate must be positive")
         if self.camera_rotation not in (0, 90, 180, 270):
@@ -138,5 +140,9 @@ class RPiConfig:
             raise ValueError("VISION_TFLITE_IOU must be between 0 and 1")
         if not 1 <= self.bluetooth_channel <= 30:
             raise ValueError("VISION_BLUETOOTH_CHANNEL must be between 1 and 30")
+        if self.serial_baud <= 0:
+            raise ValueError("VISION_SERIAL_BAUD must be positive")
+        if self.serial_timeout_seconds <= 0:
+            raise ValueError("VISION_SERIAL_TIMEOUT_SECONDS must be positive")
         if not 1 <= self.consensus_required <= self.consensus_window:
             raise ValueError("consensus requires 1 <= required <= window")

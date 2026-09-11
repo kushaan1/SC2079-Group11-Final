@@ -90,19 +90,13 @@ def locate_tflite(exported: Any, fallback_directory: Path) -> Path:
     unique = sorted({path.resolve() for path in candidates if path.is_file()})
     if not unique:
         raise FileNotFoundError("Ultralytics export did not produce a .tflite file")
-    preferred = [
-        path
-        for path in unique
-        if "int8" in path.name.casefold() or "integer_quant" in path.name.casefold()
-    ]
-    selected = preferred or unique
-    if len(selected) != 1:
+    if len(unique) != 1:
         raise RuntimeError(
             "multiple candidate TFLite files found; remove stale exports: {}".format(
-                ", ".join(str(path) for path in selected)
+                ", ".join(str(path) for path in unique)
             )
         )
-    return selected[0]
+    return unique[0]
 
 
 def main() -> None:

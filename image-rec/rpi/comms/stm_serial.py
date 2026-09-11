@@ -1,6 +1,7 @@
 """Newline-delimited JSON transceiver for the STM32 serial link."""
 
 import json
+import math
 import time
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -19,6 +20,15 @@ VALID_ACTIONS = frozenset(
         "execute_right_route",
     )
 )
+ACTION_PARAMETERS = {
+    "stop": (frozenset(), frozenset()),
+    "move": (frozenset(("distance_cm", "speed")), frozenset(("distance_cm", "speed"))),
+    "turn_left": (frozenset(("angle_deg", "speed")), frozenset(("angle_deg", "speed"))),
+    "turn_right": (frozenset(("angle_deg", "speed")), frozenset(("angle_deg", "speed"))),
+    "capture_ready": (frozenset(), frozenset()),
+    "execute_left_route": (frozenset(), frozenset()),
+    "execute_right_route": (frozenset(), frozenset()),
+}
 
 
 class SerialJsonTransport:
@@ -39,7 +49,10 @@ class SerialJsonTransport:
     def send_command(self, action: str, **parameters: Any) -> str:
         if action not in VALID_ACTIONS:
             raise ValueError("unsupported STM action: {}".format(action))
-        message_id = str(parameters.pop("message_id", uuid4().hex))
+        message_id = parameters.pop("message_id", uuid4().hex)
+        if not isinstance(message_id, str) or not message_id:
+            raise ValueError("STM message_id must be a non-empty string")
+        self._validate_parameters(action, parameters)
         message = {
             "version": PROTOCOL_VERSION,
             "message_id": message_id,
@@ -48,6 +61,28 @@ class SerialJsonTransport:
         message.update(parameters)
         self._write(message)
         return message_id
+
+    @staticmethod
+    def _validate_parameters(action: str, parameters: Dict[str, Any]) -> None:
+        allowed, required = ACTION_PARAMETERS[action]
+        supplied = frozenset(parameters)
+        unexpected = supplied - allowed
+        missing = required - supplied
+        if unexpected:
+            raise ValueError(
+                "unsupported parameters for {}: {}".format(action, ", ".join(sorted(unexpected)))
+            )
+        if missing:
+            raise ValueError(
+                "missing parameters for {}: {}".format(action, ", ".join(sorted(missing)))
+            )
+        for name, value in parameters.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("{} must be a finite number".format(name))
+            if not math.isfinite(value) or value < 0:
+                raise ValueError("{} must be a finite non-negative number".format(name))
+        if "angle_deg" in parameters and parameters["angle_deg"] > 180:
+            raise ValueError("angle_deg must not exceed 180")
 
     def send_and_wait(self, action: str, **parameters: Any) -> Dict[str, Any]:
         message_id = self.send_command(action, **parameters)

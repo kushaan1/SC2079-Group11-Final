@@ -2,13 +2,23 @@
 
 import argparse
 import json
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from rpi.camera import BusterCameraStream
 from rpi.comms.android_bt import BluetoothStatusServer
 from rpi.comms.pc_client import PCDetectionClient
 from rpi.comms.stm_serial import SerialJsonTransport
 from vision.config import RPiConfig
+
+
+def android_detection_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    detection = result.get("detection")
+    competition_id = detection.get("competition_id") if detection is not None else None
+    return {
+        "object_id": result["object_id"],
+        "status": result["status"],
+        "competition_id": competition_id,
+    }
 
 
 def run_once(
@@ -24,7 +34,7 @@ def run_once(
     if stm is not None:
         stm.send_and_wait("capture_ready", message_id="capture-{}".format(object_id))
     if android is not None:
-        android.send("detection", result)
+        android.send("detection", android_detection_payload(result))
     return result
 
 
