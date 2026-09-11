@@ -109,7 +109,7 @@ python -m training.train --task task2
 ```
 
 The wrapper validates and prepares again before training. Both configurations default to
-100 epochs; Task 1 uses batch size 8 and Task 2 uses 16. For a short trial:
+100 epochs and batch size 16 for both tasks. For a short trial:
 
 ```sh
 python -m training.train --task task1 --epochs 5 --batch-size 4
@@ -123,7 +123,7 @@ See [options and run records](docs/environment.md#training-options-and-records).
 The command prints the actual run directory. Its `weights/best.pt` is the selected checkpoint,
 and `run-metadata.json` records the environment and data/configuration hashes. Default run names:
 
-- Task 1: `training/runs/task1/yolov8n-targets/`
+- Task 1: `training/runs/task1/yolov8s-targets/`
 - Task 2: `training/runs/task2/yolov8n-arrows/`
 
 Repeated runs may add a numeric suffix. **Use your actual run path in the commands below.**
@@ -133,7 +133,7 @@ Repeated runs may add a numeric suffix. **Use your actual run path in the comman
 Select the checkpoint using validation results, then evaluate the untouched test split:
 
 ```sh
-yolo detect val model=training/runs/task1/yolov8n-targets/weights/best.pt data=training/.generated/task1/data.yaml split=test imgsz=640
+yolo detect val model=training/runs/task1/yolov8s-targets/weights/best.pt data=training/.generated/task1/data.yaml split=test imgsz=640
 ```
 
 ```sh
@@ -148,7 +148,7 @@ nearest-target checks, pipeline tests, and the dataset improvement loop.
 After Task 1 passes acceptance, copy the selected checkpoint to the PC runtime:
 
 ```powershell
-Copy-Item training/runs/task1/yolov8n-targets/weights/best.pt pc_server/models/best.pt
+Copy-Item training/runs/task1/yolov8s-targets/weights/best.pt pc_server/models/best.pt
 ```
 
 In Bash, use `cp` in place of `Copy-Item`.

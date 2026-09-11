@@ -89,9 +89,11 @@ curl --fail -F "object_id=obstacle-1" -F "image=@sample.jpg" http://localhost:40
 
 Every accepted frame is queued to `captures/raw/` and `captures/annotated/`. An annotation contains
 only the arena obstacle ID and the chosen bounding box; it does not overwrite the verification image
-with a predicted class label. At the end of a run, build the mandatory raw-image sheet with:
+with a predicted class label. At the end of a run, first wait for all queued writes, then build the
+mandatory raw-image sheet with:
 
 ```bash
+curl --fail -X POST http://localhost:4000/captures/flush
 python -m pc_server.stitch --input captures/raw --output captures/stitched/task1.jpg
 ```
 
@@ -134,9 +136,11 @@ curl.exe -F "object_id=obstacle-1" -F "image=@sample.jpg" http://localhost:4000/
 
 Every accepted frame is queued to `captures/raw/` and `captures/annotated/`. An annotation contains
 only the arena obstacle ID and the chosen bounding box; it does not overwrite the verification image
-with a predicted class label. At the end of a run, build the mandatory raw-image sheet with:
+with a predicted class label. At the end of a run, first wait for all queued writes, then build the
+mandatory raw-image sheet with:
 
 ```powershell
+curl.exe -X POST http://localhost:4000/captures/flush
 python -m pc_server.stitch --input captures/raw --output captures/stitched/task1.jpg
 ```
 
@@ -163,7 +167,9 @@ and invoking the exact model on the competition Pi is a release gate.
 
 Copy the quantized arrow model to `rpi/models/best_arrows.tflite`. Edit
 `rpi/models/arrow-labels.json` so its list order exactly matches the model's output class indices.
-The included starter assumes class 0 is `Left Arrow` and class 1 is `Right Arrow`.
+The included starter follows the tracked Task 2 registry: class indices 0–3 are `Up Arrow`,
+`Down Arrow`, `Right Arrow`, and `Left Arrow`. Change this file only when the deployed model's
+actual output order differs, and keep it exactly aligned with that model.
 
 Export values from `config/rpi.env.example`, especially the host PC's actual IP address. Then run:
 
@@ -332,6 +338,7 @@ versioned protocols in [`../docs/protocols`](../docs/protocols).
    ```bash
    cd image-rec
    . .venv-pc/bin/activate
+   curl --fail -X POST http://localhost:4000/captures/flush
    python -m pc_server.stitch --input captures/raw --output captures/stitched/task1.jpg
    ```
 
@@ -380,7 +387,7 @@ needed:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -r requirements-dev.txt Flask numpy opencv-python-headless
+python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
@@ -388,7 +395,7 @@ python -m pytest -q
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements-dev.txt Flask numpy opencv-python-headless
+.\.venv\Scripts\python -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python -m pytest -q
 ```
 

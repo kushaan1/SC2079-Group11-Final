@@ -22,7 +22,7 @@ Evaluate only after selecting a checkpoint using validation results. Do not use 
 choose epochs or tune hyperparameters.
 
 ```sh
-yolo detect val model=training/runs/task1/yolov8n-targets/weights/best.pt data=training/.generated/task1/data.yaml split=test imgsz=640
+yolo detect val model=training/runs/task1/yolov8s-targets/weights/best.pt data=training/.generated/task1/data.yaml split=test imgsz=640
 
 yolo detect val model=training/runs/task2/yolov8n-arrows/weights/best.pt data=training/.generated/task2/data.yaml split=test imgsz=320
 ```
@@ -43,7 +43,7 @@ partial edge crops, darker patterns, varied depths, and locations not used as sy
 ```bash
 mkdir -p training/evaluation/task1
 yolo detect predict \
-  model=training/runs/task1/yolov8n-targets/weights/best.pt \
+  model=training/runs/task1/yolov8s-targets/weights/best.pt \
   source=training/evaluation/task1 \
   imgsz=640 \
   save=True save_txt=True save_conf=True
@@ -54,7 +54,7 @@ yolo detect predict \
 ```powershell
 New-Item -ItemType Directory -Force training/evaluation/task1
 yolo detect predict `
-  model=training/runs/task1/yolov8n-targets/weights/best.pt `
+  model=training/runs/task1/yolov8s-targets/weights/best.pt `
   source=training/evaluation/task1 `
   imgsz=640 `
   save=True save_txt=True save_conf=True
@@ -71,13 +71,13 @@ runtime location:
 **Bash (Linux/macOS):**
 
 ```bash
-cp training/runs/task1/yolov8n-targets/weights/best.pt pc_server/models/best.pt
+cp training/runs/task1/yolov8s-targets/weights/best.pt pc_server/models/best.pt
 ```
 
 **PowerShell (Windows):**
 
 ```powershell
-Copy-Item training/runs/task1/yolov8n-targets/weights/best.pt pc_server/models/best.pt
+Copy-Item training/runs/task1/yolov8s-targets/weights/best.pt pc_server/models/best.pt
 ```
 
 Export the selected Task 2 checkpoint as full INT8 TFLite:
