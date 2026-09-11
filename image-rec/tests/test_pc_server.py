@@ -27,10 +27,14 @@ class FakeImage:
 class FakeStore:
     def __init__(self):
         self.scheduled = []
+        self.flush_count = 0
 
     def schedule(self, image, result):
         self.scheduled.append((image, result))
         return "captures/raw/example.jpg", "captures/annotated/example.jpg"
+
+    def flush(self):
+        self.flush_count += 1
 
 
 def config(tmp_path):
@@ -78,3 +82,12 @@ def test_invalid_image_is_400(tmp_path):
     )
     assert response.status_code == 400
     assert response.get_json()["error"] == "bad image"
+
+
+def test_capture_flush_endpoint_waits_for_persistence(tmp_path):
+    store = FakeStore()
+    app = create_app(config(tmp_path), FakeDetector(), store)
+    response = app.test_client().post("/captures/flush")
+    assert response.status_code == 200
+    assert response.get_json() == {"schema_version": "1.0", "status": "completed"}
+    assert store.flush_count == 1

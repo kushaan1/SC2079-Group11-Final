@@ -46,3 +46,26 @@ def test_rejects_bad_action_and_bad_input_version():
         transport.send_command("guess")
     with pytest.raises(ValueError, match="version"):
         transport.read_message()
+
+
+@pytest.mark.parametrize(
+    "action, parameters, message",
+    [
+        ("stop", {"foo": 1}, "unsupported parameters"),
+        ("move", {"distance_cm": 10}, "missing parameters"),
+        ("move", {"distance_cm": -1, "speed": 30}, "non-negative"),
+        ("turn_left", {"angle_deg": 181, "speed": 30}, "exceed"),
+        ("turn_right", {"angle_deg": 90, "speed": True}, "finite number"),
+    ],
+)
+def test_rejects_commands_that_violate_the_wire_contract(action, parameters, message):
+    transport = SerialJsonTransport("unused", connection=FakeSerial())
+    with pytest.raises(ValueError, match=message):
+        transport.send_command(action, **parameters)
+
+
+@pytest.mark.parametrize("message_id", ["", 42])
+def test_rejects_invalid_message_ids(message_id):
+    transport = SerialJsonTransport("unused", connection=FakeSerial())
+    with pytest.raises(ValueError, match="message_id"):
+        transport.send_command("stop", message_id=message_id)

@@ -119,3 +119,14 @@ def test_tflite_locator_rejects_ambiguous_outputs(tmp_path):
         assert "multiple candidate" in str(error)
     else:
         raise AssertionError("ambiguous exports must fail")
+
+
+def test_tflite_locator_does_not_prefer_stale_int8_name(tmp_path):
+    (tmp_path / "stale-int8.tflite").write_bytes(b"stale")
+    (tmp_path / "current.tflite").write_bytes(b"current")
+    try:
+        locate_tflite(tmp_path, tmp_path)
+    except RuntimeError as error:
+        assert "multiple candidate" in str(error)
+    else:
+        raise AssertionError("a preferred-looking stale export must not hide ambiguity")
