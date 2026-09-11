@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "kind": "stand_template",
+  "orientation": "front",
+  "bullseye_mode": "baked",
+  "image": "training/synthesis/stand-templates/front.png",
+  "image_sha256": "9398b0fe3d780d24e7872caec40661dd36c054f4335d133a1adc692e2059068e",
+  "target_quad": [
+    [
+      0.20911766950035732,
+      0.14850605261371863
+    ],
+    [
+      0.7213017289669188,
+      0.12288342332287645
+    ],
+    [
+      0.7357548772294843,
+      0.5262568057734074
+    ],
+    [
+      0.256090459510109,
+      0.5452907724270029
+    ]
+  ],
+  "bullseye_quads": []
+}
