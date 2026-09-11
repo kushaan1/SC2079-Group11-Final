@@ -80,8 +80,7 @@ object Config {
      *
      * Outbound only. Inbound framing always splits on `"\n"` whatever this says.
      */
-    //const val OUTBOUND_TERMINATOR: String = "\n"
-    const val OUTBOUND_TERMINATOR: String = ""
+    const val OUTBOUND_TERMINATOR: String = "\n"
 
     /**
      * Idle interval after which an unterminated inbound line is flushed anyway.
@@ -130,7 +129,7 @@ object Config {
      */
     data class MoveTokens(
         val forward: String = "f",
-        val reverse: String = "r",
+        val reverse: String = "b",
         val forwardLeft: String = "tl",
         val forwardRight: String = "tr",
         val reverseLeft: String = "sl",

@@ -32,8 +32,8 @@ class ControlPadTest {
             rows[0].map { it.label to it.token },
         )
         assertEquals(
-            "bottom row is the reverse arcs: AMD's sl/r/sr slots",
-            listOf("BL" to "sl", "B" to "r", "BR" to "sr"),
+            "bottom row is the reverse arcs: sl/b/sr",
+            listOf("BL" to "sl", "B" to "b", "BR" to "sr"),
             rows[1].map { it.label to it.token },
         )
     }
@@ -49,8 +49,8 @@ class ControlPadTest {
         assertEquals("six buttons", 6, tokens.size)
         assertEquals("no token is wired to two buttons", tokens.size, tokens.toSet().size)
         assertEquals(
-            "and they are exactly AMD's six movement slots",
-            setOf("f", "r", "tl", "tr", "sl", "sr"),
+            "and they are exactly the six movement tokens",
+            setOf("f", "b", "tl", "tr", "sl", "sr"),
             tokens.toSet(),
         )
     }

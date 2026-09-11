@@ -84,7 +84,7 @@ Sent as a **bare token with no verb and no arguments**, one per button press.
 | Button | Token | Motion |
 |---|---|---|
 | F | `f` | Forward |
-| B | `r` | Reverse |
+| B | `b` | Reverse |
 | FL | `tl` | Forward-left arc |
 | FR | `tr` | Forward-right arc |
 | BL | `sl` | Reverse-left arc |
