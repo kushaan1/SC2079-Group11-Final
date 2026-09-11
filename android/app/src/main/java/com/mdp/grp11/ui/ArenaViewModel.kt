@@ -186,7 +186,39 @@ class ArenaViewModel(
         }
     }
 
-    fun dropOutside(id: Int) {
+    /**
+     * Slot [id] TYPED to [cell], or to nothing - the obstacle form, as distinct
+     * from a gesture. Three cases, each announced the way its gesture twin is:
+     * a cell on an empty slot creates the block with THAT id and sends ADD; a
+     * cell on an existing block moves it and sends ADD only if the cell
+     * actually changed; null removes it and sends SUB. All under the same
+     * [Arena] rules a tap or drag is held to, so a cell the arena refuses is
+     * neither shown nor announced.
+     *
+     * A created or moved cell goes into [dragOrigin] because it is now the
+     * last one the robot was told about: a later drag that wanders and ends
+     * back on it has nothing to report, exactly as after a tap-place.
+     */
+    fun setObstacle(id: Int, cell: Cell?) {
+        val before = _arena.value
+        if (cell == null) {
+            if (before.obstacle(id) != null) removeObstacle(id)
+            return
+        }
+        val existing = before.obstacle(id)
+        val next = if (existing == null) before.place(cell, id).first else before.move(id, cell)
+        if (next == before) return
+        _arena.value = next
+        // A typed-in block is selected like a tapped one, so closing the form
+        // lands on its compass.
+        if (existing == null) _selection.value = Selection.Obstacle(id)
+        dragOrigin[id] = cell
+        scope.launch { repo.send(Outbound.AddObstacle(id, cell.x, cell.y)) }
+    }
+
+    fun dropOutside(id: Int) = removeObstacle(id)
+
+    private fun removeObstacle(id: Int) {
         _arena.value = _arena.value.remove(id)
         if (_selection.value == Selection.Obstacle(id)) _selection.value = null
         dragOrigin.remove(id)

@@ -47,6 +47,31 @@ class ArenaTest {
         assertNotNull(empty.place(Cell(0, 4)).second)
     }
 
+    @Test fun `place with an explicit id uses it and leaves lower free ids alone`() {
+        val (a, o) = empty.place(Cell(10, 10), id = 5)
+        assertEquals(5, o!!.id)
+        assertEquals(listOf(5), a.obstacles.map { it.id })
+        // The pool is not consumed from the bottom: 1 is still the next free id.
+        assertEquals(1, a.nextFreeId())
+    }
+
+    @Test fun `place with an id already in use is refused`() {
+        val a = empty.place(Cell(10, 10), id = 3).first
+        val (after, o) = a.place(Cell(12, 12), id = 3)
+        assertNull(o)
+        assertEquals(a, after)
+    }
+
+    @Test fun `place with an id outside the pool is refused`() {
+        assertNull(empty.place(Cell(10, 10), id = 0).second)
+        assertNull(empty.place(Cell(10, 10), id = 9).second)
+    }
+
+    @Test fun `place with an explicit id still refuses an occupied cell`() {
+        val a = empty.place(Cell(10, 10)).first
+        assertNull(a.place(Cell(10, 10), id = 4).second)
+    }
+
     @Test fun `place is refused on an occupied cell`() {
         val a = empty.place(Cell(10, 10)).first
         assertNull(a.place(Cell(10, 10)).second)

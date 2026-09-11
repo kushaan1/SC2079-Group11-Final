@@ -63,11 +63,19 @@ data class Arena(
         return obstacles.none { it.id != ignoreId && it.cell == cell }
     }
 
-    /** Returns the new arena and the placed obstacle, or (this, null) if refused. */
-    fun place(cell: Cell): Pair<Arena, Obstacle?> {
+    /**
+     * Returns the new arena and the placed obstacle, or (this, null) if refused.
+     *
+     * [id] null takes the lowest free id, which is what a tap on the arena
+     * wants. An explicit id is for the obstacle form, where the operator is
+     * filling in slot B5 and means B5 - refused if it is outside the pool or
+     * already taken, never silently swapped for another.
+     */
+    fun place(cell: Cell, id: Int? = null): Pair<Arena, Obstacle?> {
         if (!canOccupy(cell, null)) return this to null
-        val id = nextFreeId() ?: return this to null
-        val o = Obstacle(id = id, cell = cell)
+        val chosen = id ?: nextFreeId() ?: return this to null
+        if (chosen !in 1..Config.MAX_OBSTACLES || obstacle(chosen) != null) return this to null
+        val o = Obstacle(id = chosen, cell = cell)
         return copy(obstacles = obstacles + o) to o
     }
 

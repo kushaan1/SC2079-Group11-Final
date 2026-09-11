@@ -914,4 +914,156 @@ class ArenaViewModelTest {
         )
         assertEquals(listOf(Cell(2, 3)), vm.arena.value.obstacles.map { it.cell })
     }
+
+    // --- setObstacle: the typed-coordinate path -----------------------------
+
+    @Test fun `setObstacle on an existing block transmits one ADD carrying the new cell`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.setObstacle(1, Cell(12, 8))
+        runCurrent()
+
+        assertEquals(Cell(12, 8), vm.arena.value.obstacle(1)?.cell)
+        assertEquals(listOf("ADD,B1,(12,8)"), fake.sent.drop(before))
+    }
+
+    @Test fun `setObstacle to the cell it already occupies transmits nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.setObstacle(1, Cell(10, 6))
+        runCurrent()
+
+        assertEquals(before, fake.sent.size)
+    }
+
+    @Test fun `setObstacle onto an occupied cell is refused and transmits nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))
+        vm.place(Cell(12, 8))
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.setObstacle(1, Cell(12, 8))
+        runCurrent()
+
+        // Same rule a drag follows: the arena stays put and the robot is not
+        // told about a position the tablet did not adopt.
+        assertEquals(Cell(10, 6), vm.arena.value.obstacle(1)?.cell)
+        assertEquals(before, fake.sent.size)
+    }
+
+    @Test fun `setObstacle into the start zone is refused and transmits nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.setObstacle(1, Cell(0, 0))
+        runCurrent()
+
+        assertEquals(Cell(10, 6), vm.arena.value.obstacle(1)?.cell)
+        assertEquals(before, fake.sent.size)
+    }
+
+    @Test fun `a drag that ends back on the typed cell announces nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))
+        vm.setObstacle(1, Cell(12, 8))
+        runCurrent()
+        val before = fake.sent.size
+
+        // The typed cell is now the last one the robot was told about, so a
+        // drag that wanders and comes home has nothing to report - the same
+        // no-net-movement rule a drag from a tap-placed cell gets.
+        vm.dragTo(1, Cell(14, 9))
+        vm.dragTo(1, Cell(12, 8))
+        vm.commit(1)
+        runCurrent()
+
+        assertEquals(before, fake.sent.size)
+    }
+
+    @Test fun `setObstacle on an empty slot creates the block with THAT id`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        // Slot 5 with slots 1-4 empty: the id typed against is the id used,
+        // not the lowest free one a tap would get.
+        vm.setObstacle(5, Cell(10, 6))
+        runCurrent()
+
+        assertEquals(listOf(5), vm.arena.value.obstacles.map { it.id })
+        assertEquals(listOf("ADD,B5,(10,6)"), fake.sent)
+        assertEquals(Selection.Obstacle(5), vm.selection.value)
+    }
+
+    @Test fun `setObstacle on an empty slot with a refused cell creates nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.setObstacle(5, Cell(0, 0))
+        runCurrent()
+
+        assertTrue(vm.arena.value.obstacles.isEmpty())
+        assertTrue(fake.sent.isEmpty())
+    }
+
+    @Test fun `setObstacle to null removes the block and transmits SUB`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.setObstacle(1, null)
+        runCurrent()
+
+        assertTrue(vm.arena.value.obstacles.isEmpty())
+        assertEquals(listOf("SUB,B1"), fake.sent.drop(before))
+        // It was the selection; a compass bound to nothing must not linger.
+        assertNull(vm.selection.value)
+    }
+
+    @Test fun `setObstacle to null on an empty slot transmits nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.setObstacle(3, null)
+        runCurrent()
+
+        assertTrue(fake.sent.isEmpty())
+    }
+
+    @Test fun `a drag that ends back on a typed-in cell announces nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.setObstacle(2, Cell(12, 8))
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.dragTo(2, Cell(14, 9))
+        vm.dragTo(2, Cell(12, 8))
+        vm.commit(2)
+        runCurrent()
+
+        assertEquals(before, fake.sent.size)
+    }
 }

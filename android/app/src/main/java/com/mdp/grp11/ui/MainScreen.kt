@@ -3,6 +3,7 @@ package com.mdp.grp11.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -117,6 +119,14 @@ fun MainScreen(
         )
     }
 
+    var showObstacleList by remember { mutableStateOf(false) }
+    if (showObstacleList) {
+        ObstacleListDialog(
+            arena = arena,
+            onSet = vm::setObstacle,
+            onDismiss = { showObstacleList = false },
+        )
+    }
     // Back is destructive here: it finishes the Activity and takes every placed
     // obstacle and the whole traffic log with it, while the connection and the
     // run clocks are process-scoped and survive - so the app comes back looking
@@ -197,6 +207,7 @@ fun MainScreen(
                 obstacleCount = arena.obstacles.size,
                 onOpenPicker = onOpenPicker,
                 onRetry = onRetry,
+                onShowObstacles = { showObstacleList = true },
             )
 
             Row(
@@ -298,7 +309,9 @@ private fun connectionStyle(state: ConnectionState): ConnectionStyle = when (sta
 
 /**
  * Connection state, the retry escape hatch and the obstacle count, on one line.
- * The count is status rather than a control, and does not earn a row of its own.
+ * The count is status first and does not earn a row of its own - but it is also
+ * the door to the obstacle list, since it is the one readout that already says
+ * how many entries that list has.
  */
 @Composable
 private fun ConnectionBar(
@@ -306,6 +319,7 @@ private fun ConnectionBar(
     obstacleCount: Int,
     onOpenPicker: () -> Unit,
     onRetry: () -> Unit,
+    onShowObstacles: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val style = connectionStyle(state)
@@ -361,6 +375,11 @@ private fun ConnectionBar(
         // already carrying colour as meaning. The one exception is the flip at
         // eight of eight: that is the moment placement stops being routine, and
         // this count is the only thing on screen that knows.
+        //
+        // Tappable, opening the coordinate list. It keeps the look of a readout
+        // rather than taking a button's - the hard surface it already wears is
+        // the same one every pressable thing on this screen wears, and a
+        // label saying TAP would cost width this bar does not have.
         val full = obstacleCount >= Config.MAX_OBSTACLES
         Row(
             Modifier
@@ -368,6 +387,8 @@ private fun ConnectionBar(
                 .hardSurface(shadow = MdpTokens.HardShadowSmall)
                 .clip(RoundedCornerShape(MdpTokens.CornerRadius))
                 .background(if (full) MdpTokens.Pink else MdpTokens.Paper)
+                // After the clip, so the ripple stays inside the corners.
+                .clickable(onClick = onShowObstacles, role = Role.Button)
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
