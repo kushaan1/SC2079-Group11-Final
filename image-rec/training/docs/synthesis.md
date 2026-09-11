@@ -160,6 +160,34 @@ If any variants still fail, the command checks the remaining variants, reports e
 and target ID together, and leaves the recipe's existing output set untouched rather than publishing
 a partial scene directory.
 
+Whole-frame camera-shake blur is enabled by default in all three recipe modes, including existing
+recipes without a `shake_blur` setting. Exactly 27 of the 90 variants receive a short, centred linear
+motion blur at a random angle; the other 63 remain sharp. Selection and motion parameters are
+reproducible from the recipe ID, seed, and variant index, independently of placement and textures.
+Blur runs after compositing, so backgrounds, targets, stands, and bull's-eyes share the same motion.
+Geometric labels remain unchanged. The default streak spans 3–5 pixels when the longest frame side
+is 640 pixels, scaling with source resolution. These are initial augmentation settings, not a
+measurement of the Pi camera; assess robustness on held-out real Pi captures after retraining.
+
+To opt out, add `"shake_blur": {"enabled": false}` at the top level of the recipe JSON.
+To tune the effect, use any subset of these settings (omitted keys retain their defaults):
+
+```json
+"shake_blur": {
+  "enabled": true,
+  "fraction": 0.30,
+  "length_range_px": [3.0, 5.0],
+  "reference_size_px": 640
+}
+```
+
+`fraction` is rounded to a whole-image count out of 90. Each `.meta.json` records the effective
+settings, whether blur was applied, and the sampled length and angle when applied. Synthetic
+validation/test splits also inherit this mix because generation precedes grouped splitting.
+Existing outputs are not updated automatically: deliberately regenerate the relevant recipe with
+`--overwrite` to apply the new default, then audit, validate, prepare, and retrain. Editing recipe
+settings changes the scene hash; follow the old-scene cleanup guidance below in that case.
+
 The eight built-in pattern families are stripes, checks, dots, scales, diamonds, camouflage,
 marble/noise, and weave. Their scale, angle, phase, intensity, and restrained colour vary with the
 recipe seed. Pattern assignment rotates independently of class. Every built-in or custom texture

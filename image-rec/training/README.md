@@ -55,6 +55,8 @@ Keep each task's images, labels, and class order separate:
 
 **Task 1 synthetic data:** follow the [synthesis guide](docs/synthesis.md) to register stand
 orientations, configure backgrounds, generate scenes, and visually audit masks and boxes.
+Generation applies mild whole-frame camera-shake blur to 30% of images by default; the synthesis
+guide documents recipe settings to tune it or opt out.
 
 **Task 2 or real Task 1 photos:** follow the [manual annotation guide](docs/dataset.md#manual-annotations).
 Labels mirror the image's relative path and use the same stem with a `.txt` extension.
