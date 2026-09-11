@@ -502,6 +502,8 @@ def test_generate_writes_ninety_mirrored_labels_and_provenance(tmp_path):
     assert label.read_text(encoding="utf-8").startswith("0 ")
     assert metadata["source_group"] == "capture-z"
     assert metadata["primary_competition_id"] == 11
+    all_metadata = [json.loads(path.read_text()) for path in (tmp_path / "labels").rglob("*.meta.json")]
+    assert sum(item["shake_blur"]["applied"] for item in all_metadata) == 27
     repeated_metadata = json.loads(
         next((tmp_path / "labels").rglob("sample-060.meta.json")).read_text(
             encoding="utf-8"
@@ -575,3 +577,68 @@ def test_generate_reports_all_variant_failures_without_partial_outputs(
     assert "sample-007 (ID 18)" in message
     assert not list(output_images.rglob("*"))
     assert not list(output_annotations.rglob("*"))
+
+
+def test_shake_blur_schedule_is_reproducible_and_opt_out_is_exact():
+    image = np.random.default_rng(9).integers(0, 256, (64, 96, 3), dtype=np.uint8)
+    recipe = {"recipe_id": "shake-test", "seed": 7}
+    applied = []
+    for index in range(DEFAULT_VARIANT_COUNT):
+        first, metadata = synthesis._apply_shake_blur(image, recipe, index)
+        second, repeated = synthesis._apply_shake_blur(image, recipe, index)
+        assert np.array_equal(first, second)
+        assert metadata == repeated
+        applied.append(metadata["applied"])
+        if not metadata["applied"]:
+            assert np.array_equal(first, image)
+        disabled, info = synthesis._apply_shake_blur(
+            image, dict(recipe, shake_blur={"enabled": False}), index
+        )
+        assert np.array_equal(disabled, image)
+        assert not info["applied"]
+    assert sum(applied) == 27
+
+
+def test_shake_blur_softens_entire_frame_preserves_brightness_and_scales():
+    image = np.zeros((320, 640, 3), dtype=np.uint8)
+    image[:, 100:200] = 255
+    image[:, 400:500] = 255
+    recipe = {"recipe_id": "shake", "shake_blur": {"fraction": 1.0}}
+    blurred, metadata = synthesis._apply_shake_blur(image, recipe, 0)
+    assert blurred.shape == image.shape and blurred.dtype == image.dtype
+    assert np.any((blurred[:, :300] > 0) & (blurred[:, :300] < 255))
+    assert np.any((blurred[:, 300:] > 0) & (blurred[:, 300:] < 255))
+    assert abs(float(blurred.mean()) - float(image.mean())) < 0.1
+    constant = np.full_like(image, 90)
+    assert np.array_equal(synthesis._apply_shake_blur(constant, recipe, 0)[0], constant)
+    _, larger = synthesis._apply_shake_blur(np.zeros((640, 1280, 3), dtype=np.uint8), recipe, 0)
+    assert 3 <= metadata["length_px"] <= 5
+    assert larger["length_px"] == 2 * metadata["length_px"]
+
+
+@pytest.mark.parametrize("settings", [None, [], {"enabled": "false"}, {"fraction": -0.1},
+    {"fraction": 1.1}, {"fraction": float("nan")}, {"length_range_px": [5, 3]},
+    {"length_range_px": [0, 3]}, {"length_range_px": [3]},
+    {"reference_size_px": 0}, {"reference_size_px": float("inf")}, {"typo": 1}])
+def test_shake_blur_rejects_invalid_settings(settings):
+    with pytest.raises(SynthesisError, match="shake_blur"):
+        synthesis._effective_shake_blur(settings)
+
+
+def test_render_shake_blur_keeps_annotations_and_object_provenance(tmp_path):
+    image_path = tmp_path / "base.png"
+    write_image(image_path, np.full((160, 240, 3), 90, dtype=np.uint8))
+    recipe = {
+        "schema_version": "1.0", "mode": "in_scene", "recipe_id": "blur-labels",
+        "source_group": "capture-a", "source_image": "base.png",
+        "source_sha256": file_sha256(image_path),
+        "target_quad": [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]],
+        "shake_blur": {"fraction": 1.0},
+    }
+    blurred = render_recipe_variant(recipe, tmp_path, glyph_masks(), bullseye_tile(), 0)
+    sharp = render_recipe_variant(dict(recipe, shake_blur={"enabled": False}), tmp_path,
+                                  glyph_masks(), bullseye_tile(), 0)
+    assert blurred.annotations == sharp.annotations
+    assert blurred.objects == sharp.objects
+    assert not np.array_equal(blurred.image, sharp.image)
+    assert blurred.shake_blur["applied"]
