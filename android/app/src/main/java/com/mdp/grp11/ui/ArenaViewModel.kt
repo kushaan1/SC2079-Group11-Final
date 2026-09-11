@@ -12,6 +12,7 @@ import com.mdp.grp11.protocol.Face
 import com.mdp.grp11.protocol.Inbound
 import com.mdp.grp11.protocol.Outbound
 import com.mdp.grp11.protocol.imageLabel
+import com.mdp.grp11.session.Algorithm
 import com.mdp.grp11.session.RunKind
 import com.mdp.grp11.session.RunTimer
 import com.mdp.grp11.session.RunTimes
@@ -85,6 +86,19 @@ class ArenaViewModel(
 
     private val _savedLayouts = MutableStateFlow<List<String>>(emptyList())
     val savedLayouts: StateFlow<List<String>> = _savedLayouts.asStateFlow()
+
+    private val _algorithm = MutableStateFlow(Algorithm.Greedy)
+
+    /** The planner the next image-rec run should use. See [selectAlgorithm]. */
+    val algorithm: StateFlow<Algorithm> = _algorithm.asStateFlow()
+
+    /**
+     * A setting, not a transmission: the choice travels inside the image-rec
+     * start message ([startRun]), never on its own.
+     */
+    fun selectAlgorithm(algorithm: Algorithm) {
+        _algorithm.value = algorithm
+    }
 
     /**
      * Cell each obstacle was last CONFIRMED told to the robot. Seeded by

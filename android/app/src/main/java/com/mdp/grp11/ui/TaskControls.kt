@@ -5,13 +5,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.mdp.grp11.session.Algorithm
 import com.mdp.grp11.session.RunKind
 import com.mdp.grp11.ui.theme.MdpTokens
 
@@ -25,25 +27,50 @@ import com.mdp.grp11.ui.theme.MdpTokens
  * `Config.taskTokens.beginExploration` / `.beginFastest`, and maps
  * [onSendArena] to `Config.taskTokens.sendArena`, so the token vocabulary
  * stays defined in exactly one place.
+ *
+ * IMAGE REC also carries the image-rec [algorithm]: shown under the label so
+ * the current pick is never hidden, and changed by holding the button, which
+ * fires [onPickAlgorithm]. A hold rather than a visible control because this
+ * column has no room left for one.
  */
 @Composable
 fun TaskControls(
     enabled: Boolean,
     running: RunKind?,
+    algorithm: Algorithm,
     onStart: (RunKind) -> Unit,
     onStop: () -> Unit,
     onSendArena: () -> Unit,
+    onPickAlgorithm: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MdpButton(
                 onClick = { onStart(RunKind.Exploration) },
+                // The hold stays live while the tap is disabled - see
+                // MdpButton - so the planner can be chosen before connecting.
+                onLongClick = onPickAlgorithm,
                 enabled = enabled && running == null,
                 container = MdpTokens.Green,
                 contentColor = MdpTokens.Ink,
                 modifier = Modifier.weight(1f).height(MdpTokens.TouchTarget),
-            ) { Text("IMAGE REC", maxLines = 1) }
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("IMAGE REC", maxLines = 1)
+                    // Small caps under the label, in the same colour the
+                    // label takes, so it dims with the button when disabled.
+                    Text(
+                        algorithm.label.uppercase(),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            letterSpacing = 0.08.sp,
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             MdpButton(
                 onClick = { onStart(RunKind.FastestCar) },
                 enabled = enabled && running == null,

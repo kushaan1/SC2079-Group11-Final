@@ -106,6 +106,7 @@ fun MainScreen(
     val traffic by vm.traffic.collectAsState()
     val runTimes by vm.runTimes.collectAsState()
     val savedLayouts by vm.savedLayouts.collectAsState()
+    val algorithm by vm.algorithm.collectAsState()
 
     val connected = state is ConnectionState.Connected
 
@@ -127,6 +128,16 @@ fun MainScreen(
             onDismiss = { showObstacleList = false },
         )
     }
+
+    var showAlgorithm by remember { mutableStateOf(false) }
+    if (showAlgorithm) {
+        AlgorithmDialog(
+            current = algorithm,
+            onPick = vm::selectAlgorithm,
+            onDismiss = { showAlgorithm = false },
+        )
+    }
+
     // Back is destructive here: it finishes the Activity and takes every placed
     // obstacle and the whole traffic log with it, while the connection and the
     // run clocks are process-scoped and survive - so the app comes back looking
@@ -271,9 +282,11 @@ fun MainScreen(
                     TaskControls(
                         enabled = connected,
                         running = runTimes.running,
+                        algorithm = algorithm,
                         onStart = vm::startRun,
                         onStop = vm::endRun,
                         onSendArena = vm::sendArena,
+                        onPickAlgorithm = { showAlgorithm = true },
                     )
                     ControlPad(
                         enabled = connected,

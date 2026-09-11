@@ -8,6 +8,7 @@ import com.mdp.grp11.arena.RobotPose
 import com.mdp.grp11.config.Config
 import com.mdp.grp11.connection.ConnectionRepository
 import com.mdp.grp11.protocol.Face
+import com.mdp.grp11.session.Algorithm
 import com.mdp.grp11.session.RunKind
 import com.mdp.grp11.session.RunTimer
 import com.mdp.grp11.transport.ConnectTarget
@@ -1065,5 +1066,34 @@ class ArenaViewModelTest {
         runCurrent()
 
         assertEquals(before, fake.sent.size)
+    }
+
+    // --- the image-rec algorithm choice ----------------------------------------
+
+    @Test fun `the algorithm defaults to Greedy`() = runTest {
+        val vm = connectedViewModel(FakeTransport())
+        assertEquals(Algorithm.Greedy, vm.algorithm.value)
+    }
+
+    @Test fun `selectAlgorithm updates the choice`() = runTest {
+        val vm = connectedViewModel(FakeTransport())
+
+        vm.selectAlgorithm(Algorithm.TurnInPlace)
+        assertEquals(Algorithm.TurnInPlace, vm.algorithm.value)
+
+        vm.selectAlgorithm(Algorithm.Optimal)
+        assertEquals(Algorithm.Optimal, vm.algorithm.value)
+    }
+
+    @Test fun `selectAlgorithm transmits nothing`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        // A pick is a setting. It reaches the wire inside the image-rec start
+        // message, never on its own.
+        vm.selectAlgorithm(Algorithm.Optimal)
+        runCurrent()
+
+        assertTrue(fake.sent.isEmpty())
     }
 }
