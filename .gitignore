@@ -15,6 +15,8 @@ image-rec/**/models/*
 !image-rec/**/models/.gitkeep
 !image-rec/**/models/*.json
 image-rec/.venv-export
+misc/test_images/
+
 
 
 # Training datasets and generated ML artifacts (labels/config/manifests stay tracked)
