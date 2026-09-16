@@ -15,7 +15,7 @@ image-rec/**/models/*
 !image-rec/**/models/.gitkeep
 !image-rec/**/models/*.json
 image-rec/.venv-export
-misc/test_images/
+image-rec/misc/test_images
 
 
 
