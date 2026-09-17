@@ -6,10 +6,11 @@ whole pipeline runs on a laptop.
 """
 
 import logging
+import queue
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from rpi.model import ARC_KINDS, Arc, Instruction, Straight
 
@@ -143,3 +144,285 @@ class FakeStmDriver(StmDriver):
 
     def close(self) -> None:
         pass
+
+
+# --- serial ---------------------------------------------------------------------------
+
+class _NoReply(Exception):
+    pass
+
+
+def _verb(line: str) -> str:
+    return line.split(" ", 1)[0]
+
+
+def _reply_prefixes(line: str) -> Tuple[str, ...]:
+    """What counts as THIS command's reply: `ACK,<verb>` or any error. Matching
+    the verb means a stray `ACK,S` from a concurrent stop() is never mistaken
+    for the in-flight move's acknowledgement."""
+    return ("ACK," + _verb(line), "ERR,")
+
+
+def _default_open(port: str, baud: int) -> Callable[[], object]:
+    def open_serial():
+        import serial   # pyserial; imported here so tests never need it
+        return serial.Serial(port, baud, timeout=0.2)
+    return open_serial
+
+
+class SerialStmDriver(StmDriver):
+    def __init__(
+        self,
+        port: str,
+        baud: int,
+        open_serial: Optional[Callable[[], object]] = None,
+        completion: str = "ACK",
+        ack_deadline_s: float = 1.0,
+        turn_deadline_s: float = 10.0,
+        straight_deadline: Optional[Callable[[int], float]] = None,
+        ping_deadline_s: float = 2.0,
+        stop_drain_s: float = 0.5,
+        retry_delay_s: float = 3.0,
+        motor_a: Optional[int] = None,
+        motor_b: Optional[int] = None,
+        steer_steps: Optional[int] = None,
+        manual_turn_deg: int = 45,
+        on_link_change: Optional[Callable[[bool], None]] = None,
+    ) -> None:
+        self._open_serial = open_serial or _default_open(port, baud)
+        self._on_link_change = on_link_change
+        self._completion = completion.upper()
+        self._ack_deadline_s = ack_deadline_s
+        self._turn_deadline_s = turn_deadline_s
+        self._straight_deadline = straight_deadline or (lambda cm: cm / 10.0 + 5.0)
+        self._ping_deadline_s = ping_deadline_s
+        self._stop_drain_s = stop_drain_s
+        self._retry_delay_s = retry_delay_s
+        self._trims = (("MA", motor_a), ("MB", motor_b), ("AS", steer_steps))
+        self._manual_turn_deg = manual_turn_deg
+
+        self._serial = None            # type: Optional[object]
+        self._available = False
+        self._replies = queue.Queue()  # type: queue.Queue
+        self._lock = threading.Lock()  # one command in flight at a time
+        self._aborted = threading.Event()
+        self._closed = threading.Event()
+        self._ready = threading.Event()   # set after the first successful handshake
+        self._link_up = False             # a handshake has succeeded and nothing failed since
+        self._threads = []             # type: List[threading.Thread]
+
+    # -- lifecycle --
+
+    def start(self) -> None:
+        """Start the link threads and wait for the first successful PING.
+
+        Opening lives in the reconnect thread so there is one code path for
+        "connect", whether at startup or after a lost port. If the STM does not
+        answer in time this raises, but the thread keeps trying in the background.
+        """
+        self._spawn(self._read_loop, "stm-reader")
+        self._spawn(self._reconnect_loop, "stm-reconnect")
+        grace = self._ping_deadline_s * 2 + self._stop_drain_s + 1.0
+        if not self._ready.wait(grace):
+            raise StmUnavailable("PING", "no PONG; retrying in the background")
+
+    def close(self) -> None:
+        self._closed.set()
+        self._mark_down(notify=False)   # shutting down is not a link loss
+        for thread in self._threads:
+            thread.join(timeout=1.0)
+
+    def _notify(self, up: bool) -> None:
+        if self._on_link_change is not None:
+            try:
+                self._on_link_change(up)
+            except Exception:
+                LOG.exception("on_link_change failed")
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def _spawn(self, target: Callable[[], None], name: str) -> None:
+        thread = threading.Thread(target=target, name=name, daemon=True)
+        thread.start()
+        self._threads.append(thread)
+
+    def _open(self) -> None:
+        try:
+            ser = self._open_serial()
+            ser.reset_input_buffer()
+        except Exception as error:
+            raise StmUnavailable("open", str(error))
+        self._serial = ser
+        self._available = True
+
+    def _mark_down(self, notify: bool = True) -> None:
+        was_up, self._link_up = self._link_up, False
+        self._available = False
+        ser, self._serial = self._serial, None
+        if ser is not None:
+            try:
+                ser.close()
+            except Exception:
+                pass
+        if was_up and notify:
+            self._notify(False)
+
+    def _handshake(self) -> None:
+        self._command("PING", self._ping_deadline_s, expect=("PONG",))
+        for verb, value in self._trims:
+            if value is not None:
+                self._command("%s %d" % (verb, value), self._ack_deadline_s)
+
+    # -- threads --
+
+    def _read_loop(self) -> None:
+        while not self._closed.is_set():
+            ser = self._serial
+            if ser is None:
+                self._closed.wait(0.05)
+                continue
+            try:
+                raw = ser.readline()
+            except Exception as error:
+                LOG.warning("STM read failed (%s); link down", error)
+                self._mark_down()
+                continue
+            if not raw:
+                continue
+            line = raw.decode("utf-8", errors="replace").strip()
+            if line:
+                LOG.info("STM in: %s", line)
+                self._replies.put(line)
+
+    def _reconnect_loop(self) -> None:
+        """Open + handshake whenever there is no serial; first attempt is immediate."""
+        while not self._closed.is_set():
+            if self._serial is None:
+                try:
+                    self._open()
+                    self._handshake()
+                    self._link_up = True
+                    LOG.info("STM link up")
+                    self._notify(True)
+                    self._ready.set()     # last, so start() cannot return before the hook ran
+                except StmError as error:
+                    LOG.warning("STM link attempt failed: %s", error)
+                    self._mark_down()
+            self._closed.wait(self._retry_delay_s)
+
+    # -- wire --
+
+    def _write(self, line: str) -> None:
+        ser = self._serial
+        if ser is None or not self._available:
+            raise StmUnavailable(line, "STM unavailable")
+        LOG.info("STM out: %s", line)
+        try:
+            ser.write((line + "\n").encode("ascii"))
+            ser.flush()
+        except Exception as error:
+            self._mark_down()
+            raise StmUnavailable(line, str(error))
+
+    def _write_quiet(self, line: str) -> None:
+        try:
+            self._write(line)
+        except StmUnavailable:
+            pass
+
+    def _await(self, prefixes: Tuple[str, ...], deadline_s: float, command: str, honour_abort: bool = True) -> str:
+        """The next reply starting with one of `prefixes`; other lines are logged and skipped."""
+        end = time.monotonic() + deadline_s
+        while True:
+            if honour_abort and self._aborted.is_set():
+                raise StmAborted(command, "stopped")
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                raise _NoReply()
+            try:
+                line = self._replies.get(timeout=min(0.05, remaining))
+            except queue.Empty:
+                continue
+            if honour_abort and self._aborted.is_set():
+                raise StmAborted(command, "stopped")   # stop() fired while we were blocked in get()
+            if line.startswith(prefixes):
+                return line
+            LOG.info("STM (skipped while waiting for %s): %s", command, line)
+
+    def _deadline(self, line: str) -> float:
+        parts = line.split(" ")
+        verb = parts[0]
+        amount = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        if verb in ("FW", "BW", "FS"):
+            return self._straight_deadline(amount)
+        if verb in ("TL", "TR", "BL", "BR", "PL", "PR"):
+            return self._turn_deadline_s
+        return self._ack_deadline_s
+
+    def _command(
+        self,
+        line: str,
+        deadline_s: float,
+        expect: Optional[Tuple[str, ...]] = None,
+        motion: bool = False,
+        abort: Optional[threading.Event] = None,
+    ) -> str:
+        if expect is None:
+            expect = _reply_prefixes(line)
+        with self._lock:
+            if (abort is not None and abort.is_set()) or self._aborted.is_set():
+                raise StmAborted(line, "stopped")      # a stop is in progress or the run was stopped while we queued
+            self._write(line)
+            try:
+                if motion and self._completion == "DONE":
+                    first = self._await(("ACK," + _verb(line), "ERR,"), self._ack_deadline_s, line)
+                    if first.startswith("ERR,"):
+                        raise StmError(line, first)
+                    final = self._await(("DONE," + _verb(line), "ERR,"), deadline_s, line)
+                else:
+                    final = self._await(expect, deadline_s, line)
+            except _NoReply:
+                LOG.warning("STM: no reply to %s within %.1fs", line, deadline_s)
+                self._write_quiet("S")
+                self._resync()
+                raise StmError(line, "no reply")
+            if final.startswith("ERR,"):
+                raise StmError(line, final)
+            return final
+
+    def _resync(self) -> None:
+        """Discard whatever is queued, then PING and discard until PONG. Caller holds the lock."""
+        end = time.monotonic() + self._stop_drain_s
+        while time.monotonic() < end:
+            try:
+                LOG.info("STM (drained): %s", self._replies.get(timeout=0.02))
+            except queue.Empty:
+                pass
+        self._write_quiet("PING")
+        try:
+            self._await(("PONG",), self._ping_deadline_s, "PING", honour_abort=False)
+        except _NoReply:
+            LOG.warning("STM did not answer PING during resync")
+
+    # -- StmDriver --
+
+    def manual(self, token: str) -> None:
+        line = encode_manual(token, self._manual_turn_deg)
+        self._command(line, self._deadline(line), motion=is_motion(line))
+
+    def manual_raw(self, line: str) -> None:
+        # A passthrough line has no known verb on the STM side, so any ACK or ERR is its reply.
+        self._command(line, self._ack_deadline_s, expect=("ACK,", "ERR,"))
+
+    def execute(self, instr: Instruction, abort: Optional[threading.Event] = None) -> None:
+        line = encode_instruction(instr)
+        self._command(line, self._deadline(line), motion=True, abort=abort)
+
+    def stop(self) -> None:
+        self._aborted.set()
+        self._write_quiet("S")
+        with self._lock:          # an in-flight command unwinds first
+            self._resync()
+            self._aborted.clear()
