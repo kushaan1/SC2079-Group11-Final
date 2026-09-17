@@ -101,7 +101,7 @@ bold, and `stm_driver.py` is the only file that changes if they differ:
 |---|---|---|
 | S1 | `BW <cm>` exists | **yes** — Task 1 cannot run without it: every segment after the first starts with a reverse |
 | S2 | `FW` range | **1–200** (handover says 80–120, which is the A.3 test range) |
-| S3 | `ACK,FW` / `ACK,TL` timing | **on completion** of the motion (implied by `ERR,TIMEOUT`) |
+| S3 | `ACK,FW` / `ACK,TL` timing | **Confirmed 2026-09-17: on receipt**, with `DONE,<verb>` on completion — the DONE model below. `STM_COMPLETION` defaults to `DONE`. |
 | S4 | After `S` interrupts a move, does the interrupted move also reply? | **unknown** — the driver drains and resyncs after every stop, so either answer works |
 
 ### 3.3 Planner contract — the parts used
@@ -265,7 +265,7 @@ import. No other module reads the environment.
 | `STM_STOP_DRAIN_S` | `0.5` | how long to discard replies after `S` |
 | `MANUAL_TURN_DEG` | `45` | angle used for the four manual arc buttons |
 | `MOTOR_A_PCT` / `MOTOR_B_PCT` / `STEER_STEPS` | unset | pushed to the STM at startup when set; unset = keep the firmware's defaults |
-| `STM_COMPLETION` | `ACK` | `ACK`: the ACK line arrives when the motion ends (S3). `DONE`: ACK on receipt, a `DONE,<cmd>` line on completion, `ERR,BUSY` / `ERR,STOPPED` as errors — the model proposed to the STM team |
+| `STM_COMPLETION` | `DONE` | `DONE`: ACK on receipt, a `DONE,<verb>` line on completion, `ERR,BUSY` / `ERR,STOPPED` as errors — what the firmware does (S3). `ACK`: the ACK line itself arrives when the motion ends; kept for an older firmware |
 | `STM_ACK_DEADLINE_S` / `STM_PING_DEADLINE_S` | `1` / `2` | reply deadlines for non-motion commands and for `PING` |
 | `TURN_RADIUS_CM` | `{FL: 39, FR: 40, BL: 37, BR: 39}` | dead-reckoning arc displacement per direction; mirrors the planner's `config.TURN_RADIUS_CM` and must change with it |
 | `CAPTURE_SETTLE_S` | `0.3` | pause before the first frame |

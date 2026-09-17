@@ -54,9 +54,10 @@ ALLOW_STUB_PLANNER = _flag("ALLOW_STUB_PLANNER", False)
 STRATEGY_FALLBACK = _text("STRATEGY_FALLBACK", "optimal")   # what turnInPlace maps to
 
 # --- STM ----------------------------------------------------------------------
-# "ACK": the ACK line arrives when the motion ENDS (spec §3.2 assumption S3).
-# "DONE": ACK arrives on receipt and a DONE line when the motion ends.
-STM_COMPLETION = _text("STM_COMPLETION", "ACK").upper()
+# "DONE": ACK arrives on receipt and a DONE,<verb> line when the motion ends - what the
+# STM firmware does (spec §3.2 S3, confirmed 2026-09-17).
+# "ACK": the ACK line itself arrives when the motion ends; kept for an older firmware.
+STM_COMPLETION = _text("STM_COMPLETION", "DONE").upper()
 STM_ACK_DEADLINE_S = _number("STM_ACK_DEADLINE_S", 1.0)
 STM_TURN_DEADLINE_S = _number("STM_TURN_DEADLINE_S", 10.0)
 STM_PING_DEADLINE_S = _number("STM_PING_DEADLINE_S", 2.0)

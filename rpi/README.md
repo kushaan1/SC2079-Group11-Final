@@ -69,5 +69,6 @@ Each step adds one real device. Do not skip ahead: a failure then has one cause.
    at the first reverse with `Aborted at BW 10: ERR,UNKNOWN`, which is correct.
 4. **Face search** — needs the tablet's `faceSearch` trigger.
 
-`RPI_STM_COMPLETION=DONE` if the STM team implemented the DONE reply; `ACK`
-(the default) if the ACK arrives when the motion ends.
+The STM replies `ACK,<verb>` on receipt and `DONE,<verb>` when the motion ends;
+that is the default (`RPI_STM_COMPLETION=DONE`). `ACK` is only for a firmware
+whose ACK itself arrives at the end of the motion.

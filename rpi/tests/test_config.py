@@ -16,7 +16,7 @@ def test_defaults():
     assert cfg.STM_BAUD == 115200
     assert cfg.PLANNER_URL == ""
     assert cfg.VISION_URL == ""
-    assert cfg.STM_COMPLETION == "ACK"
+    assert cfg.STM_COMPLETION == "DONE"
     assert cfg.MOTOR_A_PCT is None
     assert cfg.MANUAL_TURN_DEG == 45
     assert cfg.CAPTURE_FRAMES == 3
@@ -29,13 +29,13 @@ def test_environment_overrides(monkeypatch):
     cfg = _reload(
         monkeypatch,
         PLANNER_URL="http://10.0.0.2:5000/",
-        STM_COMPLETION="done",
+        STM_COMPLETION="ack",
         MOTOR_A_PCT="55",
         TURN_RADIUS_FORWARD_LEFT="31",
         ALLOW_STUB_PLANNER="true",
     )
     assert cfg.PLANNER_URL == "http://10.0.0.2:5000"      # trailing slash stripped
-    assert cfg.STM_COMPLETION == "DONE"                    # upper-cased
+    assert cfg.STM_COMPLETION == "ACK"                     # upper-cased
     assert cfg.MOTOR_A_PCT == 55
     assert cfg.TURN_RADIUS_CM["FORWARD_LEFT"] == 31
     assert cfg.TURN_RADIUS_CM["FORWARD_RIGHT"] == 40
