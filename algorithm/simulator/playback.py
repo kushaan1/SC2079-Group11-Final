@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import config
 from pathfinding import cost
-from pathfinding.search.instructions import Turn, TurnInstruction
+from pathfinding.search.instructions import Move, Pivot, Turn, TurnInstruction
 from simulator.geometry import HEADING_DEG, Pose, unit
 from simulator.routes import Route
 
@@ -132,13 +132,57 @@ class Playback:
                     seconds += tick
                     self.frames.append(Frame(Pose(end.x, end.y, end_deg), index, None, False,
                                              distance, seconds))
-                else:
+                elif isinstance(move, Pivot):
+                    *shuffle, end = move.vectors
+                    end_deg = HEADING_DEG[end.direction]
+                    swing = move.pivot.degrees
+                    delta = swing if move.pivot.clockwise else -swing
+                    start_deg = (end_deg - delta) % 360
+                    m = len(shuffle)
+                    # The ground the wheels cover, which is what the search is charged for a
+                    # pivot and is emphatically not the displacement: the car ends where it
+                    # began. Spread over the frames as a turn's arc length is.
+                    step = cost.DISTANCE_CELLS.pivot(move.pivot, cell_size) * cell_size / (m + 1)
+                    tick = cost.TIME_SECONDS.pivot(move.pivot, cell_size) / (m + 1)
+                    for k in range(m):
+                        # Sweeping the heading EVENLY across the cells is faithful here, not an
+                        # approximation for want of anything better. Both strokes of a shuffle
+                        # swing the nose the same way - `pivot.__shuffle`'s `turned` keeps its
+                        # sign for the whole manoeuvre, by construction of the lock pairs - so
+                        # the heading is monotone from start_deg to end_deg, and every frame
+                        # below faces a heading the car genuinely passes through, in the order
+                        # it passes them. A turn's arc needs the same sweep for the same reason:
+                        # a pivot's cells also all carry the POST-pivot heading, because Vector
+                        # cannot name the 22.5 degrees a stroke stops at.
+                        t = (k + 1) / (m + 1)
+                        vector = shuffle[k]
+                        distance += step
+                        seconds += tick
+                        self.frames.append(Frame(
+                            Pose(vector.x, vector.y, (start_deg + delta * t) % 360),
+                            index, None, False, distance, seconds))
+                    distance += step
+                    seconds += tick
+                    # Placed on the cell itself, with no `lead` offset and no circle to lift it
+                    # onto: a pivot's path is already the robot's CENTRE, where a turn's arc is
+                    # the rear point `lead` behind it. Lifting these onto a circle would be
+                    # wrong twice over - the shuffle's strokes ride several circles, not one.
+                    self.frames.append(Frame(Pose(end.x, end.y, end_deg), index, None, False,
+                                             distance, seconds))
+                elif isinstance(move, Move):
                     for vector in move.vectors:
                         distance += cell_size
                         seconds += cost.TIME_SECONDS.straight(1, cell_size)
                         self.frames.append(Frame(
                             Pose(vector.x, vector.y, HEADING_DEG[vector.direction]),
                             index, None, False, distance, seconds))
+                else:
+                    # Spelled out rather than left as the straight branch's `else`, because that
+                    # is precisely how a Pivot came to be animated as a line of sideways-sliding
+                    # straight frames: it is neither a Turn nor a Move, nothing raised, the frame
+                    # count was right, and the only symptom was on screen. The next primitive
+                    # added to `Segment.moves` fails here instead.
+                    raise TypeError(f"playback cannot animate a {type(move).__name__}")
 
             if len(self.frames) > first:
                 arrival = self.frames[-1]

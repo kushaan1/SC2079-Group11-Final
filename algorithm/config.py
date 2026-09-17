@@ -206,6 +206,43 @@ TURN_TIME_S = 3.0
 #   owner confirms the car can execute and stop a 45 degree turn - see docs/algorithms-todo.md.
 DIAGONAL_HEADINGS = False
 
+# Whether the search may rotate on the spot, by shuffling: full steering lock forward, full lock
+# back the other way, both strokes swinging the nose the same way. INDEPENDENT of
+# DIAGONAL_HEADINGS, and composes with it - the diagonals decide which headings exist, this
+# decides whether the search may reach one without travelling to it. With the diagonals off the
+# only pivot that lands on a heading is a 90; with them on, 45s become reachable as well. False is
+# the planner exactly as it is today, in both of those modes.
+# SOURCE: ALGO | assumed | OFF until the STM owner confirms the car can execute a shuffle turn
+#   and stop on its heading. The manoeuvre exists only because the chassis is Ackermann-steered and
+#   has no zero-radius solution; see docs/superpowers/specs/2026-09-11-pivot-turns-design.md.
+PIVOT_TURNS = False
+
+# Seconds the robot takes for one 45 degree pivot, the whole shuffle included; a 90 costs twice
+# this. The time model charges it per pivot exactly as it charges TURN_TIME_S per turn, and the
+# simulator clock follows.
+# SOURCE: STM | placeholder | NOT MEASURED. The STM owner offered 2.0 on 2026-09-11 as a working
+#   figure so that the cost model could be written against something - it is a statement of
+#   intent, not a stopwatch reading. Measure it at competition speed, alongside TURN_TIME_S and
+#   with the stroke count the firmware actually drives, since PIVOT_STROKES_PER_45 moves it.
+PIVOT_TIME_S = 2.0
+
+# Strokes the car shuffles through per 45 degrees of pivot: full lock forward, full lock back,
+# repeated. MUST BE EVEN - one backward stroke for every forward one - because a pivot that ends
+# mid-shuffle stops a whole stroke away from where the planner placed it with its heading still
+# exactly right, which is a failure nothing downstream can see.
+#
+# More strokes is not better. Against the radii below, one 45 degree pivot drifts 3.5 cm at 2
+# strokes, 6.4 cm at 4 and 7.3 cm at 6, while the swept box it needs barely moves (51 x 58 cm
+# against 53 x 51 cm). That drift is INHERENT, and in particular it is not the forward/backward
+# radius asymmetry: the two strokes of a pair turn about circles that are not concentric, so the
+# pair does not close. Matching TURN_RADIUS_CM's 40 forward-right against its 37 backward-left
+# buys about 12% of it and no more. It is systematic rather than noise: it accumulates
+# with every extra stroke instead of averaging out, which is also why the planner can model it.
+# SOURCE: ALGO | assumed | 2 is the algo-side choice that minimises drift at the PLACEHOLDER
+#   radii, and is therefore only as trustworthy as they are. Re-derive it once the STM owner
+#   measures TURN_RADIUS_CM, and confirm the firmware drives the count the planner assumed.
+PIVOT_STROKES_PER_45 = 2
+
 # ---------------------------------------------------------------------------------------
 # Image recognition
 # ---------------------------------------------------------------------------------------

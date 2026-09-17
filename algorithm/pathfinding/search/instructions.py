@@ -78,3 +78,67 @@ class TurnInstruction(str, Enum):
 class Turn:
     turn: TurnInstruction
     vectors: list[Vector]
+
+
+class PivotInstruction(str, Enum):
+    """
+    A pivot: rotating close to on the spot by shuffling - full steering lock forward, full lock
+    back the other way, repeated, both strokes swinging the nose the same way.
+
+    Deliberately NOT members of :class:`TurnInstruction`, though a pivot is built out of turn
+    strokes. ``segment._TURNS`` is ``tuple(TurnInstruction)`` and the four-heading planner takes
+    ``tuple(t for t in _TURNS if t.degrees == 90)`` out of it, so a ``PIVOT_*_90`` living in that
+    enum would be swept up by that filter and would change every route the service ships today,
+    with the pivot flag still off. Keeping the two enums apart is what makes this feature
+    additive.
+
+    The values are the wire tokens and they are PLACEHOLDERS: the RPi and STM owners have not
+    settled what the firmware expects, and changing them is an edit to this block and nothing
+    else.
+    """
+
+    PIVOT_LEFT_45 = 'PIVOT_LEFT_45'
+    PIVOT_RIGHT_45 = 'PIVOT_RIGHT_45'
+    PIVOT_LEFT_90 = 'PIVOT_LEFT_90'
+    PIVOT_RIGHT_90 = 'PIVOT_RIGHT_90'
+
+    @property
+    def degrees(self) -> int:
+        """
+        How far this pivot swings the robot.
+
+        Read off the suffix rather than tabulated, so that a token added to the enum cannot
+        disagree with its own name - unlike :class:`TurnInstruction`, every pivot names its own
+        size, so there is no default to fall through to.
+        """
+        return int(self.value.rsplit('_', 1)[1])
+
+    @property
+    def clockwise(self) -> bool:
+        """
+        Which way the nose swings. RIGHT is clockwise.
+
+        The sense is the strokes', not a separate convention: a LEFT pivot alternates exactly
+        the pair ``turn._ANTICLOCKWISE`` names (forward-left, backward-right), and a RIGHT one
+        alternates the two locks absent from it.
+        """
+        return '_RIGHT_' in self.value
+
+    def strokes(self) -> int:
+        """
+        How many shuffle strokes this pivot is driven as. Always even: one back per forward.
+
+        A method rather than a property because it reads config, and, like
+        :meth:`TurnInstruction.radius`, it reads it on EVERY call. The stroke count is the STM
+        owner's to set once the firmware's shuffle is settled; binding it at import would freeze
+        the geometry at whatever this module happened to load with.
+        """
+        return config.PIVOT_STROKES_PER_45 * self.degrees // 45
+
+
+@dataclass
+class Pivot:
+    """One pivot, as the search emits it: the cells it sweeps, with the end pose last."""
+
+    pivot: PivotInstruction
+    vectors: list[Vector]

@@ -27,8 +27,27 @@ Measured against the current placeholder radii (40/37 cm, lead 12 cm), for a 45 
 | 6 | 7.5 | 7.3 cm | 53 x 51 cm |
 
 Two strokes is the default: least drift, and the swept box is no worse in the dimension that
-matters. The drift is dominated by `R_forward != R_backward` (40 vs 37) — it is systematic,
-not noise, which is why the planner can model it exactly.
+matters.
+
+**Where the drift comes from — corrected 2026-09-11.** An earlier draft of this spec said the
+drift "is dominated by `R_forward != R_backward`". That is wrong, and Task 2's implementer
+caught it: the LEFT pivot uses `FORWARD_LEFT` 39 and `BACKWARD_RIGHT` 39 — equal radii — and
+still drifts 3.2 cm. Re-derived:
+
+| case | drift per 45 degrees |
+|---|---|
+| 40/37 unequal, lead 12 (the right pivot) | 3.52 cm |
+| 40/40 matched, lead 12 | 3.09 cm |
+| 40/40 matched, lead 0 | 6.09 cm |
+| 50/20 extreme gap, lead 0 | 12.66 cm |
+
+The drift is **inherent to the manoeuvre**: each forward/backward pair turns about two
+different circle centres, so the pair does not close. Matching the forward and backward radii
+buys about 12% at our numbers; only a large radius gap makes asymmetry the dominant term.
+
+What survives from the original claim, and is the part that matters: the drift is
+**systematic, not noise**, so the planner can model it exactly. Do NOT tell the STM owner that
+better-matched radii will make it go away.
 
 ## Goals
 
@@ -142,6 +161,33 @@ pivot legality masks read from it; ordinary turns and straights keep reading `fr
 untouched. Erosion is ~150 shifted ANDs done ONCE, then ~30 per pivot mask — cheap. Do NOT
 dilate each pivot path by the disc instead: that is ~900 operations per mask per direction.
 
+**Erode obstacle blockage, NOT the arena boundary — corrected 2026-09-11.** `free_cells` encodes
+both, and an earlier draft said simply "erode `free_cells`". That is wrong.
+`config.BOUNDARY_CLEARANCE_ADJUST_CM` is NEGATIVE on purpose: the arena boundary is virtual and
+costs nothing to clip. Eroding it demands the robot centre sit 21 cells from the edge where a
+straight needs 14, which makes the planner treat the virtual boundary as HARDER than a real
+obstacle for this one primitive and SOFTER for every other. That inconsistency is the defect.
+
+Measured legal start cells for a 90 degree pivot, NORTH table:
+
+| world | eroding everything | eroding obstacles only |
+|---|---|---|
+| empty arena | 19,599 | 23,715 (+21%) |
+| `02-four-obstacles` | 2,585 | 4,099 (+59%) |
+| `04-five-obstacles` | 2,052 | 3,278 (+60%) |
+
+This does NOT let the robot swing over the boundary: `eroded` stays a subset of `free_cells`, so
+every cell of the pivot's centre-path excursion is still required to be inside the band. It only
+stops charging a further 7 cells of standoff against a line that costs nothing to clip.
+
+A correction to the motivation, so nobody repeats it: these cells are NOT what makes an obstacle
+facing a wall reachable. Such goal poses are already refused by `objective.py` against the
+UN-eroded 14-cell band, before the pivot's extra 7 is in play. What the cells buy is the general
+case — turning round in tight space, some of which happens near a wall.
+
+**Nothing in the suite pins this either way.** Whichever behaviour is chosen needs its own test,
+or the next person flips it by accident.
+
 Every cell of the pivot's centre path must be delta-clear, since the car is rotated off-axis
 throughout.
 
@@ -188,11 +234,47 @@ class Pivot:
 `cost.move_cost` gains a `Pivot` branch. `search.Segment.compress` gains a `Pivot` case that
 appends the instruction, extends the vectors and appends the move.
 
-**The economics this produces, which is the intended behaviour:** a 45 degree pivot costs 2.0 s
-against 1.5 s for a 45 degree arc, and a 90 costs 4.0 s against 3.0 s. The pivot is always
-dearer in time and gains zero ground, so the search reaches for it only where the arc's
-displacement is unwanted or illegal — tight corners, U-turns, final approach alignment. It
-should not appear on open-space routes.
+**The economics — corrected 2026-09-11.** A 45 degree pivot costs 2.0 s against 1.5 s for a 45
+degree arc, and a 90 costs 4.0 s against 3.0 s. An earlier draft concluded from that: "it should
+not appear on open-space routes." **That was wrong, and Task 4's review disproved it under the
+time model the argument was made on.**
+
+The error was comparing a pivot against *the single turn it replaces*. The search does not
+substitute one for one — a pivot replaces a SEQUENCE. Measured on `04-five-obstacles`, obstacle
+13's leg trades
+
+    BACKWARD_RIGHT, BACK 35, BACKWARD_RIGHT, FWD 35, FORWARD_LEFT,
+    BACKWARD_LEFT, FWD 10, BACKWARD_RIGHT, FWD 5          (23.17 s)
+
+for
+
+    BACK 15, PIVOT_RIGHT_90                               (18.67 s)
+
+At 30 cm/s, undoing a quarter turn's unwanted (52, 28) cm costs 2-3 s; the pivot's 1 s premium
+buys that back. Both cost models are honest and the primitive is behaving as designed.
+
+The defensible claim, which is what this spec now asserts: **a pivot is dearer than the single
+turn it replaces, and the search takes one only where it saves more corrective travel than the
+premium costs.** In the measured routes every pivot sits immediately before `CAPTURE_IMAGE` or
+between 5-15 cm straights — the three categories the primitive exists for. None decorates a
+long straight.
+
+**Route structure depends on `PIVOT_TIME_S`, and that number is a guess.** Sensitivity on 04,
+time-weighted: 2.0 s gives 5 pivots (51.67 s), 2.5 gives 3 (55.17 s), 3.0-5.0 gives 1, and 6.0
+gives none (62.33 s). It degrades gracefully rather than on a knife edge — but if the real
+shuffle costs 6 s or more per 90 degrees, the whole benefit evaporates. This belongs in the STM
+questions, not in a code change.
+
+> Those sensitivity figures were measured on the PRE-boundary-fix build. After the fix the
+> route structure changes — 04 time-weighted gives 2 pivots across 2 of 5 segments at 52.00 s,
+> and greedy/distance gives 6 across 4 of 5 at 59.33 s. The shape of the conclusion (graceful
+> decay, nothing left at 6 s) is unaffected; the exact counts are not worth re-deriving until
+> `PIVOT_TIME_S` is a measurement rather than a guess.
+>
+> One honest wrinkle: post-fix, `plan_optimal` on 04 returns 52.00 s and logs "not a proven
+> optimum" — the larger legal-cell set makes the branch and bound hit `MAX_REPLANS` sooner, so
+> it is 0.33 s behind the 51.67 s the more constrained build happened to find. More reachable
+> states, less of the space proved. Worth knowing before anyone reads 52.00 as a regression.
 
 ## Search integration
 

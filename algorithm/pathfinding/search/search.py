@@ -6,7 +6,9 @@ from dataclasses import dataclass
 
 from pathfinding import cost
 from pathfinding.report import UnreachableObstacle, UnreachableReason
-from pathfinding.search.instructions import Turn, TurnInstruction, Move, MoveInstruction, MiscInstruction
+from pathfinding.search.instructions import (
+    MiscInstruction, Move, MoveInstruction, Pivot, PivotInstruction, Turn, TurnInstruction,
+)
 from pathfinding.search.segment import segment
 from pathfinding.world.objective import ObjectiveGeneration
 from pathfinding.world.primitives import Vector
@@ -166,21 +168,24 @@ def search(world: World, generated: ObjectiveGeneration) -> SearchResult:
 class Segment:
     image_id: int
     cost: int                     # path length in grid cells (== cm at the default 1 cm cell)
-    instructions: list[TurnInstruction | MoveInstruction | MiscInstruction]
+    # A new member of an existing union, exactly as the diagonals' FORWARD_LEFT_45 was: with
+    # `config.PIVOT_TURNS` off no PivotInstruction can be produced, so this widens the type
+    # without widening what the service actually emits.
+    instructions: list[TurnInstruction | PivotInstruction | MoveInstruction | MiscInstruction]
     vectors: list[Vector]
-    moves: list[Turn | Move]      # the segment's parts in driving order; turn arcs de-interleaved
+    moves: list[Turn | Pivot | Move]   # the parts in driving order; turn arcs de-interleaved
     seconds: float                # estimated driving time of `moves`; excludes the capture dwell
 
     @classmethod
-    def compress(cls, world: World, information: tuple[Obstacle, float, list[tuple[Vector, Turn | Move | None]]]) -> Segment:
+    def compress(cls, world: World, information: tuple[Obstacle, float, list[tuple[Vector, Turn | Pivot | Move | None]]]) -> Segment:
         # The search's own cost is discarded: it is denominated in whatever the caller asked the
         # search to minimise, which for a time-weighted search is seconds. Re-costing the moves
         # under DISTANCE_CELLS keeps `cost` one unit whichever weights planned the leg. For a
         # distance-weighted search the two numbers are equal, so greedy planning is unchanged.
         obstacle, _search_cost, parts = information
-        instructions: list[TurnInstruction | MoveInstruction | MiscInstruction] = []
+        instructions: list[TurnInstruction | PivotInstruction | MoveInstruction | MiscInstruction] = []
         vectors: list[Vector] = []
-        moves: list[Turn | Move] = []
+        moves: list[Turn | Pivot | Move] = []
         # Cells accumulated into the MoveInstruction at the end of `instructions`, so a run of
         # merged chunks is converted to centimetres once. Converting each chunk and adding the
         # rounded results would drift by a centimetre per merge on a diagonal.
@@ -195,6 +200,17 @@ class Segment:
             match move:
                 case Turn():
                     instructions.append(move.turn)
+                    vectors.extend(move.vectors)
+                    moves.append(move)
+
+                # Beside the turn rather than beside the straight, and never merged into
+                # anything: a pivot ends whatever run of chunks it interrupts, because the car
+                # stops, shuffles round and sets off again on a different heading. It ends that
+                # run by being appended to `instructions` - the merge guard below asks what the
+                # last instruction is, finds a pivot rather than a MoveInstruction, and the
+                # straight after the pivot therefore opens a new command with a fresh `run`.
+                case Pivot():
+                    instructions.append(move.pivot)
                     vectors.extend(move.vectors)
                     moves.append(move)
 
