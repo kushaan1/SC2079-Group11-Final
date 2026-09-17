@@ -296,15 +296,18 @@ Pure functions, no I/O. Mirrors `protocol.md` exactly.
 raises.
 
 **Outbound** — `msg(text)`, `target(obstacle_id, competition_id)`,
-`robot(x_cells, y_cells, heading_deg)`. `msg` never lets a newline through.
+`robot(pose)`. `msg` never lets a newline through.
 `robot` formats with two decimals and a degree value in `[0, 360)`.
 
 ### 5.4 `arena.py`
 
-Pure conversion functions and the `Obstacle(id, x, y, face)` and
-`Pose(x_cells, y_cells, heading_deg)` value types. **Holds no state** — a
-run start carries its own obstacles and robot pose (§3.5). `START_POSE =
-Pose(1.0, 1.0, 0.0)` is the fallback when a start message has no `robot`.
+Pure conversion functions. The value types — `Obstacle(obstacle_id, x, y,
+face)`, `Pose(x, y, heading)` in cells and degrees, the instruction types,
+`Segment`, `Plan`, `Verdict` — live in `model.py`, which imports nothing from
+the package so `protocol` and `arena` need not depend on each other. **Holds
+no state** — a run start carries its own obstacles and robot pose (§3.5).
+`model.START_POSE = Pose(1.0, 1.0, 0.0)` is the fallback when a start message
+has no `robot`.
 
 Conversions (the only place these formulas live):
 
@@ -351,7 +354,10 @@ class StmDriver:
 
 **Reply matching.** A reader thread pushes every line from the STM into a
 queue and logs it. `execute` and `manual` hold the command lock, write the
-line, then take lines from the queue until one starts with `ACK,` or `ERR,`;
+line, then take lines from the queue until one is `ACK,<verb>` for that
+command's verb (`ACK,FW` for `FW 30`; `DONE,<verb>` for the completion line
+under the DONE model) or any `ERR,`. Matching the verb means a stop's own
+`ACK,S` can never be mistaken for the in-flight move's acknowledgement;
 data lines (`ENC,` `MA,` …) are logged and skipped. `ERR,*` raises
 `StmError(command, reply)`. If the deadline passes with no reply, the driver
 sends `S`, resyncs (below), and raises `StmError(command, "no reply")`.
