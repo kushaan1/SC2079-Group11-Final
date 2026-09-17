@@ -97,26 +97,37 @@ Numbered so you can answer by number.
    needs measuring on this car at competition speed, per direction. Joint with
    Kejun.
 
+Optional, but cheap and they make Task 1 recognitions more reliable — the car
+already has the sensors, only the firmware has to expose them:
+
+7. **`US` → `US,<cm>`** — one forward ultrasonic reading, any time. The Pi
+   would read it at every capture pose and nudge the car with a short
+   `FW`/`BW` so the camera is at the trained range before photographing,
+   instead of wherever dead reckoning left it. Please tell us the sensor's
+   offset from the front edge of the car.
+8. **Obstacle guard on `FW`/`BW`** — abort the move with `ERR,OBSTACLE` if the
+   ultrasonic (or the IR, if it is a near-object switch) sees something
+   closer than a threshold you pick (~8 cm). The Pi already treats any `ERR`
+   as "stop the run", so this costs nothing on our side and turns a slipped
+   wheel into an aborted run instead of a pushed obstacle.
+
 ## 5. Task 2 — proposal (nothing here is agreed yet)
 
 ### 5.1 What the rules require of the hardware
 
 Obstacle 1 is 60–150 cm from the carpark and obstacle 2 another 60–150 cm on:
 **the approach must be sensor-driven**. The rules allow camera, IR or
-ultrasonic. The firmware has no sensor today. The cheapest route we can see:
+ultrasonic, and the car has both an ultrasonic and an IR sensor; the firmware
+just does not read them yet. For the ultrasonic, SC2104/CE3002 Ex #1
+Practice #4 is the driver (Trig `B15`, Echo `C7`, timer pulse + input capture,
+distance = pulse × 343 m/s ÷ 2, 2–400 cm). Please tell us which way each
+sensor faces and, for the IR, whether it ranges or only switches.
 
-- **HC-SR04 ultrasonic, exactly as in SC2104/CE3002 Ex #1 Practice #4** —
-  Trig on `B15`, Echo on `C7`, timer-generated 10 µs pulse, input-capture on
-  the echo, distance = pulse × 343 m/s ÷ 2, range 2–400 cm. That is lab code
-  you have already written, on pins the board exposes.
-- The standard car also carries a small **IR sensor** front-left (Robotcar2022
-  layout, Fig. 8). If yours still has it and it is a ranging type (not just an
-  obstacle-present switch), it can do the same job over a shorter range.
-
-If neither is possible the Pi can fall back to a camera-driven creep (short
-`FS` steps with a photo between each, stopping on the arrow's apparent size).
-It needs nothing from you but is slow — 10 s or more per approach on a task
-scored by time — so it is the fallback, not the plan.
+If the sensors cannot be made to work in time, the Pi can fall back to a
+camera-driven creep (short `FS` steps with a photo between each, stopping on
+the arrow's apparent size). It needs nothing from you but is slow — 10 s or
+more per approach on a task scored by time — so it is the fallback, not the
+plan.
 
 ### 5.2 Split of work
 
