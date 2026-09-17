@@ -189,7 +189,9 @@ RPi maps it to `optimal` and says so with a `MSG`.
 ```
 rpi/
 ├── __main__.py         python3 -m rpi [--fake-stm] [--fake-camera]
-├── main.py             wiring; the Bluetooth loop; the dispatcher
+├── main.py             wiring; logging; the Bluetooth loop
+├── dispatcher.py       tablet message → action (the table in §4.3)
+├── model.py            value types: Obstacle, Pose, instructions, Segment, Plan, Verdict
 ├── config.py           every constant, env-overridable (RPI_*)
 ├── bt_link.py          /dev/rfcomm0 raw mode, framing, locked send, reconnect
 ├── protocol.py         tablet line → Inbound message; MSG/TARGET/ROBOT builders
@@ -256,7 +258,9 @@ import. No other module reads the environment.
 | `STM_TURN_DEADLINE_S` | `10` | reply deadline for arcs |
 | `STM_STOP_DRAIN_S` | `0.5` | how long to discard replies after `S` |
 | `MANUAL_TURN_DEG` | `45` | angle used for the four manual arc buttons |
-| `MOTOR_A_PCT` / `MOTOR_B_PCT` / `STEER_STEPS` | `50` / `50` / `5` | pushed to the STM at startup; `None` = don't send |
+| `MOTOR_A_PCT` / `MOTOR_B_PCT` / `STEER_STEPS` | unset | pushed to the STM at startup when set; unset = keep the firmware's defaults |
+| `STM_COMPLETION` | `ACK` | `ACK`: the ACK line arrives when the motion ends (S3). `DONE`: ACK on receipt, a `DONE,<cmd>` line on completion, `ERR,BUSY` / `ERR,STOPPED` as errors — the model proposed to the STM team |
+| `STM_ACK_DEADLINE_S` / `STM_PING_DEADLINE_S` | `1` / `2` | reply deadlines for non-motion commands and for `PING` |
 | `TURN_RADIUS_CM` | `{FL: 39, FR: 40, BL: 37, BR: 39}` | dead-reckoning arc displacement per direction; mirrors the planner's `config.TURN_RADIUS_CM` and must change with it |
 | `CAPTURE_SETTLE_S` | `0.3` | pause before the first frame |
 | `CAPTURE_FRAMES` | `3` | frames per obstacle |
@@ -350,6 +354,9 @@ line, then take lines from the queue until one starts with `ACK,` or `ERR,`;
 data lines (`ENC,` `MA,` …) are logged and skipped. `ERR,*` raises
 `StmError(command, reply)`. If the deadline passes with no reply, the driver
 sends `S`, resyncs (below), and raises `StmError(command, "no reply")`.
+With `STM_COMPLETION=DONE`, a motion command first waits ≤ `STM_ACK_DEADLINE_S`
+for its `ACK,` (proof it was not dropped), then up to the motion deadline for
+`DONE,` or `ERR,`. Non-motion commands are one line under either model.
 
 **Stop.** `stop()` writes `S` under the write lock only, sets an `aborted`
 event that makes any in-progress `execute` return early with
@@ -361,7 +368,9 @@ sends `PING`, and discards until `PONG`. This makes S4 irrelevant.
 
 **Serial loss.** If the port raises, the driver marks itself down; `manual`
 and `execute` raise `StmUnavailable` immediately; a background retry reopens
-the port every 3 s and re-runs startup.
+the port every 3 s and re-runs startup. An `on_link_change(up)` hook fires
+after every successful handshake and on every loss of a working link; `main`
+turns it into `MSG,STM connected` / `MSG,STM disconnected` (§7).
 
 **`FakeStmDriver`** — same interface. `execute` sleeps `amount / 30` s for
 straights and `3` s for arcs, `stop()` cuts the sleep short. Records every
@@ -389,7 +398,9 @@ Never raises; the worker decides what to do.
 
 ### 5.8 `vision_worker.py`
 
-- `submit(obstacle_id, frames: List[bytes])` — enqueue; returns immediately.
+- `submit(obstacle_id, frames: List[bytes], quiet=False)` — enqueue; returns
+  immediately. `quiet` suppresses the miss `MSG`s (the face search narrates
+  misses itself); `TARGET` lines are always sent.
 - Worker thread: per obstacle, POSTs each frame with `object_id = "B<id>"`;
   result = the `target` verdict with the highest confidence if any, else
   `bullseye` if any frame said so, else `no_detection` (or `error` if every
@@ -438,8 +449,9 @@ against the real car; if they're backwards, two literals swap.
 
 `RunController` — holds at most one run; `start(run)` refuses if one is
 active; `stop()` calls `stm_driver.stop()` then sets the run's `abort` event.
-The run thread notices the event, sends `MSG,Stopped`, and ends; the
-controller never sends tablet lines itself.
+The run thread notices the event, sends `MSG,Stopped`, and ends. The only
+line the controller sends itself is `MSG,Run failed: <error>` when a run
+raises — a bug in a run must never take the program down.
 
 `Task1Run` and `FaceSearchRun` are specified in §6.
 
