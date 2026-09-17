@@ -113,50 +113,72 @@ already has the sensors, only the firmware has to expose them:
 
 ## 5. Task 2 — proposal (nothing here is agreed yet)
 
-### 5.1 What the rules require of the hardware
+### 5.1 The course and the sensors
 
-Obstacle 1 is 60–150 cm from the carpark and obstacle 2 another 60–150 cm on:
-**the approach must be sensor-driven**. The rules allow camera, IR or
-ultrasonic. The component list gives us one HC-SR04 ultrasonic (with the
+Obstacle 1 is 60–150 cm from the carpark and obstacle 2 (the bigger block)
+another 60–150 cm on, both on the carpark's centre line. The carpark is a
+60 × 60 cm U with walls on three sides, so the car must come home centred to
+get in. Any wall beyond obstacle 2 is at least 50 cm from the block's edge.
+**The approach must be sensor-driven** (rules allow camera, IR or
+ultrasonic). The component list gives us one HC-SR04 ultrasonic (with the
 1 kΩ / 2.2 kΩ pair for its Echo divider) and two Sharp GP2Y0A21YK IR rangers
 (10–80 cm, analog, with brackets and the ADC cable); the firmware just does
 not read them yet. The layout we are designing the Pi side around:
 
-- **HC-SR04 facing forward** — the approach: it sees obstacle 1 from anywhere
-  in the 60–150 cm band and tells you when to stop. SC2104/CE3002 Ex #1
-  Practice #4 is the driver (Trig `B15`, Echo `C7`, timer pulse + input
-  capture, distance = pulse × 343 m/s ÷ 2).
-- **One IR on each side, facing outward** — while going round obstacle 2 (the
-  big one), the side IR sees the block and then stops seeing it, which is
-  when the car has cleared its end and can turn back. That makes the loop
-  sensor-terminated instead of a guess about the block's width, and the
-  same reading is a cheap "too close to something" guard.
-- **Encoders** for the distance home (`ENC` already exists).
-
-If you would rather mount them differently, say so — the commands in 5.3 are
-the same either way.
+- **HC-SR04 facing forward, mounted below the 15 cm obstacle top, level.**
+  The approach: it sees obstacle 1 from anywhere in the 60–150 cm band and
+  tells you when to stop. SC2104/CE3002 Ex #1 Practice #4 is the driver
+  (Trig `B15`, Echo `C7`, timer pulse + input capture, distance =
+  pulse × 343 m/s ÷ 2). Please tell us its offset from the car's front edge.
+- **Encoders** for the distances: keep them on the STM (5.3, `HOME`).
+- **One IR on each side, facing outward — second stage, not first.** While
+  going round obstacle 2, the side IR sees the block (25–35 cm) and then
+  stops seeing it, which is when the car has cleared its end. Note a wall
+  50 cm away still returns a reading, so "block present" must be a
+  threshold around 35 cm, not "any reading". Build the loop with the block's
+  width as a constant first (we measure the prop at setup); make it
+  IR-terminated once the rest works.
 
 If the sensors cannot be made to work in time, the Pi can fall back to a
-camera-driven creep (short `FS` steps with a photo between each, stopping on
-the arrow's apparent size). It needs nothing from you but is slow — 10 s or
-more per approach on a task scored by time — so it is the fallback, not the
-plan.
+camera-driven creep (short `FS` steps with a photo between each, stopping
+on the arrow's apparent size). It needs nothing from you but is slow —
+10 s or more per approach on a task scored by time — so it is the fallback,
+not the plan.
 
 ### 5.2 Split of work
 
-The Pi would run the sequence and make the arrow decision; the STM would own
-every manoeuvre, because that is where the calibration lives:
+The Pi runs the sequence and makes the arrow decision; the STM owns every
+manoeuvre, every sensor and the odometer, because that is where the
+calibration lives:
 
 ```
-Pi: SEEK 30        STM: drive until obstacle ≤ 30 cm ahead, DONE,SEEK,<cm travelled>
-Pi: (photograph, decide LEFT or RIGHT)
-Pi: ROUND 1 L/R    STM: go round obstacle 1 on that side, back onto the centre line, DONE
-Pi: SEEK 30        STM: as above, DONE,SEEK,<cm>
+Pi: SEEK 30        STM: drive until the ultrasonic reads ≤ 30 cm (3 readings in a row), stop,
+                        DONE,SEEK,<cm travelled>
+Pi: (photograph, decide LEFT or RIGHT; if no decision, BW 10 and try again)
+Pi: ROUND 1 L/R    STM: round obstacle 1 on that side, back onto the centre line facing onward, DONE
+Pi: SEEK 30        STM: as above — DONE,SEEK,0 straight away if already inside 30 cm
 Pi: (photograph, decide)
-Pi: ROUND 2 L/R    STM: round obstacle 2 on that side, loop behind it, come back
-                        past it facing the carpark, DONE
-Pi: HOME <cm>      STM: drive <cm> back and stop inside the carpark, DONE
+Pi: ROUND 2 L/R    STM: round obstacle 2 on that side, loop behind it, come back on the far side
+                        and end on the RETURN LANE (offset from the centre line, away from the
+                        arrow side) facing home, DONE
+Pi: HOME           STM: drive the lane past obstacle 1, re-centre, stop inside the carpark, DONE
 ```
+
+**The home leg is not a straight line down the middle** — obstacle 1 sits on
+the centre line. The car comes back on a lane offset to the side, passes
+obstacle 1 on the outside, then re-centres to enter the 60 cm opening. To
+clear a 10 cm obstacle with margin the lane must be ~25 cm off centre,
+which is more than the carpark opening tolerates, so the re-centre is a
+real manoeuvre timed from obstacle 1's position — which you know from your
+encoders and we do not. That is why `HOME` takes no argument.
+
+**`ROUND 1` has a forward budget.** Obstacle 2 can be as little as 60 cm
+behind obstacle 1. A 25 cm lane change at this car's turn radius eats
+35–55 cm of forward travel each way, so from a 30 cm standoff `ROUND 1`
+probably needs to start with a short reverse, and it must end less than
+(60 − 30 − ultrasonic offset) cm past obstacle 1's rear face, or `SEEK` for
+obstacle 2 has nothing to do. This makes `BW` a Task 2 blocker as well as a
+Task 1 one.
 
 The alternative — the STM runs the whole thing after one start command and
 asks the Pi for the arrow mid-run — needs the STM to send unsolicited lines
@@ -166,20 +188,31 @@ and the tablet's narration away from the Pi. We would rather not.
 ### 5.3 Proposed commands
 
 Verbs are words rather than two letters so nothing collides with your
-existing `SL/SR/LL/RR/AS`; all fit the 31-byte line. The `ACK`/`DONE` shape
-is what matters; respell freely.
+existing `SL/SR/LL/RR/AS`; all fit the 31-byte line. `ROUND` takes two
+arguments, which is new for your parser. The `ACK`/`DONE` shape is what
+matters; respell freely.
 
 | Command | Reply | What it does |
 |---|---|---|
-| `RANGE` | `RANGE,<cm>` | One ultrasonic reading, any time, even mid-move (data line, like `ENC`). Lets the Pi sanity-check the sensor before a run. |
-| `SEEK <cm>` | `ACK,SEEK` … `DONE,SEEK,<travelled_cm>` | Drive forward at Task 2 speed until the sensor reads ≤ `<cm>`, then stop. Report the distance actually travelled (encoders) after the verb — the Pi needs it to compute the way home. `ERR,TIMEOUT` if nothing is seen within some cap (say 250 cm). |
-| `ROUND <n> <L\|R>` | `ACK,ROUND` … `DONE,ROUND` | Go round obstacle `n` (1 or 2) on the left (`L`) or right (`R`). For 1: an S-curve that ends back on the centre line, heading forward, a known distance past the obstacle. For 2: round the side, loop behind, back past the obstacle on the far side, ending on the centre line heading toward the carpark. Both are fixed calibrated manoeuvres; the Pi never sends angles or speeds for them. |
-| `HOME <cm>` | `ACK,HOME` … `DONE,HOME` | Drive `<cm>` back toward the carpark and stop. The Pi computes `<cm>` from the two `SEEK` travel reports plus the net displacement of `ROUND 1` and `ROUND 2`, which you give us as constants. (Alternative: the STM keeps its own odometer since the first `SEEK` and `HOME` takes no argument — say which you prefer.) |
+| `RANGE` | `RANGE,<cm>` | One ultrasonic reading, any time, even mid-move (data line, like `ENC`). Lets the Pi sanity-check the sensor before a run and after each stop. |
+| `SEEK <cm>` | `ACK,SEEK` … `DONE,SEEK,<travelled_cm>` | Drive forward at Task 2 speed until the ultrasonic reads ≤ `<cm>` on **three consecutive readings** (one spurious echo must not stop the car), then stop. If already inside `<cm>`, reply `DONE,SEEK,0` at once. `ERR,TIMEOUT` if nothing is seen within ~200 cm. The travelled distance (encoders) after the verb is for our log; you keep the number that matters. |
+| `ROUND 1 <L\|R>` | `ACK,ROUND` … `DONE,ROUND` | Go round obstacle 1 on the left (`L`) or right (`R`): an S-curve that ends back on the centre line, heading forward, within the budget above. Fixed and calibrated; the Pi never sends angles or speeds. |
+| `ROUND 2 <L\|R>` | `ACK,ROUND` … `DONE,ROUND` | Go round obstacle 2 on that side, loop behind it, come back on the far side, and end on the return lane heading home. First version: fixed loop with the block's width as a constant. Second version: the side IR ends the along-the-block leg. |
+| `HOME` | `ACK,HOME` … `DONE,HOME` | Drive the return lane, re-centre once past obstacle 1, stop inside the carpark. Distances from your odometer, reset at the first `SEEK`. No argument. |
 
-Two things to keep in mind while calibrating: the arrow must be readable from
-where `SEEK` stops (25–40 cm is where the Task 1 camera work sits; we will
-confirm with the CV side), and every obstacle contact costs 10 s, so the
-manoeuvres should trade a little time for clearance.
+`S` must abort any of these mid-way, and the next command must be accepted
+after the usual `PING`/`PONG` — we will test that first.
+
+Two things to keep in mind while calibrating: the arrow must be readable
+from where `SEEK` stops (25–40 cm is where the Task 1 camera work sits; we
+will confirm with the CV side), and every obstacle contact costs 10 s, so
+the manoeuvres should trade a little time for clearance.
+
+**Suggested build order:** `BW` → ultrasonic + `RANGE` + `SEEK` → fixed
+`ROUND 1`, `ROUND 2`, `HOME` (with the block's width as a constant) → side
+IRs and the IR-terminated loop last. The Pi has a `--fake-arrows` mode so
+you can rehearse the whole sequence on the real car with no camera and no
+WiFi as soon as the commands exist.
 
 ### 5.4 `beginFastest`
 
