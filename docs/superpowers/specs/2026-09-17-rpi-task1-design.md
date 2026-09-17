@@ -116,13 +116,20 @@ the four arc tokens `FORWARD_LEFT` … `BACKWARD_RIGHT` (plus `_45` variants whe
 the planner's diagonal mode is on), and `CAPTURE_IMAGE`, which ends every
 segment. 422 on a bad request.
 
-**Open with the algorithm owner** (assumed answers in bold):
+**Verified from the planner's code** (branch `kejun-experimental-algo`):
 
-| # | Question | Assumed |
+| # | Fact | Where |
 |---|---|---|
-| P1 | Any `robot` pose anywhere on the board, with any subset of obstacles, is a valid request | **yes** — A.5 and stop-then-restart depend on it |
-| P2 | `segments[].path[-1]` is the robot's **centre** in cm with a cardinal `direction`, at the capture point | **yes** |
-| P3 | `TURN_RADIUS_CM` re-measured against the STM's actual `AS` lock | needed for accuracy, not for the code |
+| P1 | Any `robot` pose inside the grid, with any subset of obstacles (≥ 1), is a valid request. Nothing assumes the start zone or the full layout. | `pathfinding_controller.py` `_construct_world` |
+| P2 | `segments[].path[-1]` is the robot's **centre** in cm, facing the obstacle, 25–30 cm from its face. Straights include their endpoint; turns append the post-turn centre pose last. | `search/search.py` `Segment.compress`, `search/straight.py`, `search/turn.py`, `config.STANDOFF_*_CM` |
+| — | The grid is 200 × 200 with a 1 cm cell; every corner must satisfy `0 ≤ v < 200`. A 30 cm robot is planned as a 31-cell footprint, so a centre above 184 cm on either axis is a 422. | `config.GRID_SIZE`, `world/world.py` `Robot.planned`, `World.__inside` |
+| — | Straights are multiples of 5 cm. Turn radii are per direction and currently the prior year's: FL 39, FR 40, BL 37, BR 39. | `config.STRAIGHT_CHUNK_CELLS`, `config.TURN_RADIUS_CM` |
+
+**Open with the algorithm owner:**
+
+| # | Ask |
+|---|---|
+| P3 | Replace `TURN_RADIUS_CM` with values measured on this car at the STM's actual `AS` steering lock. Joint with the STM team. Needed for accuracy, not for this code. |
 
 ### 3.4 Image-recognition contract — the parts used
 
@@ -250,7 +257,7 @@ import. No other module reads the environment.
 | `STM_STOP_DRAIN_S` | `0.5` | how long to discard replies after `S` |
 | `MANUAL_TURN_DEG` | `45` | angle used for the four manual arc buttons |
 | `MOTOR_A_PCT` / `MOTOR_B_PCT` / `STEER_STEPS` | `50` / `50` / `5` | pushed to the STM at startup; `None` = don't send |
-| `TURN_RADIUS_CM` | `30` | dead-reckoning arc displacement; mirror the planner's value |
+| `TURN_RADIUS_CM` | `{FL: 39, FR: 40, BL: 37, BR: 39}` | dead-reckoning arc displacement per direction; mirrors the planner's `config.TURN_RADIUS_CM` and must change with it |
 | `CAPTURE_SETTLE_S` | `0.3` | pause before the first frame |
 | `CAPTURE_FRAMES` | `3` | frames per obstacle |
 | `CAMERA_WIDTH/HEIGHT/ROTATION` | `640` / `480` / `0` | |
@@ -303,7 +310,7 @@ Conversions (the only place these formulas live):
 | face `N/E/S/W` | planner direction | `NORTH/EAST/SOUTH/WEST` |
 | robot cells `(x, y)` | centre cm | `cx = 10x + 5`, `cy = 10y + 5` |
 | centre cm `(cx, cy)` | robot cells | `x = (cx - 5) / 10` |
-| centre cm | planner robot corners | `south_west = (cx - 15, cy - 15)`, `north_east = (cx + 15, cy + 15)` |
+| centre cm | planner robot corners | clamp `cx`, `cy` to `[15, 184]` (log if it moved), then `south_west = (cx - 15, cy - 15)`, `north_east = (cx + 15, cy + 15)` — the planner rejects any corner ≥ 200 |
 | heading deg | planner direction | nearest of 0/90/180/270 → `NORTH/EAST/SOUTH/WEST` |
 | planner direction | heading deg | `NORTH=0, EAST=90, SOUTH=180, WEST=270` |
 
@@ -414,7 +421,7 @@ continues (§7).
 Dead reckoning for the tablet's marker. `advance(pose, instruction) -> Pose`:
 
 - `Straight`: move `cm` along the heading (backward = negative).
-- `Arc`: with `R = TURN_RADIUS_CM` and the robot's frame (forward, left):
+- `Arc`: with `R = TURN_RADIUS_CM[kind]` and the robot's frame (forward, left):
   `FORWARD_LEFT` → +R forward, +R left, heading −90;
   `FORWARD_RIGHT` → +R forward, −R left, heading +90;
   `BACKWARD_LEFT` → −R forward, +R left, heading +90;
