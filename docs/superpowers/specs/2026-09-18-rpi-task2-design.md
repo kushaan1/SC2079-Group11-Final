@@ -40,7 +40,7 @@ new.
    consensus above both.
 3. The STM commands of §3.1 in the driver, with fakes so the whole run
    executes on a laptop.
-4. `US` at each stop as a sanity check that the sensor sees the obstacle.
+4. `RANGE` at each stop as a sanity check that the sensor sees the obstacle.
 
 ### Not in v1
 
@@ -59,17 +59,17 @@ All with the confirmed reply model: `ACK,<verb>` on receipt within 1 s,
 
 | Pi sends | STM replies | Meaning | Pi deadline for `DONE` |
 |---|---|---|---|
-| `US` | `US,<cm>` | one forward ultrasonic reading, any time | 1 s (data line) |
-| `SK <cm>` | `ACK,SK` … `DONE,SK,<travelled_cm>` | forward at Task 2 speed until the ultrasonic reads ≤ `<cm>`; report encoder distance travelled | `STM_SEEK_DEADLINE_S` (20) |
-| `AL <n>` / `AR <n>` | `ACK,AL` … `DONE,AL` | round obstacle `n` (1 or 2) on the left / right, ending on the centre line: heading onward for 1, heading home for 2 (the side IR marks the end of the block) | `STM_ROUTE_DEADLINE_S` (25) |
-| `HM <cm>` | `ACK,HM` … `DONE,HM` | drive `<cm>` toward the carpark and stop inside it | `cm / 10 + 5` (the straight formula) |
+| `RANGE` | `RANGE,<cm>` | one forward ultrasonic reading, any time | 1 s (data line) |
+| `SEEK <cm>` | `ACK,SEEK` … `DONE,SEEK,<travelled_cm>` | forward at Task 2 speed until the ultrasonic reads ≤ `<cm>`; report encoder distance travelled | `STM_SEEK_DEADLINE_S` (20) |
+| `ROUND <n> <L\|R>` | `ACK,ROUND` … `DONE,ROUND` | round obstacle `n` (1 or 2) on the left or right, ending on the centre line: heading onward for 1, heading home for 2 (the side IR marks the end of the block) | `STM_ROUTE_DEADLINE_S` (25) |
+| `HOME <cm>` | `ACK,HOME` … `DONE,HOME` | drive `<cm>` toward the carpark and stop inside it | `cm / 10 + 5` (the straight formula) |
 | `S` | as today | stop anything | — |
 
 Fixed numbers the STM team supplies and the Pi keeps in config:
 `T2_AROUND1_NET_CM`, `T2_AROUND2_NET_CM` — the net displacement along the
 course of each manoeuvre — so the distance home is
 `travelled_1 + travelled_2 + T2_AROUND1_NET_CM + T2_AROUND2_NET_CM`.
-If they would rather the STM keep its own odometer and `HM` take no
+If they would rather the STM keep its own odometer and `HOME` take no
 argument, that is a one-line change in `encode` and this formula goes.
 
 Hardware, from the component list: HC-SR04 forward; two Sharp GP2Y0A21YK
@@ -146,14 +146,15 @@ def read_arrow(camera, source, consensus, timeout_s, abort) -> Optional[str]
 
 ### 5.2 `rpi/stm_driver.py` additions
 
-- Encodings: `encode_seek(cm) -> "SK <cm>"`, `encode_around(n, side) -> "AL n" | "AR n"`,
-  `encode_home(cm) -> "HM <cm>"`, `"US"`. `is_motion` gains `SK AL AR HM`.
+- Encodings: `encode_seek(cm) -> "SEEK <cm>"`, `encode_round(n, side) -> "ROUND n L" | "ROUND n R"`,
+  `encode_home(cm) -> "HOME <cm>"`, `"RANGE"`. `is_motion` gains `SEEK ROUND HOME`.
 - `StmDriver` gains `seek(cm, abort) -> Optional[int]` (travelled cm parsed from
-  `DONE,SK,<n>`; `None` if absent), `around(n, side, abort) -> None`,
-  `home(cm, abort) -> None`, `range_cm() -> Optional[int]` (`US`; `None` on
+  `DONE,SEEK,<n>`; `None` if absent), `round(n, side, abort) -> None`,
+  `home(cm, abort) -> None`, `range_cm() -> Optional[int]` (`RANGE`; `None` on
   no reply — never fatal).
-- `_deadline` maps `SK` → `STM_SEEK_DEADLINE_S`, `AL/AR` → `STM_ROUTE_DEADLINE_S`,
-  `HM` → straight formula. DONE parsing: `DONE,SK,87` → 87.
+- `_deadline` maps `SEEK` → `STM_SEEK_DEADLINE_S`, `ROUND` → `STM_ROUTE_DEADLINE_S`,
+  `HOME` → straight formula. DONE parsing: `DONE,SEEK,87` → 87. The verb
+  match is on the first token, so `ROUND 2 R` is acknowledged by `ACK,ROUND`.
 - `FakeStmDriver` gains `seek_distances: List[int]` (scripted, popped per seek)
   and `range_readings: List[int]`; records lines as today; timed like the rest.
 
@@ -166,7 +167,7 @@ def read_arrow(camera, source, consensus, timeout_s, abort) -> Optional[str]
 | `ARROW_MIN_CONFIDENCE` | `0.75` | Jerick's default |
 | `ARROW_REQUIRED` / `ARROW_WINDOW` | `3` / `5` | the vote |
 | `ARROW_TIMEOUT_S` | `8` | per arrow, then the run stops |
-| `T2_STOP_CM` | `30` | the `SK` argument; where the arrow is read from |
+| `T2_STOP_CM` | `30` | the `SEEK` argument; where the arrow is read from |
 | `T2_AROUND1_NET_CM` / `T2_AROUND2_NET_CM` | `0` / `0` | from the STM team |
 | `STM_SEEK_DEADLINE_S` / `STM_ROUTE_DEADLINE_S` | `20` / `25` | |
 
@@ -183,20 +184,20 @@ the start line, for the log; the tablet keeps the official one.
 
 ```
 RX  MSG,Fastest: seeking obstacle 1
-                                  > SK 30 ... < DONE,SK,87
-RX  MSG,Obstacle 1 at 87 cm       (then US: the reading is logged; a MSG only if it disagrees, see below)
+                                  > SEEK 30 ... < DONE,SEEK,87
+RX  MSG,Obstacle 1 at 87 cm       (then RANGE: the reading is logged; a MSG only if it disagrees, see below)
 RX  MSG,Reading arrow 1
                                   capture / detect / vote until 3 of 5 agree
 RX  MSG,Arrow 1: LEFT
-                                  > AL 1 ... < DONE,AL
+                                  > ROUND 1 L ... < DONE,ROUND
 RX  MSG,Seeking obstacle 2
-                                  > SK 30 ... < DONE,SK,112
+                                  > SEEK 30 ... < DONE,SEEK,112
 RX  MSG,Obstacle 2 at 112 cm
 RX  MSG,Reading arrow 2
 RX  MSG,Arrow 2: RIGHT
-                                  > AR 2 ... < DONE,AR
+                                  > ROUND 2 R ... < DONE,ROUND
 RX  MSG,Returning 259 cm          (87 + 112 + around1 + around2)
-                                  > HM 259 ... < DONE,HM
+                                  > HOME 259 ... < DONE,HOME
 RX  MSG,Parked in 41.3 s
 ```
 
@@ -208,11 +209,11 @@ Rules applied at each step:
 - **Arrow not decided within `ARROW_TIMEOUT_S`:** `MSG,Arrow 1 not readable -
   stopped`. The run ends without moving — a guess would void the run; the
   operator can reposition and press FASTEST again.
-- **`DONE,SK` without a distance:** `MSG,STM gave no distance - cannot return`
+- **`DONE,SEEK` without a distance:** `MSG,STM gave no distance - cannot return`
   and the run ends there, not at the end: it cannot finish without the
   number, and finding that out after the arrows wastes the attempt.
-- **STM `ERR,*` or silence:** as Task 1, `MSG,Aborted at SK 30: ERR,TIMEOUT`.
-- **`US` disagrees badly with the stop distance** (reading > `stop_cm` + 15 or
+- **STM `ERR,*` or silence:** as Task 1, `MSG,Aborted at SEEK 30: ERR,TIMEOUT`.
+- **`RANGE` disagrees badly with the stop distance** (reading > `stop_cm` + 15 or
   no reading): `MSG,Warning: sensor reads 52 cm`; the run continues — the
   arrow read decides whether it was really in front of the obstacle.
 - **Arrow source not configured** (`http` with no `VISION_URL`, or `tflite`
@@ -224,8 +225,8 @@ Rules applied at each step:
 | Condition | Who notices | STM action | Tablet sees |
 |---|---|---|---|
 | no arrow consensus in time | run | none | `Arrow n not readable - stopped` |
-| `DONE,SK` lacks a distance | driver → run | none | `STM gave no distance - cannot return` |
-| `US` far from `stop_cm` | run | none | `Warning: sensor reads N cm`, continues |
+| `DONE,SEEK` lacks a distance | driver → run | none | `STM gave no distance - cannot return` |
+| `RANGE` far from `stop_cm` | run | none | `Warning: sensor reads N cm`, continues |
 | STOP during a seek/route/home | controller | `S`, resync | `Stopped` |
 | STM `ERR`/silence | driver | `S`, resync | `Aborted at <cmd>: <reply>` |
 | arrow source unavailable | run start | none | `Arrow source not configured` |
@@ -240,8 +241,8 @@ Unit, no hardware, as Task 1:
   maps 38/39 and swallows errors; TFLite source reports unconfigured when
   the model file is missing (the detector itself is only exercised when
   `tflite_runtime` is importable — skipped otherwise).
-- `test_stm_driver.py` / `test_stm_serial.py`: the five encodings; `DONE,SK,87`
-  parsing; `DONE,SK` without a number; `US` reply and no-reply; deadlines.
+- `test_stm_driver.py` / `test_stm_serial.py`: the five encodings; `DONE,SEEK,87`
+  parsing; `DONE,SEEK` without a number; `RANGE` reply and no-reply; deadlines.
 - `test_fastest_run.py`: the full run line by line with scripted distances
   and arrows (the transcript in §6 is the assertion); each row of §7.
 - `test_dispatcher.py`: `beginFastest` starts the run when the factory is
@@ -249,7 +250,7 @@ Unit, no hardware, as Task 1:
 - `test_main.py`: `build()` wires the factory; the `http` source is chosen
   by default.
 
-On the Pi, in this order: `US` and `SK 30` by hand over CoolTerm; the run
+On the Pi, in this order: `RANGE` and `SEEK 30` by hand over CoolTerm; the run
 with `--fake-stm` and the real camera against the PC server, an arrow
 printout held in front of the car (proves the read and the narration); the
 run with the real STM on a two-obstacle course; then the on-Pi source once
@@ -260,8 +261,8 @@ selectable from config.
 
 | # | Item | Owner | Blocks |
 |---|---|---|---|
-| 1 | Confirm or rename `US / SK / AL / AR / HM` and the `DONE,SK,<cm>` payload | STM | driver encodings |
-| 2 | `T2_AROUND1_NET_CM`, `T2_AROUND2_NET_CM`, or bare `HM` | STM | the return |
+| 1 | Confirm `RANGE / SEEK / ROUND / HOME` and the `DONE,SEEK,<cm>` payload | STM | driver encodings |
+| 2 | `T2_AROUND1_NET_CM`, `T2_AROUND2_NET_CM`, or bare `HOME` | STM | the return |
 | 3 | Sensor mounting: ultrasonic forward, IRs sideways | STM | nothing on the Pi |
 | 4 | `best.pt` for the PC server (arrows via the Task 1 classes) | CV | any real arrow read |
 | 5 | `best_arrows.tflite` + labels, or the decision to skip the separate model | CV | the on-Pi source |

@@ -100,7 +100,7 @@ Numbered so you can answer by number.
 Optional, but cheap and they make Task 1 recognitions more reliable — the car
 already has the sensors, only the firmware has to expose them:
 
-7. **`US` → `US,<cm>`** — one forward ultrasonic reading, any time. The Pi
+7. **`RANGE` → `RANGE,<cm>`** — one forward ultrasonic reading, any time. The Pi
    would read it at every capture pose and nudge the car with a short
    `FW`/`BW` so the camera is at the trained range before photographing,
    instead of wherever dead reckoning left it. Please tell us the sensor's
@@ -148,14 +148,14 @@ The Pi would run the sequence and make the arrow decision; the STM would own
 every manoeuvre, because that is where the calibration lives:
 
 ```
-Pi: SK 30          STM: drive until obstacle ≤ 30 cm ahead, DONE,SK,<cm travelled>
+Pi: SEEK 30        STM: drive until obstacle ≤ 30 cm ahead, DONE,SEEK,<cm travelled>
 Pi: (photograph, decide LEFT or RIGHT)
-Pi: AL 1 / AR 1    STM: go round obstacle 1 on that side, back onto the centre line, DONE
-Pi: SK 30          STM: as above, DONE,SK,<cm>
+Pi: ROUND 1 L/R    STM: go round obstacle 1 on that side, back onto the centre line, DONE
+Pi: SEEK 30        STM: as above, DONE,SEEK,<cm>
 Pi: (photograph, decide)
-Pi: AL 2 / AR 2    STM: round obstacle 2 on that side, loop behind it, come back
+Pi: ROUND 2 L/R    STM: round obstacle 2 on that side, loop behind it, come back
                         past it facing the carpark, DONE
-Pi: HM <cm>        STM: drive <cm> back and stop inside the carpark, DONE
+Pi: HOME <cm>      STM: drive <cm> back and stop inside the carpark, DONE
 ```
 
 The alternative — the STM runs the whole thing after one start command and
@@ -165,18 +165,19 @@ and the tablet's narration away from the Pi. We would rather not.
 
 ### 5.3 Proposed commands
 
-Names are placeholders chosen to avoid your existing `SL/SR/LL/RR/AS`. Any
-two-letter verbs you prefer are fine; the `ACK`/`DONE` shape is what matters.
+Verbs are words rather than two letters so nothing collides with your
+existing `SL/SR/LL/RR/AS`; all fit the 31-byte line. The `ACK`/`DONE` shape
+is what matters; respell freely.
 
 | Command | Reply | What it does |
 |---|---|---|
-| `US` | `US,<cm>` | One ultrasonic reading, any time, even mid-move (data line, like `ENC`). Lets the Pi sanity-check the sensor before a run. |
-| `SK <cm>` | `ACK,SK` … `DONE,SK,<travelled_cm>` | Drive forward at Task 2 speed until the sensor reads ≤ `<cm>`, then stop. Report the distance actually travelled (encoders) after the verb — the Pi needs it to compute the way home. `ERR,TIMEOUT` if nothing is seen within some cap (say 250 cm). |
-| `AL <n>` / `AR <n>` | `ACK,AL` … `DONE,AL` | Go round obstacle `n` (1 or 2) on the left / right. For 1: an S-curve that ends back on the centre line, heading forward, a known distance past the obstacle. For 2: round the side, loop behind, back past the obstacle on the far side, ending on the centre line heading toward the carpark. Both are fixed calibrated manoeuvres; the Pi never sends angles or speeds for them. |
-| `HM <cm>` | `ACK,HM` … `DONE,HM` | Drive `<cm>` back toward the carpark and stop. The Pi computes `<cm>` from the two `SK` travel reports plus the net displacement of `AL/AR 1` and `AL/AR 2`, which you give us as constants. (Alternative: the STM keeps its own odometer since the first `SK` and `HM` takes no argument — say which you prefer.) |
+| `RANGE` | `RANGE,<cm>` | One ultrasonic reading, any time, even mid-move (data line, like `ENC`). Lets the Pi sanity-check the sensor before a run. |
+| `SEEK <cm>` | `ACK,SEEK` … `DONE,SEEK,<travelled_cm>` | Drive forward at Task 2 speed until the sensor reads ≤ `<cm>`, then stop. Report the distance actually travelled (encoders) after the verb — the Pi needs it to compute the way home. `ERR,TIMEOUT` if nothing is seen within some cap (say 250 cm). |
+| `ROUND <n> <L\|R>` | `ACK,ROUND` … `DONE,ROUND` | Go round obstacle `n` (1 or 2) on the left (`L`) or right (`R`). For 1: an S-curve that ends back on the centre line, heading forward, a known distance past the obstacle. For 2: round the side, loop behind, back past the obstacle on the far side, ending on the centre line heading toward the carpark. Both are fixed calibrated manoeuvres; the Pi never sends angles or speeds for them. |
+| `HOME <cm>` | `ACK,HOME` … `DONE,HOME` | Drive `<cm>` back toward the carpark and stop. The Pi computes `<cm>` from the two `SEEK` travel reports plus the net displacement of `ROUND 1` and `ROUND 2`, which you give us as constants. (Alternative: the STM keeps its own odometer since the first `SEEK` and `HOME` takes no argument — say which you prefer.) |
 
 Two things to keep in mind while calibrating: the arrow must be readable from
-where `SK` stops (25–40 cm is where the Task 1 camera work sits; we will
+where `SEEK` stops (25–40 cm is where the Task 1 camera work sits; we will
 confirm with the CV side), and every obstacle contact costs 10 s, so the
 manoeuvres should trade a little time for clearance.
 
