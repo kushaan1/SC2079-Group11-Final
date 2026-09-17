@@ -6,7 +6,7 @@ from rpi.planner_client import PlannerClient, PlannerError, parse_instruction, p
 SAMPLE = {
     "segments": [
         {
-            "image_id": 2,
+            "obstacle_id": 2,
             "cost": 88,
             "seconds": 3.83,
             "instructions": [
@@ -16,6 +16,21 @@ SAMPLE = {
                 "FORWARD_LEFT_45",
                 "CAPTURE_IMAGE",
             ],
+            "path": [{"direction": "NORTH", "x": 15, "y": 15}, {"direction": "EAST", "x": 55, "y": 65}],
+            "end": {"direction": "EAST", "x": 55, "y": 65},
+        }
+    ],
+    "unreachable": [{"obstacle_id": 3, "reason": "NO_OBJECTIVES"}],
+}
+
+# The shape before algorithm commit 974c60f: image_id, no end, the pose only in path[-1].
+OLD_SAMPLE = {
+    "segments": [
+        {
+            "image_id": 2,
+            "cost": 88,
+            "seconds": 3.83,
+            "instructions": [{"move": "FORWARD", "amount": 15}, "CAPTURE_IMAGE"],
             "path": [{"direction": "NORTH", "x": 15, "y": 15}, {"direction": "EAST", "x": 55, "y": 65}],
         }
     ],
@@ -79,8 +94,21 @@ def test_parse_plan():
     assert plan.unreachable == ((3, "NO_OBJECTIVES"),)
 
 
-def test_parse_plan_needs_a_path():
-    body = {"segments": [dict(SAMPLE["segments"][0], path=[])], "unreachable": []}
+def test_parse_plan_prefers_end_over_the_path():
+    body = {"segments": [dict(SAMPLE["segments"][0], path=[{"direction": "NORTH", "x": 15, "y": 15}])],
+            "unreachable": []}
+    assert parse_plan(body).segments[0].end_pose == Pose(5.0, 6.0, 90.0)
+
+
+def test_parse_plan_accepts_the_older_image_id_and_path_only_shape():
+    plan = parse_plan(OLD_SAMPLE)
+    assert plan.segments[0].image_id == 2
+    assert plan.segments[0].end_pose == Pose(5.0, 6.0, 90.0)
+    assert plan.unreachable == ((3, "NO_OBJECTIVES"),)
+
+
+def test_parse_plan_needs_an_end_pose_from_somewhere():
+    body = {"segments": [dict(SAMPLE["segments"][0], path=[], end=None)], "unreachable": []}
     with pytest.raises(ValueError):
         parse_plan(body)
 

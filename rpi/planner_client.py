@@ -30,20 +30,35 @@ def parse_instruction(raw: object) -> Instruction:
     raise ValueError("unknown instruction %r" % (raw,))
 
 
+def _obstacle_number(item: dict) -> int:
+    """The planner echoes the caller's obstacle number as `obstacle_id` (since
+    algorithm commit 974c60f); its openapi fixtures still say `image_id`."""
+    return int(item["obstacle_id"] if "obstacle_id" in item else item["image_id"])
+
+
+def _end_pose(raw: dict):
+    """`end` is the capture pose and is reported even when verbose is false;
+    older responses only had it as the last `path` vector."""
+    end = raw.get("end")
+    if end:
+        return planner_vector_to_pose(end)
+    path = raw.get("path") or []
+    if not path:
+        raise ValueError("segment %s has no end pose (was verbose false?)" % _obstacle_number(raw))
+    return planner_vector_to_pose(path[-1])
+
+
 def parse_plan(body: dict) -> Plan:
     segments = []
     for raw in body["segments"]:
-        path = raw.get("path") or []
-        if not path:
-            raise ValueError("segment %s has no path (was verbose false?)" % raw.get("image_id"))
         segments.append(Segment(
-            image_id=int(raw["image_id"]),
+            image_id=_obstacle_number(raw),
             instructions=tuple(parse_instruction(item) for item in raw["instructions"]),
-            end_pose=planner_vector_to_pose(path[-1]),
+            end_pose=_end_pose(raw),
             seconds=float(raw.get("seconds") or 0.0),
         ))
     unreachable = tuple(
-        (int(item["image_id"]), str(item.get("reason", ""))) for item in body.get("unreachable", [])
+        (_obstacle_number(item), str(item.get("reason", ""))) for item in body.get("unreachable", [])
     )
     return Plan(tuple(segments), unreachable)
 

@@ -109,19 +109,25 @@ bold, and `stm_driver.py` is the only file that changes if they differ:
 `POST {PLANNER_URL}/pathfinding/`, JSON. Request: `robot` (heading as
 `NORTH`/`EAST`/`SOUTH`/`WEST`, footprint as inclusive cm corners), `obstacles`
 (each `image_id` 1–40 unique, `direction` = the image face, cm corners),
-optional `strategy` (`optimal` default, or `greedy`). Response: `segments`
-in visit order, each with `image_id`, `instructions`, `path`; and
-`unreachable`. Instructions are `{"move":"FORWARD"|"BACKWARD","amount":<cm>}`,
-the four arc tokens `FORWARD_LEFT` … `BACKWARD_RIGHT` (plus `_45` variants when
-the planner's diagonal mode is on), and `CAPTURE_IMAGE`, which ends every
-segment. 422 on a bad request.
+optional `strategy` (`optimal` default, or `greedy`; `turnInPlace` is a 422).
+Response: `segments` in visit order, each with `obstacle_id` (the number the
+caller sent — renamed from `image_id` in algorithm commit `974c60f`, which the
+client still accepts), `instructions`, `path`, `seconds`, and `end` (the
+capture pose, present even when `verbose` is false); and `unreachable` with
+`obstacle_id` and `reason`. Instructions are
+`{"move":"FORWARD"|"BACKWARD","amount":<cm>}`, the four arc tokens
+`FORWARD_LEFT` … `BACKWARD_RIGHT` (plus `_45` variants when the planner's
+diagonal mode is on), and `CAPTURE_IMAGE`, which ends every segment. 422 on a
+bad request. The same commit also made the planner accept the tablet's own
+JSON shape directly; this program keeps sending the canonical cm shape, which
+still works.
 
 **Verified from the planner's code** (branch `kejun-experimental-algo`):
 
 | # | Fact | Where |
 |---|---|---|
 | P1 | Any `robot` pose inside the grid, with any subset of obstacles (≥ 1), is a valid request. Nothing assumes the start zone or the full layout. | `pathfinding_controller.py` `_construct_world` |
-| P2 | `segments[].path[-1]` is the robot's **centre** in cm, facing the obstacle, 25–30 cm from its face. Straights include their endpoint; turns append the post-turn centre pose last. | `search/search.py` `Segment.compress`, `search/straight.py`, `search/turn.py`, `config.STANDOFF_*_CM` |
+| P2 | `segments[].end` (= `path[-1]`) is the robot's **centre** in cm, facing the obstacle, 25–30 cm from its face. Straights include their endpoint; turns append the post-turn centre pose last. | `search/search.py` `Segment.compress`, `search/straight.py`, `search/turn.py`, `config.STANDOFF_*_CM`; `PathfindingResponseSegment.from_segment` |
 | — | The grid is 200 × 200 with a 1 cm cell; every corner must satisfy `0 ≤ v < 200`. A 30 cm robot is planned as a 31-cell footprint, so a centre above 184 cm on either axis is a 422. | `config.GRID_SIZE`, `world/world.py` `Robot.planned`, `World.__inside` |
 | — | Straights are multiples of 5 cm. Turn radii are per direction and currently the prior year's: FL 39, FR 40, BL 37, BR 39. | `config.STRAIGHT_CHUNK_CELLS`, `config.TURN_RADIUS_CM` |
 
