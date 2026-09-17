@@ -157,13 +157,14 @@ the planner needs, so the RPi never has to pair a "go" with a layout it
 received earlier:
 
 ```json
-{"command":"imageRec","algorithm":"greedy","obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}
+{"command":"imageRec","algorithm":"greedy","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
 | `command` | string | Always `imageRec`. This is what tells the message apart from [SEND ARENA's](#15-send-arena), which has no `command` key. |
 | `algorithm` | string | The planner the operator chose by holding the IMAGE REC button: `greedy`, `optimal` or `turnInPlace`. Default `greedy`. |
+| `robot` | object | **RPi request, tablet: not yet sent.** `{"x":1.0,"y":1.0,"heading":0.0}` — the pose the tablet currently draws, same units as `MOVEROBOT`. With it, a start is a complete snapshot and the RPi keeps no state from earlier messages. Absent → the RPi assumes the start pose and says so in a `MSG`. |
 | `obstacles` | array | Exactly the array [SEND ARENA](#15-send-arena) sends: every placed block, **sorted by id**, cells 0–19, `face` one of `N`/`E`/`S`/`W` and never null. |
 
 Key order is fixed - `command`, `algorithm`, `obstacles` - but a JSON parser
@@ -179,9 +180,21 @@ clock does not start**. So a received start is a complete, faced layout.
 {"command":"imageRec","algorithm":"greedy","obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":12,"y":8,"face":"E"},{"id":3,"x":5,"y":15,"face":"S"},{"id":4,"x":15,"y":3,"face":"W"},{"id":5,"x":3,"y":10,"face":"E"},{"id":6,"x":17,"y":17,"face":"S"},{"id":7,"x":8,"y":12,"face":"N"},{"id":8,"x":14,"y":14,"face":"W"}]}
 ```
 
-The robot's start pose is **not** included. The tablet knows it (see
-[§1.3](#13-robot-position)) and can add a `robot` object if the planner wants
-it - say so.
+#### Start face search (checklist A.5)
+
+**RPi accepts this; the tablet does not send it yet.** Same shape as the
+image-rec start, no `algorithm`:
+
+```json
+{"command":"faceSearch","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[{"id":1,"x":10,"y":6,"face":"S"}]}
+```
+
+One obstacle, whose `face` is the side the supervisor put the bullseye on. The
+RPi drives there, waits for the recogniser's verdict, and on a bullseye goes
+round the block face by face until an image is found, narrating with `MSG`
+lines and sending `TARGET` when it finds one. Extra obstacles are ignored.
+Trigger on the tablet: a fourth option in the IMAGE REC long-press picker, or
+a small button — to be decided when the Android change is made.
 
 ### 1.5 Send arena
 
@@ -440,7 +453,7 @@ these, so they are decisions rather than questions.
 
 And one thing nobody has asked yet, flagged because it is larger than either:
 **the outbound token vocabulary above comes from the AMD debug tool's fixed
-slot names**, not from the RPi. `f`/`r`/`tl`/`tr`/`sl`/`sr` and `beginFastest`
+slot names**, not from the RPi. `f`/`b`/`tl`/`tr`/`sl`/`sr` and `beginFastest`
 were taken from AMD's Commands screen. Confirm the RPi parser actually speaks
 them, rather than assuming it does. (The two JSON messages - the image-rec
 start in [§1.4](#14-task-control) and SEND ARENA in [§1.5](#15-send-arena) -

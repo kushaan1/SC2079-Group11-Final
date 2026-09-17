@@ -50,3 +50,24 @@ let the tablet, planner and image server be tested end to end on the Pi before t
 robot is ready.
 
 Logs: `RPI_LOG_FILE` (default `/home/pi/rpi.log`, rotating) and stdout.
+
+## Bring-up on the Pi, in this order
+
+Each step adds one real device. Do not skip ahead: a failure then has one cause.
+
+1. **Tablet only** — `python3 -m rpi --fake-stm --fake-camera` with the planner
+   running on the laptop. Press F on the tablet: the log shows `F`. Press
+   IMAGE REC: the status panel shows `Planning...`, `Visiting n of n`, the robot
+   marker steps through the route, and `Done`. If the image server is up too,
+   `TARGET` lines appear from the fixture photo (whatever it recognises in a
+   grey square — usually nothing, which is `B1: nothing recognised`).
+2. **Camera** — drop `--fake-camera`. `MSG,B1: camera failed` means the camera
+   itself: check `raspistill -o /tmp/t.jpg` works outside this program first.
+3. **STM** — drop `--fake-stm`. The log's first lines must show `PING` and
+   `PONG`. F/B/STOP from the tablet jog the car. IMAGE REC needs the STM's
+   `BW <cm>` and the widened `FW` range (spec §3.2); until then the run stops
+   at the first reverse with `Aborted at BW 10: ERR,UNKNOWN`, which is correct.
+4. **Face search** — needs the tablet's `faceSearch` trigger.
+
+`RPI_STM_COMPLETION=DONE` if the STM team implemented the DONE reply; `ACK`
+(the default) if the ACK arrives when the motion ends.
