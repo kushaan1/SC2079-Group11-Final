@@ -48,8 +48,9 @@ Interactive Swagger UI for poking at it by hand: `http://<address>:<port>/openap
   **inclusive** — a 10 cm obstacle spans e.g. 50..59, not 50..60.
 - `direction` on an obstacle is the face the image is on; on the robot it is the heading.
 - `image_id` must be **1–40**. It identifies the obstacle, not the image: on a real run it is the
-  tablet's obstacle number (1–8), and it is echoed back unchanged in `segments[].image_id` and
-  `unreachable[].image_id`. Hand-written arenas may instead use a real image ID (11–35 the digits
+  tablet's obstacle number (1–8), and it is echoed back unchanged in `segments[].obstacle_id`
+  and `unreachable[].obstacle_id` — the response uses the honest name, the request keeps the
+  inherited one. Hand-written arenas may instead use a real image ID (11–35 the digits
   and letters, 36–40 the arrows and stop marker). IDs outside 1–40 are rejected (see "Errors").
 - `image_id` must be **unique** across obstacles.
 - `verbose: false` omits the per-cell path and zeroes the cost and `seconds`. Use it once you no
@@ -64,12 +65,81 @@ Interactive Swagger UI for poking at it by hand: `http://<address>:<port>/openap
     under 1 s for optimal; both are noise against the 6-minute Task 1 budget.
   - Any other value is a 422.
 
+## Request — the Android shape
+
+Android talks to the RPi over Bluetooth and **the RPi relays the bytes without translating
+them**, so the tablet's payload is what this service receives:
+
+```jsonc
+{
+  "command": "imageRec",              // optional, default "imageRec"; anything else is a 422
+  "algorithm": "greedy",              // optional, default "optimal"; "greedy" | "optimal"
+  "robot": { "x": 105, "y": 160, "direction": "SOUTH" },   // OPTIONAL - see "Re-planning mid-run"
+  "obstacles": [
+    { "id": 1, "x": 10, "y": 6, "face": "N" }   // x,y are 10 cm GRID CELLS, 0-19
+  ]
+}
+```
+
+Told apart from the canonical shape by the **shape of `robot`** - canonical carries corners
+(`south_west`/`north_east`), the tablet either omits it or gives a centre `x`/`y` - and converted
+in a `before` validator on `PathfindingRequest`, so `openapi.json`, the `testdata` fixtures and the
+simulator all keep speaking the canonical shape.
+
+| Tablet field | Becomes | Rule |
+|---|---|---|
+| `id` | `image_id` | 1–40, unique |
+| `x`, `y` | `south_west` = `(x*10, y*10)`, `north_east` = `(x*10+9, y*10+9)` | cell index 0–19; obstacles are always 10×10 |
+| `face` | `direction` | `N`/`E`/`S`/`W` → the cardinal |
+| `robot` *(optional)* | `robot` | Absent: `config.START_POSE`, south-west corner facing north. Present: the car's **centre in cm** + heading, expanded to the 31 cm footprint (`x`,`y` in 15-184) |
+
+**The cells are the dangerous part.** Read as centimetres, `{"x": 10, "y": 6}` puts an obstacle
+inside the robot's own 0..30 start box — a physically impossible arena that the canonical schema
+would have accepted. `tests/test_android_request.py` pins the factor of ten against a
+hand-computed arena rather than against the converter's own output.
+
+`algorithm: "turnInPlace"` is a real third value on the tablet and is **refused with a 422**
+until pivot turns ship. It belongs to a different axis from the other two — `greedy`/`optimal`
+choose the visiting order, turn-in-place chooses the motion primitives — so the value alone does
+not say what order to plan. Planning it as `optimal` would return a route that looks right and
+ignores the setting.
+
+### Re-planning mid-run (checklist A.5)
+
+Every segment carries **`end`** - the car's centre in cm and its heading at the moment
+`CAPTURE_IMAGE` fires, i.e. the last `path` vector, but present even with `verbose: false`.
+It is the same shape as the tablet request's optional `robot`, so a re-plan is a copy with no
+arithmetic. Real planner output:
+
+```
+1. POST obstacles=[{id:1, x:10, y:10, face:"N"}]     -> segment.end = {x:94, y:154, direction:"SOUTH"}
+2. CV reports a bull's-eye on that face
+3. POST robot={x:94, y:154, direction:"SOUTH"}, obstacles=[{id:1, x:10, y:10, face:"E"}]
+                                                      -> 7 instructions to the east face FROM THERE
+4. repeat with the next face until CV returns a letter; skip a face that comes back `unreachable`
+```
+
+`end` is `null` only when there is no geometry to report: stub mode, or a segment where the car
+did not move. `robot` is validated as a centre - `x`/`y` outside 15-184 cm, a non-cardinal
+`direction`, or a missing key is a 422 naming the field. **Centimetres, not cells**, even though
+the obstacles in the same request are cells: a cell is too coarse to say where a car stopped, and
+`end` is what gets fed back.
+
+### Arena rule: an image face needs 70 cm of clear space
+
+Measured by planning one obstacle alone and sweeping it across all 20 cells: `E` and `N` faces are
+photographable in cells 0–12, `W` and `S` in cells 7–19. Closer than that to the wall it faces and
+every candidate camera pose lands outside the arena, so the obstacle comes back `NO_OBJECTIVES`.
+Falls out of `ROBOT_FOOTPRINT_CM` and the standoff band, both placeholders — re-measure when they
+are fixed.
+
 ## Response — 200
 
 ```jsonc
 {
   "segments": [                       // one per obstacle to visit, IN VISIT ORDER
-    { "image_id": 12,
+    { "obstacle_id": 12,
+      "end": {"direction": "NORTH", "x": 91, "y": 56},   // where the car stops; feed back as `robot`
       "cost": 88,
       "seconds": 3.83,
       "instructions": [
@@ -82,20 +152,21 @@ Interactive Swagger UI for poking at it by hand: `http://<address>:<port>/openap
     }
   ],
   "unreachable": [                    // obstacles the robot will NOT visit
-    { "image_id": 13, "reason": "NO_OBJECTIVES" }
+    { "obstacle_id": 13, "reason": "NO_OBJECTIVES" }
   ]
 }
 ```
 
 ### Instructions
 
-Three token types, mixed in one list:
+Four token types, mixed in one list:
 
 | Token | Meaning |
 |---|---|
 | `{"move": "FORWARD"\|"BACKWARD", "amount": <cm>}` | Drive straight. `amount` is centimetres, always ≥ 1 |
 | `"FORWARD_LEFT"` `"FORWARD_RIGHT"` `"BACKWARD_LEFT"` `"BACKWARD_RIGHT"` | A quarter-turn arc |
 | `"FORWARD_LEFT_45"` `"FORWARD_RIGHT_45"` `"BACKWARD_LEFT_45"` `"BACKWARD_RIGHT_45"` | A 45° arc: the same steering lock, held half as long. **Experimental — only emitted when the planner runs with `DIAGONAL_HEADINGS` on, which is off by default.** Tell us before you rely on receiving these, and tell us if your decoder cannot ignore them |
+| `"PIVOT_LEFT_45"` `"PIVOT_RIGHT_45"` `"PIVOT_LEFT_90"` `"PIVOT_RIGHT_90"` | Turn (nearly) on the spot by shuffling: full lock forward, full lock back the other way, both strokes swinging the nose the same way. **Experimental — only emitted when the planner runs with `PIVOT_TURNS` on, which is off by default**, and **these four names are placeholders that nobody has agreed yet** (open item 5). The 45° pair additionally needs `DIAGONAL_HEADINGS`, since a 45° pivot ends on a diagonal heading |
 | `"CAPTURE_IMAGE"` | Stop and photograph. **Terminates every segment** |
 
 - Consecutive same-direction moves are already merged, so you will not receive two `FORWARD`s in a
@@ -200,8 +271,8 @@ end before the planner is finished.
 ## Deviations from the prior-year contract
 
 The prior-year team's `openapi.json` is what an earlier generated client was built from. The
-**request shape is backward compatible**, so such a client still works. Seven things differ, all
-additive or error-path only:
+**request shape is backward compatible**, so such a client still works. Nine things differ; all
+are additive or error-path only except the response field rename (8):
 
 | # | Delta | Breaks a client? |
 |---|---|---|
@@ -211,6 +282,8 @@ additive or error-path only:
 | 4 | 422 bodies use `type`, not `type_` | Only if you parse 422 bodies. The prior-year schema did not match its own framework's output; ours matches what is actually emitted |
 | 5 | `image_id` 1–10 accepted (was 422) | No. The field is the tablet's obstacle number, which starts at 1 |
 | 6 | `strategy` request field and `seconds` response field added | No for `strategy` — optional, and omitting it gives the better route. `seconds` carries the same risk as `unreachable`: a generator that rejects unknown response fields will trip on it |
+| 9 | `end` response field added - the car's stopping pose, present even when not verbose | Same risk as `unreachable`: a generator that rejects unknown response fields |
+| 8 | Response field renamed `image_id` → `obstacle_id` | **Yes** — agreed with the RPi owner first. The value is the caller's obstacle number and the image on it is unknown until CV reads it, so the old name described data that cannot exist when the request is sent. Request side unchanged |
 | 7 | `Direction` and `TurnInstruction` gained four values each, in **responses only** | Not today. Requests still accept exactly `NORTH`/`EAST`/`SOUTH`/`WEST` — a diagonal face is a 422, as it always was. The extra values reach you only if the planner is run with `DIAGONAL_HEADINGS` on, and then a `path` vector can read `NORTHEAST` and an instruction `FORWARD_LEFT_45`. **If your client validates response enums, say so before we switch it on** |
 
 Rationale for each is in [`algorithm/PROVENANCE.md`](../../algorithm/PROVENANCE.md) under "Design

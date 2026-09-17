@@ -142,6 +142,39 @@ tablet numbers the obstacles 1–8 and sends that number, and the planner only e
 Rejecting 1–10 therefore rejected every real run, so `config.IMAGE_ID_MIN` is 1 and the range
 1–40 accepts both obstacle numbers and the real image IDs a hand-written arena may use.
 
+**The response says `obstacle_id`; the request still says `image_id`.** The value is the caller's
+obstacle number, and in Task 1 the image on that obstacle is unknown until CV reads it three hops
+later — so the prior-year name described data that cannot exist at the moment the request is sent.
+Renamed on the response only, where we own both ends and the RPi owner agreed beforehand. The
+request keeps the inherited name because `openapi.json`, the five `testdata` fixtures and the
+simulator all speak it, and the simulator carries B.1–B.3. Android's own payload already calls it
+`id`, so two of the three subsystems now name it honestly.
+
+**Android's payload is converted at the boundary, not given its own route.** The RPi relays the
+tablet's bytes without translating them, so the request shape is Android's: `id`, a single point in
+10 cm grid cells, single-letter faces, and no robot block. A `before` validator on
+`PathfindingRequest` rewrites it, discriminating on the absence of `robot` — a total test rather
+than a guess, since `robot` is required in the canonical shape and Android never sends it. A second
+route would have split the response building and the stub in two; converting at the edge leaves one
+of each. The cell-to-centimetre factor is pinned in `tests/test_android_request.py` against a
+hand-computed arena rather than the converter's own output, because read as centimetres the
+tablet's own sample places an obstacle inside the robot's start box and nothing in the canonical
+schema would have caught it.
+
+**A mid-run re-plan is the same request with a pose, not a second endpoint.** Checklist A.5 has the
+car standing at a face, CV seeing a bull's-eye, and the RPi needing a route to the next face from
+where the car is. The planner already took an arbitrary start pose in the canonical shape; what was
+missing was a way to say it in the tablet shape, and a way to learn it. So the tablet shape gained an
+optional `robot` - the car's CENTRE in cm plus a heading, expanded to the footprint at the boundary -
+and every segment gained `end`, the stopping pose in exactly that shape, present even when
+`verbose` is false. The RPi copies one into the other. Centre rather than corners, and centimetres
+rather than the cells the obstacles use, because `end` has to round-trip with no arithmetic on the
+RPi, and a cell is too coarse to say where a car stopped. The alternative - a `/bullseye` route as
+the other group built - would have split the response building and the stub in two and, in their
+version, silently re-planned from the original start (`robot.x = ...` assigned while
+`get_start_state()` read `self.start_position`). The discriminator moved with it: a `robot` carrying
+`south_west` is canonical, anything else is the tablet's.
+
 **Error bodies use pydantic's key names** — `type`, `loc`, `msg` — so every 422 has one shape
 whether it came from schema validation or from our own checks. See
 `docs/protocols/algorithm-service.md`.

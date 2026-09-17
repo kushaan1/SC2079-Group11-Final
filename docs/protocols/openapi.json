@@ -201,9 +201,17 @@
                         "description": "The cost, included only if verbose is true.",
                         "title": "Cost"
                     },
-                    "image_id": {
-                        "title": "Image Id",
-                        "type": "integer"
+                    "end": {
+                        "anyOf": [
+                            {
+                                "$ref": "#/components/schemas/PathfindingVector"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "default": null,
+                        "description": "Where the car stops for CAPTURE_IMAGE: its centre in cm and its heading. Present regardless of verbose. Send it back as `robot` to re-plan from there."
                     },
                     "instructions": {
                         "items": {
@@ -216,11 +224,19 @@
                                 },
                                 {
                                     "$ref": "#/components/schemas/MoveInstruction"
+                                },
+                                {
+                                    "$ref": "#/components/schemas/PivotInstruction"
                                 }
                             ]
                         },
                         "title": "Instructions",
                         "type": "array"
+                    },
+                    "obstacle_id": {
+                        "description": "The obstacle number the caller sent, echoed unchanged.",
+                        "title": "Obstacle Id",
+                        "type": "integer"
                     },
                     "path": {
                         "anyOf": [
@@ -245,7 +261,7 @@
                     }
                 },
                 "required": [
-                    "image_id",
+                    "obstacle_id",
                     "cost",
                     "instructions",
                     "path"
@@ -256,8 +272,9 @@
             "PathfindingResponseUnreachable": {
                 "description": "One obstacle the plan does not visit, and why. Additive \u2014 see this module's docstring.\n\nThe two reasons are NOT interchangeable and the RPi should not collapse them: see\n:class:`~pathfinding.report.UnreachableReason`. ``NO_OBJECTIVES`` means no photographable\npose exists (a geometry problem, usually the obstacle sitting too close to the wall it\nfaces); ``NO_PATH`` means poses exist but this plan could not reach them from where it left\nthe robot standing.",
                 "properties": {
-                    "image_id": {
-                        "title": "Image Id",
+                    "obstacle_id": {
+                        "description": "The obstacle number the caller sent, echoed unchanged.",
+                        "title": "Obstacle Id",
                         "type": "integer"
                     },
                     "reason": {
@@ -266,7 +283,7 @@
                     }
                 },
                 "required": [
-                    "image_id",
+                    "obstacle_id",
                     "reason"
                 ],
                 "title": "PathfindingResponseUnreachable",
@@ -296,6 +313,17 @@
                 ],
                 "title": "PathfindingVector",
                 "type": "object"
+            },
+            "PivotInstruction": {
+                "description": "A pivot: rotating close to on the spot by shuffling - full steering lock forward, full lock\nback the other way, repeated, both strokes swinging the nose the same way.\n\nDeliberately NOT members of :class:`TurnInstruction`, though a pivot is built out of turn\nstrokes. ``segment._TURNS`` is ``tuple(TurnInstruction)`` and the four-heading planner takes\n``tuple(t for t in _TURNS if t.degrees == 90)`` out of it, so a ``PIVOT_*_90`` living in that\nenum would be swept up by that filter and would change every route the service ships today,\nwith the pivot flag still off. Keeping the two enums apart is what makes this feature\nadditive.\n\nThe values are the wire tokens and they are PLACEHOLDERS: the RPi and STM owners have not\nsettled what the firmware expects, and changing them is an edit to this block and nothing\nelse.",
+                "enum": [
+                    "PIVOT_LEFT_45",
+                    "PIVOT_RIGHT_45",
+                    "PIVOT_LEFT_90",
+                    "PIVOT_RIGHT_90"
+                ],
+                "title": "PivotInstruction",
+                "type": "string"
             },
             "Straight": {
                 "enum": [

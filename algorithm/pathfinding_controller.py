@@ -9,7 +9,7 @@ this layer decides how those become status codes and JSON.
 **The wire contract is fixed** (AGENTS.md 2.2). The RPi's client was generated from the
 prior-year team's OpenAPI schema, so the request shape and the route are reproduced from their
 controller field for field, including choices this file would otherwise make differently (see
-:meth:`PathfindingResponseSegment.from_segment` on ``verbose``). There are exactly four
+:meth:`PathfindingResponseSegment.from_segment` on ``verbose``). There are exactly seven
 deliberate departures, all additive or error-path-only, and all recorded in
 ``docs/protocols/algorithm-service.md``:
 
@@ -26,7 +26,25 @@ deliberate departures, all additive or error-path-only, and all recorded in
    what the prior-year contract's caller wanted and could not ask for; ``seconds`` is what that
    route was chosen to minimise, so a caller can see the number rather than trust it.
 
-The reasoning behind all four is in ``algorithm/PROVENANCE.md`` under "Design decisions".
+5. The response names the field ``obstacle_id``, not ``image_id``. The value is the caller's
+   obstacle number and the image on it is unknown until CV reads it, so the prior-year name
+   described data that cannot exist when the request is sent. Renamed on the response only -
+   the request still accepts ``image_id`` so ``openapi.json``, the fixtures and the simulator
+   keep working. Agreed with the RPi owner before the change.
+
+6. A response instruction may read ``PIVOT_LEFT_45``, ``PIVOT_RIGHT_45``, ``PIVOT_LEFT_90`` or
+   ``PIVOT_RIGHT_90`` — a new member of :attr:`PathfindingResponseSegment.instructions`'
+   existing union, appended so the other three keep their positions in the schema. Emitted only
+   with ``config.PIVOT_TURNS`` on, which is off by default, so nothing reaches a caller until
+   the flag is switched. **The four token strings are placeholders**: the RPi and STM owners
+   have not agreed what the firmware expects, and settling on different names is one edit to
+   :class:`~pathfinding.search.instructions.PivotInstruction`. Requests do not widen — see the
+   note on :data:`CardinalDirection`.
+7. ``PathfindingResponseSegment.end`` - new field, the car's stopping pose (centre, cm,
+   heading), present even when ``verbose`` is false. It is what a mid-run re-plan feeds back
+   as the tablet shape's ``robot``; see :func:`_android_robot`.
+
+The reasoning behind all seven is in ``algorithm/PROVENANCE.md`` under "Design decisions".
 
 Stub mode is selected per-request from ``current_app.config["MDP_STUB"]`` rather than by an
 import-time flag, so the same module serves both modes and a test can flip it.
@@ -48,7 +66,9 @@ from pydantic import BaseModel, Field, model_validator
 
 import config
 from pathfinding.report import UnreachableReason
-from pathfinding.search.instructions import MiscInstruction, MoveInstruction, Straight, TurnInstruction
+from pathfinding.search.instructions import (
+    MiscInstruction, MoveInstruction, PivotInstruction, Straight, TurnInstruction,
+)
 from pathfinding.search.search import Segment, search
 from pathfinding.search.tour import plan_optimal
 from pathfinding.world.objective import generate_objectives
@@ -103,7 +123,11 @@ class PathfindingPoint(BaseModel):
 # already there.
 #
 # Responses are NOT restricted: with the diagonals switched on, a path vector legitimately
-# carries NORTHEAST and an instruction legitimately carries FORWARD_LEFT_45. See
+# carries NORTHEAST and an instruction legitimately carries FORWARD_LEFT_45, and with
+# `config.PIVOT_TURNS` on an instruction legitimately carries PIVOT_LEFT_90. Both are the same
+# rule in the same direction - the planner chooses the motion primitives, the caller describes
+# the arena - so neither widens this Literal. There is no request field a pivot could go in:
+# a caller cannot ask for one, any more than it can ask for a BACKWARD_RIGHT. See
 # docs/protocols/algorithm-service.md.
 CardinalDirection = Literal["NORTH", "EAST", "SOUTH", "WEST"]
 
@@ -147,6 +171,191 @@ class Strategy(str, Enum):
     OPTIMAL = "optimal"
 
 
+# ---------------------------------------------------------------------------------------
+# The Android shape
+# ---------------------------------------------------------------------------------------
+#
+# Android talks to the RPi over Bluetooth and the RPi relays the bytes WITHOUT translating
+# them, so the tablet's payload is the request body this service receives:
+#
+#     {"command": "imageRec", "algorithm": "greedy",
+#      "obstacles": [{"id": 1, "x": 10, "y": 6, "face": "N"}]}
+#
+# Four things differ from the canonical shape, and one of them is dangerous:
+#
+#   `id`            the honest name for what the canonical shape calls `image_id`
+#   `face`          a single letter rather than the full cardinal
+#   `x`, `y`        ONE point rather than two corners, and in 10 cm GRID CELLS, not cm
+#   `robot`         OPTIONAL. Absent means the start corner facing north (the Task 1
+#                   convention). Present, it is the car's CENTRE in cm plus a heading - the
+#                   same shape every segment's `end` reports, so a mid-run re-plan hands one
+#                   straight back as the other (checklist A.5, see `_android_robot`).
+#
+# The cells are the dangerous part. Read as centimetres, {"x": 10, "y": 6} places an obstacle
+# at 10..19 x 6..15 - inside the robot's own 0..30 start box - so the failure is a physically
+# impossible arena rather than a merely wrong route, and nothing in the canonical schema would
+# have rejected it. Both ends of the conversion are therefore asserted against a hand-computed
+# arena in `tests/test_android_request.py` rather than against this code's own output.
+#
+# Converting here, rather than giving Android its own route, is what keeps the canonical shape
+# working: `testdata/*.json`, every other test module and the simulator all speak it, and the
+# simulator carries checklist items B.1 to B.3.
+
+_FACES = {"N": "NORTH", "E": "EAST", "S": "SOUTH", "W": "WEST"}
+
+# The tablet indexes the arena in whole obstacle widths. Derived rather than written as 20 so
+# that a change to either constant cannot leave this silently disagreeing with the arena.
+_CELLS_ACROSS = config.ARENA_SIZE_CM // config.OBSTACLE_SIZE_CM
+
+# The only task this service plans. Optional in the payload because the Android owner's first
+# sample omitted it; an unrecognised value is still refused rather than assumed.
+_COMMAND = "imageRec"
+
+# Deferred, NOT unknown - worth a different message. Planning one of these as `optimal` would
+# hand back a route that looks correct and ignores the setting, and the first evidence would be
+# the robot driving arcs on competition day.
+_DEFERRED_ALGORITHMS = {"turnInPlace"}
+
+
+def _point(pair: tuple[int, int]) -> dict[str, int]:
+    return {"x": pair[0], "y": pair[1]}
+
+
+def _android_obstacle(index: int, obstacle: object) -> dict:
+    """Convert one tablet obstacle into the canonical shape, or say precisely what is wrong."""
+    if not isinstance(obstacle, dict):
+        raise ValueError(f"obstacles[{index}] must be an object with id, x, y and face.")
+
+    missing = [key for key in ("id", "x", "y", "face") if key not in obstacle]
+    if missing:
+        raise ValueError(
+            f"obstacles[{index}] is missing {', '.join(missing)}; each obstacle needs id, x, y and face."
+        )
+
+    face = obstacle["face"]
+    if face not in _FACES:
+        raise ValueError(
+            f"obstacles[{index}].face is {face!r}; expected one of {', '.join(sorted(_FACES))} - "
+            f"the face the image is on."
+        )
+
+    cells = {}
+    for axis in ("x", "y"):
+        cell = obstacle[axis]
+        # `bool` is an `int` in Python and True would otherwise convert to cell 1.
+        if isinstance(cell, bool) or not isinstance(cell, int) or not 0 <= cell < _CELLS_ACROSS:
+            raise ValueError(
+                f"obstacles[{index}].{axis} is {cell!r}; it is a GRID CELL index and must be a "
+                f"whole number in 0..{_CELLS_ACROSS - 1}. Centimetres are not accepted here - "
+                f"cell {_CELLS_ACROSS // 2} means {_CELLS_ACROSS // 2 * config.OBSTACLE_SIZE_CM} cm."
+            )
+        cells[axis] = cell * config.OBSTACLE_SIZE_CM
+
+    return {
+        "image_id": obstacle["id"],
+        "direction": _FACES[face],
+        "south_west": _point((cells["x"], cells["y"])),
+        "north_east": _point((cells["x"] + config.OBSTACLE_SIZE_CM - 1,
+                              cells["y"] + config.OBSTACLE_SIZE_CM - 1)),
+    }
+
+
+# Half the planning footprint: centre +- this is a box of extent ROBOT_FOOTPRINT_CM - 1, which is
+# even, so `Robot.planned`'s parity bump never fires and the pose is planned exactly as sent.
+_HALF_FOOTPRINT = config.ROBOT_FOOTPRINT_CM // 2
+
+
+def _android_robot(robot: object) -> dict:
+    """
+    The start pose of a tablet-shape request, in the canonical corners form.
+
+    Absent, it is ``config.START_POSE`` - the Task 1 convention agreed with the Android owner.
+    Present, it is the car's CENTRE in centimetres plus a heading, expanded to the planning
+    footprint here. Centre-and-heading rather than corners, and centimetres rather than the
+    cells the obstacles use, for one reason: it is exactly what every segment's ``end``
+    reports, so the RPi re-plans from where the car stopped by handing ``end`` back as
+    ``robot`` with no arithmetic in between. A cell would be too coarse to say where a car
+    actually stopped, and corners would make the RPi do the +-15 itself.
+    """
+    if robot is None:
+        return {
+            "direction": config.START_POSE["direction"],
+            "south_west": _point(config.START_POSE["south_west"]),
+            "north_east": _point(config.START_POSE["north_east"]),
+        }
+    if not isinstance(robot, dict):
+        raise ValueError("robot must be an object with x, y (the car's centre, in cm) and direction.")
+
+    missing = [key for key in ("x", "y", "direction") if key not in robot]
+    if missing:
+        raise ValueError(
+            f"robot is missing {', '.join(missing)}; send the car's centre x, y in centimetres and "
+            f"its direction - the `end` of a previous segment is exactly this shape."
+        )
+
+    direction = robot["direction"]
+    cardinals = tuple(_FACES.values())
+    if direction not in cardinals:
+        raise ValueError(f"robot.direction is {direction!r}; expected one of {', '.join(cardinals)}.")
+
+    low, high = _HALF_FOOTPRINT, config.ARENA_SIZE_CM - 1 - _HALF_FOOTPRINT
+    centre = {}
+    for axis in ("x", "y"):
+        value = robot[axis]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ValueError(
+                f"robot.{axis} is {value!r}; it is the car's CENTRE in centimetres and must be a whole "
+                f"number in {low}..{high}, so the {config.ROBOT_FOOTPRINT_CM} cm footprint stays inside "
+                f"the arena. Not a grid cell."
+            )
+        centre[axis] = value
+
+    return {
+        "direction": direction,
+        "south_west": _point((centre["x"] - _HALF_FOOTPRINT, centre["y"] - _HALF_FOOTPRINT)),
+        "north_east": _point((centre["x"] + _HALF_FOOTPRINT, centre["y"] + _HALF_FOOTPRINT)),
+    }
+
+
+def _from_android(data: dict) -> dict:
+    """
+    Rewrite a tablet payload into the canonical request shape.
+
+    Raised as ``ValueError`` rather than returning a partial request, so pydantic renders each
+    one through the same 422 body as every other validation failure and the RPi has one error
+    shape to read rather than two.
+    """
+    command = data.get("command", _COMMAND)
+    if command != _COMMAND:
+        raise ValueError(
+            f"command {command!r} is not supported; this service plans {_COMMAND!r} (Task 1) only."
+        )
+
+    algorithm = data.get("algorithm", Strategy.OPTIMAL.value)
+    if algorithm in _DEFERRED_ALGORITHMS:
+        raise ValueError(
+            f"algorithm {algorithm!r} is not implemented yet - send "
+            f"{Strategy.GREEDY.value!r} or {Strategy.OPTIMAL.value!r}. Refused rather than "
+            f"planned as arcs, so the setting cannot appear to work when it does nothing."
+        )
+    if algorithm not in {strategy.value for strategy in Strategy}:
+        raise ValueError(
+            f"algorithm {algorithm!r} is not one of "
+            f"{Strategy.GREEDY.value!r} or {Strategy.OPTIMAL.value!r}."
+        )
+
+    obstacles = data.get("obstacles")
+    if not isinstance(obstacles, list) or not obstacles:
+        raise ValueError("obstacles must be a list holding at least one obstacle.")
+
+    return {
+        "verbose": data.get("verbose", True),
+        "strategy": algorithm,
+        "robot": _android_robot(data.get("robot")),
+        "obstacles": [_android_obstacle(index, obstacle) for index, obstacle in enumerate(obstacles)],
+    }
+
+
 class PathfindingRequestRobot(BaseModel):
     direction: CardinalDirection = Field(description="The direction of the robot.")
     south_west: PathfindingPoint = Field(description="The south-west corner of the robot.")
@@ -187,6 +396,28 @@ class PathfindingRequest(BaseModel):
     )
     robot: PathfindingRequestRobot = Field(description="The initial position of the robot.")
     obstacles: list[PathfindingRequestObstacle] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_the_android_shape(cls, data: object) -> object:
+        """
+        Rewrite a tablet payload into this model's fields before validating it.
+
+        The discriminator is the shape of ``robot``, and it is total rather than a guess: the
+        canonical form requires ``robot`` and requires it to carry ``south_west``, while the
+        tablet form either omits ``robot`` or gives a centre ``x``/``y``. So "a robot with
+        corners" is canonical and everything else is the tablet's, with no sniffing at the
+        obstacles. Converting in a ``before`` validator rather than on a second route is what
+        keeps ``openapi.json``, the simulator and every ``testdata`` fixture speaking one shape
+        while the tablet speaks another - see the "Android shape" block above for the
+        conversion and why the units matter.
+        """
+        if not isinstance(data, dict):
+            return data
+        robot = data.get("robot")
+        if isinstance(robot, dict) and "south_west" in robot:
+            return data
+        return _from_android(data)
 
     @model_validator(mode="after")
     def reject_duplicate_image_ids(self) -> PathfindingRequest:
@@ -234,9 +465,19 @@ class PathfindingRequest(BaseModel):
 
 
 class PathfindingResponseSegment(BaseModel):
-    image_id: int
+    # Named for what it carries. The value is the caller's obstacle number, and in Task 1 the
+    # image on that obstacle is unknown until CV reads it three hops later - so the prior-year
+    # `image_id` named a value that cannot exist at the time the request is sent. Renamed on
+    # the RESPONSE only: the request still accepts `image_id`, which is what openapi.json, the
+    # testdata fixtures and the simulator speak. See PROVENANCE.md.
+    obstacle_id: int = Field(description="The obstacle number the caller sent, echoed unchanged.")
     cost: int | None = Field(description="The cost, included only if verbose is true.")
-    instructions: list[MiscInstruction | TurnInstruction | MoveInstruction]
+    # `PivotInstruction` is APPENDED to the union, never spliced into it: the existing three
+    # members keep their positions in the schema's `anyOf`, so a client generated from the
+    # prior-year `openapi.json` sees an extra alternative rather than a reordered list. A pivot
+    # reaches a caller only with `config.PIVOT_TURNS` on - see the note on `CardinalDirection`
+    # for why the request side does NOT widen to match.
+    instructions: list[MiscInstruction | TurnInstruction | MoveInstruction | PivotInstruction]
     path: list[PathfindingVector] | None = Field(
         description="The cells of the path in driving order, included only if verbose is true."
     )
@@ -249,6 +490,17 @@ class PathfindingResponseSegment(BaseModel):
         description="Estimated driving time of this segment in seconds under the time model, "
         "only if verbose is true.",
     )
+    # Additive. Where the car stops for CAPTURE_IMAGE - its centre in cm and its heading, i.e.
+    # the last `path` vector - but reported even when `verbose` is false, because the RPi runs
+    # quiet and this is the one piece of geometry it needs: handed back as the tablet shape's
+    # `robot`, it re-plans from where the car is (checklist A.5: standing at a face, bull's-eye
+    # seen, route to the next face from HERE). None only when there is no geometry to report -
+    # stub mode, or a segment in which the car did not move.
+    end: PathfindingVector | None = Field(
+        default=None,
+        description="Where the car stops for CAPTURE_IMAGE: its centre in cm and its heading. "
+        "Present regardless of verbose. Send it back as `robot` to re-plan from there.",
+    )
 
     @classmethod
     def from_segment(cls, verbose: bool, segment: Segment) -> PathfindingResponseSegment:
@@ -258,11 +510,12 @@ class PathfindingResponseSegment(BaseModel):
         # behaviour the contract rather than the schema's permissiveness. `seconds` follows the
         # same rule for consistency rather than because a client depends on it.
         return cls(
-            image_id=segment.image_id,
+            obstacle_id=segment.image_id,
             cost=segment.cost if verbose else 0,
             instructions=segment.instructions,
             path=[PathfindingVector.from_vector(vector) for vector in segment.vectors] if verbose else [],
             seconds=round(segment.seconds, 2) if verbose else 0.0,
+            end=PathfindingVector.from_vector(segment.vectors[-1]) if segment.vectors else None,
         )
 
 
@@ -277,7 +530,7 @@ class PathfindingResponseUnreachable(BaseModel):
     the robot standing.
     """
 
-    image_id: int
+    obstacle_id: int = Field(description="The obstacle number the caller sent, echoed unchanged.")
     reason: UnreachableReason = Field(
         description="Why the obstacle was dropped: NO_OBJECTIVES (no valid camera pose exists) "
         "or NO_PATH (poses exist, none reachable on this route)."
@@ -337,7 +590,7 @@ def pathfinding(body: PathfindingRequest):
             for segment in result.segments
         ],
         unreachable=[
-            PathfindingResponseUnreachable(image_id=entry.image_id, reason=entry.reason)
+            PathfindingResponseUnreachable(obstacle_id=entry.image_id, reason=entry.reason)
             for entry in result.unreachable
         ],
     )
@@ -473,6 +726,8 @@ def stub(body: PathfindingRequest) -> PathfindingResponse:
       and a wrong picture is harder to debug than a missing one. The instruction stream is
       fabricated too, but a client must decode instructions to be tested at all; nothing needs
       to *believe* the path.
+    - ``end`` is always ``None``, for the same reason as ``path``: a fabricated stopping pose
+      is one the RPi might feed back as ``robot`` and drive from.
     - ``unreachable`` is always empty, so a client's happy path is what gets exercised. Point
       the client at the real planner to see genuine ``unreachable`` entries — an arena at the
       competition's legal 30 cm obstacle spacing will produce plenty (see ``algorithm/README.md``).
@@ -484,7 +739,7 @@ def stub(body: PathfindingRequest) -> PathfindingResponse:
     for index, obstacle in enumerate(body.obstacles):
         segments.append(
             PathfindingResponseSegment(
-                image_id=obstacle.image_id,
+                obstacle_id=obstacle.image_id,
                 cost=100 + 10 * index if body.verbose else 0,
                 instructions=[
                     MoveInstruction(move=Straight.FORWARD, amount=30),
