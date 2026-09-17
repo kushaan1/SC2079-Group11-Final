@@ -23,15 +23,18 @@ import com.mdp.grp11.session.Algorithm
 import com.mdp.grp11.ui.theme.MdpTokens
 
 /**
- * Which planner the image-rec run should use, as a single-choice list.
+ * What IMAGE REC does, as a single-choice list: one of the three planners
+ * for the image-rec run, or the checklist A.5 face search in its place.
  *
  * Reached by holding IMAGE REC. A long press rather than a visible control
  * because the right-hand column has no room left for one, and because the
  * choice is made once per session, not once per run - the button itself
- * shows the current pick, so nothing is hidden.
+ * shows the current pick, so nothing is hidden. The face search lives here
+ * for the same reason: it is demonstrated once, and a fourth button would
+ * cost every other button width for the rest of the term.
  *
  * Tapping a row picks it and closes the dialog. There is no confirm step: the
- * pick changes nothing on the robot yet, and a two-tap flow for a three-item
+ * pick changes nothing on the robot yet, and a two-tap flow for a four-item
  * radio list is ceremony without protection.
  */
 @Composable
@@ -42,11 +45,12 @@ fun AlgorithmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Image rec algorithm") },
+        title = { Text("Image rec mode") },
         text = {
             Column(Modifier.selectableGroup()) {
                 Text(
-                    "The planner the image-rec run will use.",
+                    "The planner the image-rec run will use, or the A.5 face search: " +
+                        "place one block, set the bullseye's face, then tap IMAGE REC.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MdpTokens.Muted,
                     modifier = Modifier.padding(bottom = 8.dp),

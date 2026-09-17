@@ -34,16 +34,38 @@ sealed interface Outbound {
     data class SendArena(val obstacles: List<ObstacleEntry>) : Outbound
 
     /**
-     * Start the image-recognition run: which planner, and the whole layout
-     * it is to plan over, in one line. Replaces a bare start token so the
-     * RPi never has to pair a "go" with a layout it received earlier.
+     * Start the image-recognition run: which planner, where the robot is,
+     * and the whole layout it is to plan over, in one line. Replaces a bare
+     * start token so the RPi never has to pair a "go" with a layout it
+     * received earlier - and, with [robot], never has to remember a
+     * MOVEROBOT either. A start is a complete snapshot.
      *
      * [algorithm] is already the wire spelling (see `Config.algorithmTokens`);
      * the protocol layer does not know the session-level enum. Same promise
      * as [SendArena] about faces: every entry has one, or this is not built.
      */
-    data class BeginImageRec(val algorithm: String, val obstacles: List<ObstacleEntry>) : Outbound
+    data class BeginImageRec(
+        val algorithm: String,
+        val robot: StartPose,
+        val obstacles: List<ObstacleEntry>,
+    ) : Outbound
+
+    /**
+     * Start the checklist A.5 face search: the same snapshot as
+     * [BeginImageRec] with no planner to choose, because a one-obstacle
+     * search has no visiting order to plan. The RPi searches the first
+     * obstacle's faces for the image, starting from the face given.
+     */
+    data class BeginFaceSearch(val robot: StartPose, val obstacles: List<ObstacleEntry>) : Outbound
 }
 
 /** One obstacle as SEND ARENA states it: id, cell, and the face carrying the image. */
 data class ObstacleEntry(val id: Int, val x: Int, val y: Int, val face: Face)
+
+/**
+ * The robot's pose as a run start states it: the same continuous cells and
+ * clockwise-from-north degrees MOVEROBOT carries, naming the footprint's
+ * centre. Its own type rather than the arena's `RobotPose` so this package
+ * keeps depending on nothing but itself.
+ */
+data class StartPose(val x: Float, val y: Float, val headingDegrees: Float)

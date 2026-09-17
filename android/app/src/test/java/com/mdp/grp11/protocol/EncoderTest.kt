@@ -67,21 +67,38 @@ class EncoderTest {
         assertEquals("""{"obstacles":[]}""", encode(Outbound.SendArena(emptyList())))
     }
 
-    @Test fun `begin image rec leads with the command, then the algorithm, then the layout`() {
+    @Test fun `begin image rec leads with the command, then the algorithm, then the robot, then the layout`() {
         val msg = Outbound.BeginImageRec(
             algorithm = "greedy",
+            robot = StartPose(1f, 1f, 0f),
             obstacles = listOf(ObstacleEntry(1, 10, 6, Face.N), ObstacleEntry(2, 14, 15, Face.E)),
         )
         assertEquals(
-            """{"command":"imageRec","algorithm":"greedy","obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}""",
+            """{"command":"imageRec","algorithm":"greedy","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}""",
             encode(msg),
         )
     }
 
-    @Test fun `begin image rec on an empty arena still carries the command and algorithm`() {
+    @Test fun `begin image rec on an empty arena still carries the command, algorithm and robot`() {
         assertEquals(
-            """{"command":"imageRec","algorithm":"optimal","obstacles":[]}""",
-            encode(Outbound.BeginImageRec("optimal", emptyList())),
+            """{"command":"imageRec","algorithm":"optimal","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[]}""",
+            encode(Outbound.BeginImageRec("optimal", StartPose(1f, 1f, 0f), emptyList())),
+        )
+    }
+
+    @Test fun `the start pose is written the way MOVEROBOT writes it, decimals and all`() {
+        val msg = Outbound.BeginImageRec("greedy", StartPose(7.5f, 2.25f, 20f), emptyList())
+        assertTrue(encode(msg).contains(""""robot":{"x":7.5,"y":2.25,"heading":20.0}"""))
+    }
+
+    @Test fun `begin face search has no algorithm, just the command, the robot and the layout`() {
+        val msg = Outbound.BeginFaceSearch(
+            robot = StartPose(1f, 1f, 0f),
+            obstacles = listOf(ObstacleEntry(1, 10, 6, Face.S)),
+        )
+        assertEquals(
+            """{"command":"faceSearch","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[{"id":1,"x":10,"y":6,"face":"S"}]}""",
+            encode(msg),
         )
     }
 }

@@ -426,7 +426,10 @@ class ArenaViewModelTest {
         runCurrent()
 
         assertEquals(RunKind.Exploration, vm.runTimes.value.running)
-        assertEquals(listOf("""{"command":"imageRec","algorithm":"greedy","obstacles":[]}"""), fake.sent)
+        assertEquals(
+            listOf("""{"command":"imageRec","algorithm":"greedy","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[]}"""),
+            fake.sent,
+        )
 
         // startRun's tick coroutine re-schedules itself forever (while(true) {
         // delay(...) }); runTest drains the shared virtual-time scheduler at
@@ -453,12 +456,78 @@ class ArenaViewModelTest {
         runCurrent()
 
         assertEquals(
-            listOf("""{"command":"imageRec","algorithm":"turnInPlace","obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}"""),
+            listOf("""{"command":"imageRec","algorithm":"turnInPlace","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[{"id":1,"x":10,"y":6,"face":"N"},{"id":2,"x":14,"y":15,"face":"E"}]}"""),
             fake.sent.drop(before),
         )
 
         vm.endRun()
         runCurrent()
+    }
+
+    /**
+     * The RPi keeps no state between messages, so a start must say where the
+     * robot is - and that is wherever the operator last put it, not the
+     * start corner. A drag that moved it and a heading pick both count.
+     */
+    @Test fun `startRun for image rec carries the robot pose as currently drawn`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.dragRobotTo(7.5f, 2.25f); vm.commitRobot()
+        vm.turnRobot(Face.E)
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.startRun(RunKind.Exploration)
+        runCurrent()
+
+        assertEquals(
+            listOf("""{"command":"imageRec","algorithm":"greedy","robot":{"x":7.5,"y":2.25,"heading":90.0},"obstacles":[]}"""),
+            fake.sent.drop(before),
+        )
+
+        vm.endRun()
+        runCurrent()
+    }
+
+    @Test fun `with the face search picked, IMAGE REC sends the face-search start and runs the same clock`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))        // B1
+        vm.select(1); vm.pickFace(Face.S)
+        vm.selectAlgorithm(Algorithm.FaceSearch)
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.startRun(RunKind.Exploration)
+        runCurrent()
+
+        assertEquals(
+            listOf("""{"command":"faceSearch","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[{"id":1,"x":10,"y":6,"face":"S"}]}"""),
+            fake.sent.drop(before),
+        )
+        assertEquals(RunKind.Exploration, vm.runTimes.value.running)
+
+        vm.endRun()
+        runCurrent()
+    }
+
+    @Test fun `the face search is refused while the block has no face, like image rec`() = runTest {
+        val fake = FakeTransport()
+        val vm = connectedViewModel(fake)
+
+        vm.place(Cell(10, 6))        // B1, never faced
+        vm.selectAlgorithm(Algorithm.FaceSearch)
+        runCurrent()
+        val before = fake.sent.size
+
+        vm.startRun(RunKind.Exploration)
+        runCurrent()
+
+        assertEquals(before, fake.sent.size)
+        assertNull(vm.runTimes.value.running)
+        assertEquals("Set a face on B1 before starting", vm.statusText.value)
     }
 
     @Test fun `startRun for image rec is refused while a block has no face, and the clock stays stopped`() = runTest {
