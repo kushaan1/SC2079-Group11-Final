@@ -44,9 +44,9 @@ arrives rather than acting on a fragment.
 
 ## 1. Tablet → RPi
 
-Fourteen distinct messages in four groups: three arena verbs, one robot verb,
-seven movement tokens, one task token and two JSON messages. Everything is
-plain ASCII with no spaces around the commas - except the two JSON messages,
+Fifteen distinct messages in four groups: three arena verbs, one robot verb,
+seven movement tokens, one task token and three JSON messages. Everything is
+plain ASCII with no spaces around the commas - except the three JSON messages,
 which are each one line of JSON.
 
 ### 1.1 Arena editing
@@ -143,7 +143,8 @@ flush into the arena's bottom-left corner.
 
 | Command | Sent as | Meaning |
 |---|---|---|
-| Start image recognition | JSON, below | Begin Task 1 with the chosen planner and the whole layout. The tablet starts its own clock in the same action. |
+| Start image recognition | JSON, below | Begin Task 1 with the chosen planner, the robot's pose and the whole layout. The tablet starts its own clock in the same action. |
+| Start face search | JSON, below | Begin the checklist A.5 face search. Sent by IMAGE REC instead of the above when the picker is on "Face search". Same clock. |
 | Start fastest car | `beginFastest` | Begin Task 2. Bare token, as before. |
 
 **There is no end-run command.** Ending a run stops the tablet's clock and
@@ -164,10 +165,10 @@ received earlier:
 |---|---|---|
 | `command` | string | Always `imageRec`. This is what tells the message apart from [SEND ARENA's](#15-send-arena), which has no `command` key. |
 | `algorithm` | string | The planner the operator chose by holding the IMAGE REC button: `greedy`, `optimal` or `turnInPlace`. Default `greedy`. |
-| `robot` | object | **RPi request, tablet: not yet sent.** `{"x":1.0,"y":1.0,"heading":0.0}` — the pose the tablet currently draws, same units as `MOVEROBOT`. With it, a start is a complete snapshot and the RPi keeps no state from earlier messages. Absent → the RPi assumes the start pose and says so in a `MSG`. |
+| `robot` | object | `{"x":1.0,"y":1.0,"heading":0.0}` — the pose the tablet currently draws, same units and `Float.toString` formatting as `MOVEROBOT`. With it, a start is a complete snapshot and the RPi keeps no state from earlier messages. If an older tablet omits it, the RPi assumes the start pose and says so in a `MSG`. |
 | `obstacles` | array | Exactly the array [SEND ARENA](#15-send-arena) sends: every placed block, **sorted by id**, cells 0–19, `face` one of `N`/`E`/`S`/`W` and never null. |
 
-Key order is fixed - `command`, `algorithm`, `obstacles` - but a JSON parser
+Key order is fixed - `command`, `algorithm`, `robot`, `obstacles` - but a JSON parser
 should not depend on it.
 
 **Refused while any block has no face**, exactly as SEND ARENA is: nothing is
@@ -182,8 +183,7 @@ clock does not start**. So a received start is a complete, faced layout.
 
 #### Start face search (checklist A.5)
 
-**RPi accepts this; the tablet does not send it yet.** Same shape as the
-image-rec start, no `algorithm`:
+Same shape as the image-rec start, no `algorithm`:
 
 ```json
 {"command":"faceSearch","robot":{"x":1.0,"y":1.0,"heading":0.0},"obstacles":[{"id":1,"x":10,"y":6,"face":"S"}]}
@@ -193,8 +193,11 @@ One obstacle, whose `face` is the side the supervisor put the bullseye on. The
 RPi drives there, waits for the recogniser's verdict, and on a bullseye goes
 round the block face by face until an image is found, narrating with `MSG`
 lines and sending `TARGET` when it finds one. Extra obstacles are ignored.
-Trigger on the tablet: a fourth option in the IMAGE REC long-press picker, or
-a small button — to be decided when the Android change is made.
+
+On the tablet it is the fourth row, "Face search", of the picker reached by
+holding IMAGE REC; the button then shows `FACE SEARCH` under its label and
+sends this instead of the image-rec start. Refused, like image rec, while any
+block has no face - the face is where the search begins.
 
 ### 1.5 Send arena
 
