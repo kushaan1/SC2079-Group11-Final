@@ -12,6 +12,7 @@ import com.mdp.grp11.protocol.Face
 import com.mdp.grp11.protocol.Inbound
 import com.mdp.grp11.protocol.ObstacleEntry
 import com.mdp.grp11.protocol.Outbound
+import com.mdp.grp11.protocol.StartPose
 import com.mdp.grp11.protocol.imageLabel
 import com.mdp.grp11.session.Algorithm
 import com.mdp.grp11.session.RunKind
@@ -90,12 +91,12 @@ class ArenaViewModel(
 
     private val _algorithm = MutableStateFlow(Algorithm.Greedy)
 
-    /** The planner the next image-rec run should use. See [selectAlgorithm]. */
+    /** What IMAGE REC does next: a planner, or the face search. See [selectAlgorithm]. */
     val algorithm: StateFlow<Algorithm> = _algorithm.asStateFlow()
 
     /**
-     * A setting, not a transmission: the choice travels inside the image-rec
-     * start message ([startRun]), never on its own.
+     * A setting, not a transmission: the choice decides which start message
+     * IMAGE REC sends ([startRun]), and never travels on its own.
      */
     fun selectAlgorithm(algorithm: Algorithm) {
         _algorithm.value = algorithm
@@ -306,11 +307,16 @@ class ArenaViewModel(
      * button that moves the robot without starting the clock, or the reverse,
      * is worse than useless mid-run: the operator cannot tell which happened.
      *
-     * The image-rec start is the whole layout plus the chosen planner, and it
+     * The image-rec start is the whole layout plus the chosen planner plus
+     * the robot's pose as drawn - a snapshot the RPi can act on without
+     * remembering anything sent earlier. With the face search picked, IMAGE
+     * REC sends the A.5 start instead: the same snapshot, no planner. Either
      * is refused - clock untouched, blocks named - while any block has no
-     * face, for the reason [sendArena] gives. The refusal comes BEFORE the
-     * clock is touched: a stopwatch running over a run the robot was never
-     * told to begin is the one thing worse than a run that did not start.
+     * face, for the reason [sendArena] gives (and the face search needs the
+     * face more than anyone: it is where the search begins). The refusal
+     * comes BEFORE the clock is touched: a stopwatch running over a run the
+     * robot was never told to begin is the one thing worse than a run that
+     * did not start.
      *
      * The clock is zeroed first because [RunTimer.start] banks the previous
      * elapsed time and counts up from it, so a practice run followed by the
@@ -320,7 +326,11 @@ class ArenaViewModel(
         val start: Outbound = when (kind) {
             RunKind.Exploration -> {
                 val entries = facedEntries("starting") ?: return
-                Outbound.BeginImageRec(algorithmTokenFor(_algorithm.value), entries)
+                val robot = startPose(_arena.value.robot)
+                when (val mode = _algorithm.value) {
+                    Algorithm.FaceSearch -> Outbound.BeginFaceSearch(robot, entries)
+                    else -> Outbound.BeginImageRec(algorithmTokenFor(mode), robot, entries)
+                }
             }
             RunKind.FastestCar -> Outbound.Move(Config.taskTokens.beginFastest)
         }
@@ -534,9 +544,18 @@ class ArenaViewModel(
         }
     }
 
+    /** The pose as drawn, in the start message's own type. */
+    private fun startPose(pose: RobotPose): StartPose = StartPose(pose.x, pose.y, pose.headingDegrees)
+
+    /**
+     * The three planners' wire spellings. The face search is not a planner
+     * and never reaches here: [startRun] branches on it first, so a call with
+     * it is a programming error worth a loud failure, not a silent default.
+     */
     private fun algorithmTokenFor(algorithm: Algorithm): String = when (algorithm) {
         Algorithm.Greedy -> Config.algorithmTokens.greedy
         Algorithm.Optimal -> Config.algorithmTokens.optimal
         Algorithm.TurnInPlace -> Config.algorithmTokens.turnInPlace
+        Algorithm.FaceSearch -> error("face search is a start message, not a planner")
     }
 }

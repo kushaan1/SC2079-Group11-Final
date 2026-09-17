@@ -143,12 +143,15 @@ object Config {
      * Task-level commands, as distinct from movement. These start a run.
      *
      * [imageRec] is not sent bare: it is the `command` value inside the
-     * image-rec start JSON, which carries the algorithm and the whole layout
-     * with it (see `Outbound.BeginImageRec`). [beginFastest] is still a bare
-     * token. SEND ARENA has no token at all - it transmits the layout as JSON.
+     * image-rec start JSON, which carries the algorithm, the robot's pose and
+     * the whole layout with it (see `Outbound.BeginImageRec`). [faceSearch]
+     * is the same kind of value for the checklist A.5 start. [beginFastest]
+     * is still a bare token. SEND ARENA has no token at all - it transmits
+     * the layout as JSON.
      */
     data class TaskTokens(
         val imageRec: String = "imageRec",
+        val faceSearch: String = "faceSearch",
         val beginFastest: String = "beginFastest",
     )
 

@@ -17,12 +17,12 @@ import com.mdp.grp11.config.Config
  * Float.toString is locale-independent, unlike String.format - a decimal comma
  * would break every parser on the other end.
  *
- * SEND ARENA and the image-rec start are JSON, written by hand. The values
- * are ints, four fixed letters and tokens from Config, so there is nothing to
- * escape and nothing a library would add but a dependency and formatting
- * choices this test suite does not control. Both are kept to one line with no
- * whitespace: the link frames on newlines, and a pretty-printed object would
- * arrive as a dozen unparseable fragments.
+ * SEND ARENA and the two run starts are JSON, written by hand. The values
+ * are ints, floats, four fixed letters and tokens from Config, so there is
+ * nothing to escape and nothing a library would add but a dependency and
+ * formatting choices this test suite does not control. All are kept to one
+ * line with no whitespace: the link frames on newlines, and a pretty-printed
+ * object would arrive as a dozen unparseable fragments.
  */
 fun encode(msg: Outbound): String = when (msg) {
     is Outbound.AddObstacle -> "ADD,B${msg.id},(${msg.x},${msg.y})"
@@ -32,11 +32,17 @@ fun encode(msg: Outbound): String = when (msg) {
     is Outbound.MoveRobot -> "MOVEROBOT,${msg.x},${msg.y},${msg.headingDegrees}"
     is Outbound.SendArena -> """{"obstacles":${obstaclesJson(msg.obstacles)}}"""
     is Outbound.BeginImageRec ->
-        """{"command":"${Config.taskTokens.imageRec}","algorithm":"${msg.algorithm}","obstacles":${obstaclesJson(msg.obstacles)}}"""
+        """{"command":"${Config.taskTokens.imageRec}","algorithm":"${msg.algorithm}","robot":${robotJson(msg.robot)},"obstacles":${obstaclesJson(msg.obstacles)}}"""
+    is Outbound.BeginFaceSearch ->
+        """{"command":"${Config.taskTokens.faceSearch}","robot":${robotJson(msg.robot)},"obstacles":${obstaclesJson(msg.obstacles)}}"""
 }
 
-/** The obstacle array both JSON messages share, so they cannot drift apart. */
+/** The obstacle array the JSON messages share, so they cannot drift apart. */
 private fun obstaclesJson(obstacles: List<ObstacleEntry>): String =
     obstacles.joinToString(prefix = "[", separator = ",", postfix = "]") { o ->
         """{"id":${o.id},"x":${o.x},"y":${o.y},"face":"${o.face.name}"}"""
     }
+
+/** The robot's pose as the run starts state it; same Float.toString as MOVEROBOT. */
+private fun robotJson(robot: StartPose): String =
+    """{"x":${robot.x},"y":${robot.y},"heading":${robot.headingDegrees}}"""
