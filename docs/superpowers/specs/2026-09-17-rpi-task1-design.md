@@ -248,7 +248,7 @@ import. No other module reads the environment.
 |---|---|---|
 | `BT_PORT` | `/dev/rfcomm0` | |
 | `STM_PORT` / `STM_BAUD` | `/dev/ttyACM0` / `115200` | |
-| `PLANNER_URL` | none — required | laptop, e.g. `http://192.168.1.20:5000`; a run start without it → `MSG,Planner URL not configured` |
+| `PLANNER_URL` | none — required | laptop, e.g. `http://192.168.1.20:5000`; a run start without it → `MSG,Planner error: Planner URL not configured` |
 | `VISION_URL` | none — required | laptop, e.g. `http://192.168.1.20:4000`; captures without it → `MSG,Vision URL not configured`, once |
 | `RETRY_DELAY_S` | `3` | wait before reopening a lost Bluetooth or serial device |
 | `PLANNER_TIMEOUT_S` | `5` | |
@@ -332,7 +332,8 @@ class StmDriver:
     def start(self) -> None                 # open, PING/PONG, push trim
     def manual(self, token: str) -> None    # tablet token; waits for the reply
     def manual_raw(self, line: str) -> None # passthrough (beginFastest)
-    def execute(self, instr: Instruction) -> None  # blocks until ACK; raises StmError
+    def execute(self, instr: Instruction, abort=None) -> None  # blocks until ACK; raises StmError;
+                                                          # raises StmAborted at once if `abort` (the run's event) is set
     def stop(self) -> None                  # S now; safe from any thread
     def close(self) -> None
 ```
@@ -363,8 +364,11 @@ event that makes any in-progress `execute` return early with
 `StmAborted`, then **resyncs**: discards queue lines for `STM_STOP_DRAIN_S`,
 sends `PING`, and discards until `PONG`. This makes S4 irrelevant.
 
-**Startup.** `PING` → `PONG` within 2 s or `start()` raises. Then
-`MA`, `MB`, `AS` from config, each awaited.
+**Startup.** Opening and the handshake live in the reconnect thread (one code
+path for connect, at startup and after a loss). `start()` waits a grace period
+(two `PING` deadlines plus the drain window plus a second) for the first
+successful `PING` → `PONG` and raises `StmUnavailable` otherwise, while the
+thread keeps trying. After `PONG`: `MA`, `MB`, `AS` from config, each awaited.
 
 **Serial loss.** If the port raises, the driver marks itself down; `manual`
 and `execute` raise `StmUnavailable` immediately; a background retry reopens
@@ -398,8 +402,9 @@ Never raises; the worker decides what to do.
 
 ### 5.8 `vision_worker.py`
 
-- `submit(obstacle_id, frames: List[bytes], quiet=False)` — enqueue; returns
-  immediately. `quiet` suppresses the miss `MSG`s (the face search narrates
+- `submit(obstacle_id, frames: List[bytes], quiet=False) -> bool` — enqueue;
+  returns immediately; `False` when no vision URL is configured (frames dropped,
+  one `MSG` ever), so a run can skip waiting for a verdict that cannot come. `quiet` suppresses the miss `MSG`s (the face search narrates
   misses itself); `TARGET` lines are always sent.
 - Worker thread: per obstacle, POSTs each frame with `object_id = "B<id>"`;
   result = the `target` verdict with the highest confidence if any, else
@@ -423,7 +428,7 @@ class Camera:
 
 `PiCameraLegacy` wraps `picamera.PiCamera` with the configured resolution and
 rotation, warms up 2 s on `start()`, and captures to an in-memory JPEG.
-`FakeCamera` returns a fixed JPEG from `rpi/tests/fixtures/`. Selected by
+`FakeCamera` returns a fixed JPEG from `rpi/fixtures/frame.jpg`. Selected by
 `--fake-camera`. A `CameraError` on capture is reported and the run
 continues (§7).
 
@@ -448,7 +453,10 @@ against the real car; if they're backwards, two literals swap.
 ### 5.11 `run.py`
 
 `RunController` — holds at most one run; `start(run)` refuses if one is
-active; `stop()` calls `stm_driver.stop()` then sets the run's `abort` event.
+active; `stop()` sets the run's `abort` event, then calls `stm_driver.stop()`.
+That order, plus `execute(instr, abort=run.abort)` refusing to send once the
+event is set, closes the window in which a STOP could be followed by one more
+move.
 The run thread notices the event, sends `MSG,Stopped`, and ends. The only
 line the controller sends itself is `MSG,Run failed: <error>` when a run
 raises — a bug in a run must never take the program down.
