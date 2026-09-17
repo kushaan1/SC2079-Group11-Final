@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-17
 **Status:** approved in discussion; awaiting written review
-**Scope:** the Raspberry Pi's program: manual drive, arena bookkeeping, the Task 1
+**Scope:** the Raspberry Pi's program: manual drive, the Task 1
 run, and the A.5 face-search demo. Task 2 is a hook only.
 
 This document is the authority for `rpi/`. Where it disagrees with the
@@ -40,8 +40,9 @@ the tablet nor the STM implement.
 ### In v1
 
 1. **Manual drive** — the tablet's seven movement tokens go to the STM.
-2. **Arena bookkeeping** — `ADD`, `SUB`, `FACE`, `MOVEROBOT`, SEND ARENA keep
-   an RPi-side copy of the layout and the robot's pose. Never touches the STM.
+2. **No arena state.** Every run start carries the whole layout *and* the
+   robot's pose, so the RPi keeps nothing between messages. `ADD`, `SUB`,
+   `FACE`, `MOVEROBOT` and SEND ARENA are logged and otherwise ignored.
 3. **Task 1** — on the tablet's image-rec start: plan, drive, photograph, report.
 4. **A.5 face search** — on a separate tablet trigger: drive to the declared
    face, and if the camera sees the bullseye marker, go round the obstacle face
@@ -133,16 +134,41 @@ from the CV owner.
 
 ### 3.5 Tablet contract — additions
 
-One new outbound message (a tablet change on this branch):
+Two changes to what the tablet sends, both on this branch, both to be added
+to `protocol.md` §1.4. Nothing inbound changes.
+
+**A `robot` object in the image-rec start.** `protocol.md` already offers
+it ("the tablet knows it and can add a `robot` object if the planner wants
+it"). The RPi wants it: with it, a run start is a complete snapshot and the
+RPi needs no state from earlier messages.
 
 ```
-{"command":"faceSearch","obstacles":[{"id":1,"x":10,"y":6,"face":"S"}]}
+{"command":"imageRec","algorithm":"greedy",
+ "robot":{"x":1.0,"y":1.0,"heading":0.0},
+ "obstacles":[{"id":1,"x":10,"y":6,"face":"N"}]}
 ```
 
-Same shape as the image-rec start, different `command`. Sent from a new
-trigger on the tablet (a fourth option in the IMAGE REC long-press picker, or
-a small button — UI choice deferred to the Android work). Add to
-`protocol.md` §1.4. Nothing inbound changes.
+`robot.x`/`y` are the same decimal cell indices `MOVEROBOT` uses (the
+footprint's centre); `heading` is degrees clockwise from north. It is
+whatever the tablet currently draws — the operator's last drag, or the last
+`ROBOT` line the RPi sent.
+
+**A new `faceSearch` message**, same shape, different `command`, no
+`algorithm`:
+
+```
+{"command":"faceSearch",
+ "robot":{"x":1.0,"y":1.0,"heading":0.0},
+ "obstacles":[{"id":1,"x":10,"y":6,"face":"S"}]}
+```
+
+Sent from a new trigger on the tablet (a fourth option in the IMAGE REC
+long-press picker, or a small button — UI choice deferred to the Android
+work).
+
+**Compatibility.** A start message without `robot` (an older tablet build)
+is accepted with the start pose `(1.0, 1.0, 0°)` and a
+`MSG,No robot pose in start - assuming start zone`.
 
 The tablet's `algorithm` value `turnInPlace` is not a planner strategy; the
 RPi maps it to `optimal` and says so with a `MSG`.
@@ -194,7 +220,7 @@ bypasses it. At most one run exists at a time (`RunController`).
 |---|---|---|
 | `f` `b` `tl` `tr` `sl` `sr` | `stm_driver.manual(token)` | refused: `MSG,Run in progress - STOP first` |
 | `s` | `run_controller.stop()` if a run is active, else `stm_driver.manual("s")` | stops the run |
-| `ADD` `SUB` `FACE` `MOVEROBOT` SEND ARENA | update `arena` | allowed; affects the next run only |
+| `ADD` `SUB` `FACE` `MOVEROBOT` SEND ARENA | logged only — the run start carries everything | allowed |
 | `{"command":"imageRec"}` | `run_controller.start(Task1Run(...))` | refused with `MSG` |
 | `{"command":"faceSearch"}` | `run_controller.start(FaceSearchRun(...))` | refused with `MSG` |
 | `beginFastest` | `stm_driver.manual_raw("beginFastest")` — passthrough, Task 2 hook | refused with `MSG` |
@@ -251,10 +277,12 @@ Pure functions, no I/O. Mirrors `protocol.md` exactly.
 
 **Inbound** — `parse(line) -> Inbound`, one of:
 `Manual(token)`, `Add(id, x, y)`, `Sub(id)`, `Face(id, x, y, face|None)`,
-`MoveRobot(x, y, deg)`, `SendArena(obstacles)`, `ImageRec(algorithm, obstacles)`,
-`FaceSearch(obstacles)`, `BeginFastest`, `Unknown(line)`. JSON lines are
-distinguished by a leading `{`; the `command` key selects `ImageRec` /
-`FaceSearch`, its absence means `SendArena`. Never raises.
+`MoveRobot(x, y, deg)`, `SendArena(obstacles)`,
+`ImageRec(algorithm, robot|None, obstacles)`, `FaceSearch(robot|None, obstacles)`,
+`BeginFastest`, `Unknown(line)`. JSON lines are distinguished by a leading
+`{`; the `command` key selects `ImageRec` / `FaceSearch`, its absence means
+`SendArena`. A missing `robot` parses as `None` (§3.5 compatibility). Never
+raises.
 
 **Outbound** — `msg(text)`, `target(obstacle_id, competition_id)`,
 `robot(x_cells, y_cells, heading_deg)`. `msg` never lets a newline through.
@@ -262,8 +290,10 @@ distinguished by a leading `{`; the `command` key selects `ImageRec` /
 
 ### 5.4 `arena.py`
 
-Holds `obstacles: Dict[int, Obstacle(id, x, y, face|None)]` and
-`robot: Pose(x_cells, y_cells, heading_deg)`, default `Pose(1.0, 1.0, 0.0)`.
+Pure conversion functions and the `Obstacle(id, x, y, face)` and
+`Pose(x_cells, y_cells, heading_deg)` value types. **Holds no state** — a
+run start carries its own obstacles and robot pose (§3.5). `START_POSE =
+Pose(1.0, 1.0, 0.0)` is the fallback when a start message has no `robot`.
 
 Conversions (the only place these formulas live):
 
@@ -280,10 +310,9 @@ Conversions (the only place these formulas live):
 Start pose `(1.0, 1.0, 0°)` → centre `(15, 15)` → corners `(0,0)-(30,30)`,
 which matches the planner README's example.
 
-`to_planner_request(obstacles, robot, strategy)` builds the request body.
-`obstacles` here is whichever list the caller passes (the tablet's JSON for a
-run start; a single obstacle for a face search), not necessarily the stored
-arena.
+`to_planner_request(obstacles, robot, strategy)` builds the request body
+from whichever list and pose the caller passes (the start message's for a
+run; a single obstacle and the current pose for a face search leg).
 
 ### 5.5 `stm_driver.py`
 
@@ -419,10 +448,11 @@ worker, then runs the Bluetooth loop with the dispatcher from §4.3. On
 
 ### 6.1 `Task1Run` — the image-rec start
 
-Input: the tablet's `ImageRec(algorithm, obstacles)`.
+Input: the tablet's `ImageRec(algorithm, robot, obstacles)`.
 
 1. `MSG,Planning...`. Build the request from the message's obstacles and
-   `arena.robot`. `algorithm`: `greedy`/`optimal` pass through;
+   its `robot` pose (`START_POSE` with a `MSG` if absent). `algorithm`:
+   `greedy`/`optimal` pass through;
    `turnInPlace` → `STRATEGY_FALLBACK` with `MSG,turnInPlace not supported by
    planner - using optimal`.
 2. `plan()`. On `PlannerError`: `MSG,Planner error: <reason>`, run ends, robot
@@ -435,7 +465,7 @@ Input: the tablet's `ImageRec(algorithm, obstacles)`.
      thread sends `MSG,Stopped` and ends.
    - `pose = advance(pose, instr)`; `ROBOT,...` to the tablet.
    - After the segment's last instruction: `pose = segment.end_pose`;
-     `ROBOT,...`; `arena.robot = pose`.
+     `ROBOT,...`.
 5. `Capture`: `MSG,Capturing B3`; sleep `CAPTURE_SETTLE_S`; take
    `CAPTURE_FRAMES` frames as fast as the camera allows; `vision_worker.submit`;
    **continue immediately**. A `CameraError` → `MSG,B3: camera failed`, no
@@ -443,8 +473,8 @@ Input: the tablet's `ImageRec(algorithm, obstacles)`.
 6. After the last segment: wait up to `VISION_DRAIN_TIMEOUT_S` for every
    submitted obstacle to have a result.
 7. `MSG,Done: <k> of <n> recognised` (or `MSG,Done: <k> of <n> recognised,
-   verdicts pending` if the drain timed out). Run ends; `arena.robot` holds
-   the final pose.
+   verdicts pending` if the drain timed out). Run ends. The last `ROBOT` line
+   sent is the pose the tablet will carry into the next start message.
 8. On Bluetooth reconnect at any point: replay every `TARGET` result so far and
    the latest `ROBOT`, then `MSG,Reconnected - run in progress` or
    `MSG,Reconnected`.
@@ -472,11 +502,13 @@ RX  MSG,Done: 2 of 2 recognised
 
 ### 6.3 `FaceSearchRun` — the A.5 demo
 
-Input: the tablet's `FaceSearch(obstacles)` — normally one obstacle, whose
-declared `face` is the side the supervisor put the bullseye on. If more than
-one is sent, the first is searched and the rest are ignored with a `MSG`.
+Input: the tablet's `FaceSearch(robot, obstacles)` — normally one obstacle,
+whose declared `face` is the side the supervisor put the bullseye on. If more
+than one is sent, the first is searched and the rest are ignored with a
+`MSG`.
 
-1. `checked = set()`; `face = declared face`; `pose = arena.robot`.
+1. `checked = set()`; `face = declared face`; `pose = robot` from the message
+   (`START_POSE` with a `MSG` if absent).
 2. Plan from `pose` to `obstacle` with `direction = face` (a normal
    `/pathfinding/` request with one obstacle). `unreachable` → treat as
    examined (`checked.add(face)`), go to 5.
@@ -584,6 +616,7 @@ Each step ends with its tests passing and a commit.
 |---|---|
 | Threads, not asyncio | Python 3.7 on Buster; `pyserial-asyncio` on armv7 is friction; teammates don't write async |
 | `/dev/rfcomm0`, not a Python RFCOMM socket | it's what already works on this Pi; another group's working setup uses the same |
+| No RPi-side arena state; the start message carries the pose | a start is then a complete snapshot; a Bluetooth drop before it can't leave stale state; the tablet already had the pose, so adding it costs one object |
 | Take 3 frames and move on | keeps the CV round-trip off the critical path; the camera is idle while the robot drives anyway |
 | Best-of-three by confidence, not first hit | costs nothing extra; catches the blurry first frame |
 | Bullseye in Task 1 is reported, not acted on | the face is given; a detour in a timed run is a surprise, not a feature |
