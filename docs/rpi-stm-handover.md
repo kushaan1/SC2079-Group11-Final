@@ -117,11 +117,24 @@ already has the sensors, only the firmware has to expose them:
 
 Obstacle 1 is 60–150 cm from the carpark and obstacle 2 another 60–150 cm on:
 **the approach must be sensor-driven**. The rules allow camera, IR or
-ultrasonic, and the car has both an ultrasonic and an IR sensor; the firmware
-just does not read them yet. For the ultrasonic, SC2104/CE3002 Ex #1
-Practice #4 is the driver (Trig `B15`, Echo `C7`, timer pulse + input capture,
-distance = pulse × 343 m/s ÷ 2, 2–400 cm). Please tell us which way each
-sensor faces and, for the IR, whether it ranges or only switches.
+ultrasonic. The component list gives us one HC-SR04 ultrasonic (with the
+1 kΩ / 2.2 kΩ pair for its Echo divider) and two Sharp GP2Y0A21YK IR rangers
+(10–80 cm, analog, with brackets and the ADC cable); the firmware just does
+not read them yet. The layout we are designing the Pi side around:
+
+- **HC-SR04 facing forward** — the approach: it sees obstacle 1 from anywhere
+  in the 60–150 cm band and tells you when to stop. SC2104/CE3002 Ex #1
+  Practice #4 is the driver (Trig `B15`, Echo `C7`, timer pulse + input
+  capture, distance = pulse × 343 m/s ÷ 2).
+- **One IR on each side, facing outward** — while going round obstacle 2 (the
+  big one), the side IR sees the block and then stops seeing it, which is
+  when the car has cleared its end and can turn back. That makes the loop
+  sensor-terminated instead of a guess about the block's width, and the
+  same reading is a cheap "too close to something" guard.
+- **Encoders** for the distance home (`ENC` already exists).
+
+If you would rather mount them differently, say so — the commands in 5.3 are
+the same either way.
 
 If the sensors cannot be made to work in time, the Pi can fall back to a
 camera-driven creep (short `FS` steps with a photo between each, stopping on
