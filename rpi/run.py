@@ -10,11 +10,11 @@ from typing import Callable, Dict, List, Optional, Tuple
 from rpi import arena, protocol
 from rpi import pose as posing
 from rpi.camera import Camera, CameraError
-from rpi.model import START_POSE, Capture, Pose, Segment
+from rpi.model import FACES, START_POSE, Capture, Obstacle, Pose, Segment
 from rpi.planner_client import PlannerError
-from rpi.protocol import ImageRec
+from rpi.protocol import FaceSearch, ImageRec
 from rpi.stm_driver import StmAborted, StmDriver, StmError, encode_instruction
-from rpi.vision_worker import VisionWorker
+from rpi.vision_worker import Result, VisionWorker
 
 LOG = logging.getLogger(__name__)
 
@@ -232,3 +232,105 @@ class Task1Run(_DrivingRun):
                 return True
             if self.abort.is_set() or time.monotonic() >= end:
                 return False
+
+
+_VERDICT_TEXT = {"bullseye": "bullseye", "no_detection": "nothing", "error": "no verdict"}
+
+
+class FaceSearchRun(_DrivingRun):
+    """The A.5 demo (spec §6.3): find the face that carries the image."""
+
+    def __init__(self, message: FaceSearch, planner: object, verdict_timeout_s: float, **driving) -> None:
+        super().__init__(**driving)
+        self._message = message
+        self._planner = planner
+        self._verdict_timeout_s = verdict_timeout_s
+
+    def run(self) -> None:
+        message = self._message
+        if not message.obstacles:
+            self._msg("Face search needs one obstacle")
+            return
+        obstacle = message.obstacles[0]
+        if len(message.obstacles) > 1:
+            self._msg("Face search uses B%d only; ignoring %d other obstacle(s)"
+                      % (obstacle.obstacle_id, len(message.obstacles) - 1))
+        if obstacle.face is None:
+            self._msg("B%d has no face" % obstacle.obstacle_id)
+            return
+        self._msg("Planning...")
+        pose = message.robot
+        if pose is None:
+            pose = START_POSE
+            self._msg("No robot pose in start - assuming start zone")
+
+        checked = set()   # type: set
+        face = obstacle.face
+        try:
+            segment = self._plan_face(obstacle, face, pose)
+            while True:
+                if segment is None:
+                    self._msg("B%d: %s face unreachable" % (obstacle.obstacle_id, face))
+                    checked.add(face)
+                else:
+                    outcome, pose = self._drive_segment(segment, pose, quiet=True)
+                    if outcome == "stopped":
+                        self._msg("Stopped")
+                        return
+                    if outcome == "failed":
+                        return
+                    # No frames reached the worker (camera or vision server down): don't
+                    # sit out the verdict timeout for a verdict that can never come.
+                    result = self._await_verdict(obstacle.obstacle_id) if self.last_capture_submitted else None
+                    if self.abort.is_set():
+                        self._msg("Stopped")
+                        return
+                    if result is not None and result.status == "target":
+                        self._msg("Found image on %s face of B%d" % (face, obstacle.obstacle_id))
+                        return
+                    checked.add(face)
+                    seen = _VERDICT_TEXT["error"] if result is None else _VERDICT_TEXT[result.status]
+                    self._msg("B%d: %s on %s face - searching" % (obstacle.obstacle_id, seen, face))
+
+                if len(checked) >= len(FACES):
+                    self._msg("No image found on B%d" % obstacle.obstacle_id)
+                    return
+                face, segment = self._next_face(obstacle, pose, checked)
+                if face is None:
+                    self._msg("No image found on B%d - no other face reachable" % obstacle.obstacle_id)
+                    return
+        except PlannerError as error:
+            self._msg("Planner error: %s" % error)
+
+    def _plan_face(self, obstacle: Obstacle, face: str, pose: Pose) -> Optional[Segment]:
+        """One planner request for one face. None if the planner cannot reach it."""
+        candidate = Obstacle(obstacle.obstacle_id, obstacle.x, obstacle.y, face)
+        plan = self._planner.plan(arena.to_planner_request([candidate], pose, "optimal"))
+        return plan.segments[0] if plan.segments else None
+
+    @staticmethod
+    def _cost(segment: Segment) -> Tuple[float, int]:
+        """Planner seconds when it gave them, else fewest instructions (spec §6.3 step 5)."""
+        return (segment.seconds if segment.seconds > 0 else float("inf"), len(segment.instructions))
+
+    def _next_face(self, obstacle: Obstacle, pose: Pose, checked: set) -> Tuple[Optional[str], Optional[Segment]]:
+        """The cheapest unchecked face by the planner's estimate. Unreachable faces become checked."""
+        best = None  # type: Optional[Tuple[str, Segment]]
+        for face in FACES:
+            if face in checked:
+                continue
+            segment = self._plan_face(obstacle, face, pose)
+            if segment is None:
+                checked.add(face)
+                continue
+            if best is None or self._cost(segment) < self._cost(best[1]):
+                best = (face, segment)
+        return best if best is not None else (None, None)
+
+    def _await_verdict(self, obstacle_id: int) -> Optional[Result]:
+        end = time.monotonic() + self._verdict_timeout_s
+        while time.monotonic() < end and not self.abort.is_set():
+            result = self._vision.wait(obstacle_id, 0.2)
+            if result is not None:
+                return result
+        return None

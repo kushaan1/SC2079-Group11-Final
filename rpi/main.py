@@ -13,7 +13,7 @@ from rpi.camera import Camera, CameraError, FakeCamera, PiCameraLegacy
 from rpi.dispatcher import Dispatcher
 from rpi.planner_client import PlannerClient
 from rpi.protocol import ImageRec
-from rpi.run import RunController, RunState, Task1Run
+from rpi.run import FaceSearchRun, RunController, RunState, Task1Run
 from rpi.stm_driver import FakeStmDriver, SerialStmDriver, StmDriver, StmUnavailable
 from rpi.vision_client import VisionClient
 from rpi.vision_worker import VisionWorker
@@ -100,7 +100,12 @@ def build(fake_stm: bool, fake_camera: bool) -> SimpleNamespace:
     def task1_factory(message):
         return Task1Run(message, planner, config.VISION_DRAIN_TIMEOUT_S, config.STRATEGY_FALLBACK, **driving())
 
-    dispatcher = Dispatcher(link.send, stm, controller, task1_factory=task1_factory)
+    def face_search_factory(message):
+        verdict_timeout_s = config.VISION_TIMEOUT_S * config.CAPTURE_FRAMES + 2.0
+        return FaceSearchRun(message, planner, verdict_timeout_s, **driving())
+
+    dispatcher = Dispatcher(link.send, stm, controller,
+                            task1_factory=task1_factory, face_search_factory=face_search_factory)
 
     wiring.link = link
     wiring.vision = vision
