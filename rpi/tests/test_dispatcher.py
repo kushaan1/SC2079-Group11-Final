@@ -32,12 +32,12 @@ def make(stm=None, task1_factory=None, face_search_factory=None):
     return dispatcher, sent, stm, controller
 
 
-def test_manual_tokens_go_to_the_stm_and_its_reply_comes_back_as_a_status_line():
+def test_manual_tokens_go_to_the_stm():
     dispatcher, sent, stm, _ = make()
     for line in ("f", "b", "tl", "sr", "s"):
         dispatcher.handle(line)
     assert stm.sent == ["F", "B", "TL 45", "BR 45", "S"]
-    assert sent == ["MSG,STM: ACK,F", "MSG,STM: ACK,B", "MSG,STM: ACK,TL", "MSG,STM: ACK,BR", "MSG,STM: ACK,S"]
+    assert sent == []
 
 
 def test_arena_messages_are_logged_only():

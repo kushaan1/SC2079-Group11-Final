@@ -270,26 +270,3 @@ def test_serial_loss_marks_unavailable_reconnects_and_reports_both():
     finally:
         driver.close()
     assert changes == [True, False, True]   # close() is not a link loss
-
-
-def test_manual_returns_the_reply_under_both_completion_models():
-    def responder(line):
-        if line == "PING":
-            return ["PONG"]
-        if line.startswith("TL"):
-            return ["ACK,TL", "DONE,TL"]
-        return ["ACK," + line.split(" ")[0]]
-
-    driver, fake = make(responder, completion="DONE")
-    driver.start()
-    try:
-        assert driver.manual("f") == "ACK,F"        # a jog: one reply
-        assert driver.manual("tl") == "DONE,TL"     # an arc: the completion line
-    finally:
-        driver.close()
-    driver, fake = make(responder, completion="ACK")
-    driver.start()
-    try:
-        assert driver.manual("tl") == "ACK,TL"
-    finally:
-        driver.close()

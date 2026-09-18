@@ -98,12 +98,6 @@ slots (`tl`/`tr`) carry our forward arcs and its STRAFE slots (`sl`/`sr`) carry
 our reverse arcs. The car is Ackermann — **it cannot strafe and it cannot turn
 on the spot.** Implement `sl` as a *reverse-left arc*, not a strafe.
 
-**Every movement token gets one status line back.** The RPi relays the STM's
-own reply as `MSG,STM: ACK,F` (a jog) or `MSG,STM: DONE,TL` (an arc, once it
-has completed); a failure comes back as `MSG,STM error: ERR,GYRO` or
-`MSG,STM unavailable`. While a run is in progress the tokens are refused with
-`MSG,Run in progress - STOP first` instead, and `s` stops the run (`MSG,Stopped`).
-
 > **Open question for the chassis owner.** Reversing with the wheels turned left
 > swings the front left and the **rear right**. Whether `sl` belongs under the
 > button labelled BL or BR is a hardware convention the app cannot settle. If

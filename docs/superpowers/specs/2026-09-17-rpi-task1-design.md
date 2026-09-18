@@ -233,8 +233,8 @@ bypasses it. At most one run exists at a time (`RunController`).
 
 | Tablet line | Action | While a run is active |
 |---|---|---|
-| `f` `b` `tl` `tr` `sl` `sr` | `stm_driver.manual(token)`; the STM's reply is relayed as `MSG,STM: ACK,F` / `MSG,STM: DONE,TL` | refused: `MSG,Run in progress - STOP first` |
-| `s` | `run_controller.stop()` if a run is active, else `stm_driver.manual("s")` (relayed as `MSG,STM: ACK,S`) | stops the run |
+| `f` `b` `tl` `tr` `sl` `sr` | `stm_driver.manual(token)` | refused: `MSG,Run in progress - STOP first` |
+| `s` | `run_controller.stop()` if a run is active, else `stm_driver.manual("s")` | stops the run |
 | `ADD` `SUB` `FACE` `MOVEROBOT` SEND ARENA | logged only — the run start carries everything | allowed |
 | `{"command":"imageRec"}` | `run_controller.start(Task1Run(...))` | refused with `MSG` |
 | `{"command":"faceSearch"}` | `run_controller.start(FaceSearchRun(...))` | refused with `MSG` |
