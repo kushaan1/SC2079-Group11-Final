@@ -109,3 +109,21 @@ def test_fake_mirrors_the_conversation_it_pretends_to_have():
         "STM> FW 20", "STM< ACK,FW", "STM< DONE,FW",
         "STM> S", "STM< ACK,S",
     ]
+
+
+# --- raw(): a line typed by a human ------------------------------------------------------
+
+def test_fake_raw_waits_for_done_on_motion_verbs_and_answers_ping():
+    mirrored = []
+    stm = FakeStmDriver(straight_cm_per_s=10000.0, turn_s=0.0, on_line=mirrored.append)
+    assert stm.raw("FW 50") == "DONE,FW"
+    assert stm.raw("PING") == "PONG"
+    assert stm.raw("MA 50") == "ACK,MA"
+    assert stm.sent == ["FW 50", "PING", "MA 50"]
+    assert mirrored == ["STM> FW 50", "STM< ACK,FW", "STM< DONE,FW", "STM> PING", "STM< PONG",
+                        "STM> MA 50", "STM< ACK,MA"]
+
+
+def test_fake_raw_rejects_an_empty_line():
+    with pytest.raises(ValueError):
+        FakeStmDriver().raw("   ")

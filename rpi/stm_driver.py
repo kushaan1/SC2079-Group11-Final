@@ -93,6 +93,12 @@ class StmDriver(ABC):
         """A line passed through untouched (beginFastest)."""
 
     @abstractmethod
+    def raw(self, line: str, abort: Optional[threading.Event] = None) -> str:
+        """A line typed by a human (the STM console). Motion verbs wait for ACK then
+        DONE with their usual deadlines; anything else (PING, RANGE, MA 50, a typo)
+        returns the first reply line of any kind. Raises StmError on ERR or silence."""
+
+    @abstractmethod
     def execute(self, instr: Instruction, abort: Optional[threading.Event] = None) -> None:
         """A planner instruction. Returns when the STM says the motion is done.
         Raises StmAborted without sending anything if `abort` is already set."""
@@ -145,6 +151,19 @@ class FakeStmDriver(StmDriver):
     def manual_raw(self, line: str) -> None:
         self._pretend(line, "ACK," + _verb(line))
 
+    def raw(self, line: str, abort: Optional[threading.Event] = None) -> str:
+        line = line.strip()
+        if not line:
+            raise ValueError("empty line")
+        if abort is not None and abort.is_set():
+            raise StmAborted(line, "stopped")
+        reply = "PONG" if line == "PING" else "ACK," + _verb(line)
+        self._pretend(line, reply)
+        if is_motion(line):
+            reply = "DONE," + _verb(line)
+            _mirror(self._on_line, "STM< " + reply)
+        return reply
+
     def execute(self, instr: Instruction, abort: Optional[threading.Event] = None) -> None:
         line = encode_instruction(instr)
         if abort is not None and abort.is_set():
@@ -189,7 +208,9 @@ def _reply_prefixes(line: str) -> Tuple[str, ...]:
 def _default_open(port: str, baud: int) -> Callable[[], object]:
     def open_serial():
         import serial   # pyserial; imported here so tests never need it
-        return serial.Serial(port, baud, timeout=0.2)
+        # exclusive: a second program opening the same port (the STM console while the
+        # main program runs, or vice versa) fails at open instead of stealing replies.
+        return serial.Serial(port, baud, timeout=0.2, exclusive=True)
     return open_serial
 
 
@@ -442,6 +463,15 @@ class SerialStmDriver(StmDriver):
     def manual_raw(self, line: str) -> None:
         # A passthrough line has no known verb on the STM side, so any ACK or ERR is its reply.
         self._command(line, self._ack_deadline_s, expect=("ACK,", "ERR,"))
+
+    def raw(self, line: str, abort: Optional[threading.Event] = None) -> str:
+        line = line.strip()
+        if not line:
+            raise ValueError("empty line")
+        if is_motion(line):
+            return self._command(line, self._deadline(line), motion=True, abort=abort)
+        # Not a motion: PONG, RANGE,52, ACK,MA, ERR,UNKNOWN - the first line of any kind.
+        return self._command(line, self._ping_deadline_s, expect=("",), abort=abort)
 
     def execute(self, instr: Instruction, abort: Optional[threading.Event] = None) -> None:
         line = encode_instruction(instr)

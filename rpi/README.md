@@ -72,3 +72,21 @@ Each step adds one real device. Do not skip ahead: a failure then has one cause.
 The STM replies `ACK,<verb>` on receipt and `DONE,<verb>` when the motion ends;
 that is the default (`RPI_STM_COMPLETION=DONE`). `ACK` is only for a firmware
 whose ACK itself arrives at the end of the motion.
+
+## Talking to the STM by hand
+
+For calibration and for trying a new firmware command without the tablet:
+
+```bash
+python3 -m rpi.stm_console
+```
+
+Type commands as you would in CoolTerm — `FW 50`, `TL 90`, `PING`, `RANGE`,
+`SEEK 30` — and the board's replies print as they arrive, with the time each
+motion took. It uses the same driver as the runs (same line endings, the same
+`ACK`→`DONE` wait and deadlines, `S` and re-`PING` on silence), so a command
+that works here works in a run. `s` or Ctrl-C sends `S`; `quit` exits.
+
+It needs the serial port to itself: stop the main program first
+(`pkill -f '^python3 -m rpi'`). If it is still running, the console refuses to
+start and says so. `--fake` runs the console against the fake STM on a laptop.

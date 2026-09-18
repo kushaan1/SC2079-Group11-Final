@@ -309,3 +309,47 @@ def test_a_failing_mirror_hook_never_breaks_the_driver():
         assert fake.written == ["PING", "F"]
     finally:
         driver.close()
+
+
+# --- raw(): a line typed by a human (the STM console) -----------------------------------
+
+def test_raw_motion_waits_for_done_and_queries_take_the_first_reply():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        if line == "RANGE":
+            return ["RANGE,52"]
+        if line.startswith("FW"):
+            return ["ACK,FW", "DONE,FW"]
+        if line == "XYZ":
+            return ["ERR,UNKNOWN"]
+        return ["ACK," + line.split(" ")[0]]
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.raw("FW 50") == "DONE,FW"
+        assert driver.raw("PING") == "PONG"
+        assert driver.raw("RANGE") == "RANGE,52"
+        assert driver.raw("MA 50") == "ACK,MA"
+        with pytest.raises(StmError) as info:
+            driver.raw("XYZ")
+        assert info.value.reply == "ERR,UNKNOWN"
+        assert fake.written == ["PING", "FW 50", "PING", "RANGE", "MA 50", "XYZ"]
+    finally:
+        driver.close()
+
+
+def test_raw_silence_is_reported_after_a_stop_and_resync():
+    def responder(line):
+        return ["PONG"] if line == "PING" else []
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        with pytest.raises(StmError) as info:
+            driver.raw("RANGE")
+        assert info.value.reply == "no reply"
+        assert fake.written == ["PING", "RANGE", "S", "PING"]
+    finally:
+        driver.close()
