@@ -1,0 +1,8 @@
+# STM / CubeIDE build junk
+*.o
+*.d
+*.su
+*.cyclo
+*.list
+.metadata/
+.DS_Store
