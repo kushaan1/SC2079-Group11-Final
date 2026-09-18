@@ -39,9 +39,9 @@ def configure_logging() -> None:
         root.addHandler(handler)
 
 
-def make_stm(fake: bool, on_link_change=None) -> StmDriver:
+def make_stm(fake: bool, on_link_change=None, on_line=None) -> StmDriver:
     if fake:
-        return FakeStmDriver(turn_deg=config.MANUAL_TURN_DEG)
+        return FakeStmDriver(turn_deg=config.MANUAL_TURN_DEG, on_line=on_line)
     return SerialStmDriver(
         config.STM_PORT, config.STM_BAUD,
         completion=config.STM_COMPLETION,
@@ -54,6 +54,7 @@ def make_stm(fake: bool, on_link_change=None) -> StmDriver:
         motor_a=config.MOTOR_A_PCT, motor_b=config.MOTOR_B_PCT, steer_steps=config.STEER_STEPS,
         manual_turn_deg=config.MANUAL_TURN_DEG,
         on_link_change=on_link_change,
+        on_line=on_line,
     )
 
 
@@ -84,8 +85,11 @@ def build(fake_stm: bool, fake_camera: bool) -> SimpleNamespace:
         on_reconnect=lambda: replay(link.send, wiring.vision, state, wiring.controller),
         retry_delay_s=config.RETRY_DELAY_S,
     )
+    # The serial conversation, mirrored into the tablet's raw log while it is connected
+    # (sending while disconnected would only add a "dropped" line to our own log).
+    mirror = (lambda text: link.send(text) if link.connected else None) if config.STM_TO_TABLET else None
     stm = make_stm(fake_stm, on_link_change=lambda up: link.send(
-        protocol.msg("STM connected" if up else "STM disconnected")))
+        protocol.msg("STM connected" if up else "STM disconnected")), on_line=mirror)
     camera = make_camera(fake_camera)
     planner = PlannerClient(config.PLANNER_URL, config.PLANNER_TIMEOUT_S, allow_stub=config.ALLOW_STUB_PLANNER)
     wiring.stm, wiring.camera, wiring.planner = stm, camera, planner

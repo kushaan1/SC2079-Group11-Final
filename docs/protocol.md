@@ -324,6 +324,14 @@ Unrecognised lines become `Unknown` and appear **only** in the raw Bluetooth
 log. Decoding never throws, so a malformed line cannot kill the read loop or
 drop the connection.
 
+**The RPi uses that on purpose for the STM conversation.** Every line it sends
+to the STM and every line the STM answers is mirrored to the tablet as
+`STM> FW 30` / `STM< ACK,FW` / `STM< DONE,FW` (including the startup
+`PING`/`PONG`), so the operator can watch the serial link in the raw log
+without an SSH session. They are not messages: the status panel and the arena
+ignore them. The RPi's `RPI_STM_TO_TABLET=0` switches the mirror off; the log
+keeps only the last 200 lines, so this is for watching live, not for records.
+
 Not implemented, for the avoidance of doubt: `AMDADD` / `AMDSUB` (the AMD
 tool's own obstacle-drag messages) are ignored. **Obstacles travel
 tablet → robot only.**

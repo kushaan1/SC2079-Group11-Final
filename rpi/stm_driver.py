@@ -64,6 +64,19 @@ def is_motion(line: str) -> bool:
     return line.split(" ", 1)[0] in _MOTION_VERBS
 
 
+# --- traffic mirror ----------------------------------------------------------------
+
+def _mirror(hook: Optional[Callable[[str], None]], text: str) -> None:
+    """Hand one line of the serial conversation ("STM> FW 30" / "STM< ACK,FW") to the
+    optional hook - the tablet's raw log. A failing hook must never touch the driver."""
+    if hook is None:
+        return
+    try:
+        hook(text)
+    except Exception:
+        LOG.exception("STM mirror hook failed")
+
+
 # --- interface ----------------------------------------------------------------------
 
 class StmDriver(ABC):
@@ -103,12 +116,20 @@ class StmDriver(ABC):
 class FakeStmDriver(StmDriver):
     """Completes moves on a timer. Records every line it would have sent."""
 
-    def __init__(self, straight_cm_per_s: float = 30.0, turn_s: float = 3.0, turn_deg: int = 45) -> None:
+    def __init__(self, straight_cm_per_s: float = 30.0, turn_s: float = 3.0, turn_deg: int = 45,
+                 on_line: Optional[Callable[[str], None]] = None) -> None:
         self._cm_per_s = straight_cm_per_s
         self._turn_s = turn_s
         self._turn_deg = turn_deg
+        self._on_line = on_line
         self._abort = threading.Event()
         self.sent = []  # type: List[str]
+
+    def _pretend(self, line: str, reply: str) -> None:
+        """Record the line and mirror it with the reply the real board would give."""
+        self.sent.append(line)
+        _mirror(self._on_line, "STM> " + line)
+        _mirror(self._on_line, "STM< " + reply)
 
     def start(self) -> None:
         LOG.info("fake STM ready")
@@ -118,16 +139,17 @@ class FakeStmDriver(StmDriver):
         return True
 
     def manual(self, token: str) -> None:
-        self.sent.append(encode_manual(token, self._turn_deg))
+        line = encode_manual(token, self._turn_deg)
+        self._pretend(line, "ACK," + _verb(line))
 
     def manual_raw(self, line: str) -> None:
-        self.sent.append(line)
+        self._pretend(line, "ACK," + _verb(line))
 
     def execute(self, instr: Instruction, abort: Optional[threading.Event] = None) -> None:
         line = encode_instruction(instr)
         if abort is not None and abort.is_set():
             raise StmAborted(line, "stopped")
-        self.sent.append(line)
+        self._pretend(line, "ACK," + _verb(line))
         if isinstance(instr, Straight):
             duration = instr.cm / self._cm_per_s if self._cm_per_s > 0 else 0.0
         else:
@@ -137,9 +159,10 @@ class FakeStmDriver(StmDriver):
         self._abort.clear()
         if self._abort.wait(duration):
             raise StmAborted(line, "stopped")
+        _mirror(self._on_line, "STM< DONE," + _verb(line))
 
     def stop(self) -> None:
-        self.sent.append("S")
+        self._pretend("S", "ACK,S")
         self._abort.set()
 
     def close(self) -> None:
@@ -188,9 +211,11 @@ class SerialStmDriver(StmDriver):
         steer_steps: Optional[int] = None,
         manual_turn_deg: int = 45,
         on_link_change: Optional[Callable[[bool], None]] = None,
+        on_line: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._open_serial = open_serial or _default_open(port, baud)
         self._on_link_change = on_link_change
+        self._on_line = on_line
         self._completion = completion.upper()
         self._ack_deadline_s = ack_deadline_s
         self._turn_deadline_s = turn_deadline_s
@@ -294,6 +319,7 @@ class SerialStmDriver(StmDriver):
             line = raw.decode("utf-8", errors="replace").strip()
             if line:
                 LOG.info("STM in: %s", line)
+                _mirror(self._on_line, "STM< " + line)
                 self._replies.put(line)
 
     def _reconnect_loop(self) -> None:
@@ -319,6 +345,7 @@ class SerialStmDriver(StmDriver):
         if ser is None or not self._available:
             raise StmUnavailable(line, "STM unavailable")
         LOG.info("STM out: %s", line)
+        _mirror(self._on_line, "STM> " + line)
         try:
             ser.write((line + "\n").encode("ascii"))
             ser.flush()

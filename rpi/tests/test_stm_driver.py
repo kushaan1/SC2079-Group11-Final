@@ -96,3 +96,16 @@ def test_fake_execute_refuses_when_the_runs_abort_event_is_already_set():
     with pytest.raises(StmAborted):
         stm.execute(Straight("FORWARD", 10), abort=abort)
     assert stm.sent == []
+
+
+def test_fake_mirrors_the_conversation_it_pretends_to_have():
+    mirrored = []
+    stm = FakeStmDriver(straight_cm_per_s=1000.0, turn_s=0.0, on_line=mirrored.append)
+    stm.manual("f")
+    stm.execute(Straight("FORWARD", 20))
+    stm.stop()
+    assert mirrored == [
+        "STM> F", "STM< ACK,F",
+        "STM> FW 20", "STM< ACK,FW", "STM< DONE,FW",
+        "STM> S", "STM< ACK,S",
+    ]

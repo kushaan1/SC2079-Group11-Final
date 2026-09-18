@@ -62,6 +62,9 @@ STM_ACK_DEADLINE_S = _number("STM_ACK_DEADLINE_S", 1.0)
 STM_TURN_DEADLINE_S = _number("STM_TURN_DEADLINE_S", 10.0)
 STM_PING_DEADLINE_S = _number("STM_PING_DEADLINE_S", 2.0)
 STM_STOP_DRAIN_S = _number("STM_STOP_DRAIN_S", 0.5)
+# Mirror every serial line both ways to the tablet as "STM> ..." / "STM< ..." lines. The
+# app shows them only in its raw Bluetooth log (they decode as Unknown); off with 0.
+STM_TO_TABLET = _flag("STM_TO_TABLET", True)
 MANUAL_TURN_DEG = int(_number("MANUAL_TURN_DEG", 45))
 MOTOR_A_PCT = _optional_int("MOTOR_A_PCT", None)     # None = do not send at startup
 MOTOR_B_PCT = _optional_int("MOTOR_B_PCT", None)

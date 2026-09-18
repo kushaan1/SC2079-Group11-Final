@@ -270,3 +270,42 @@ def test_serial_loss_marks_unavailable_reconnects_and_reports_both():
     finally:
         driver.close()
     assert changes == [True, False, True]   # close() is not a link loss
+
+
+# --- traffic mirror: every line both ways, for the tablet's raw log ---------------------
+
+def test_traffic_is_mirrored_to_the_hook_in_order():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        if line.startswith("FW"):
+            return ["ACK,FW", "DONE,FW"]
+        return ["ACK," + line.split(" ")[0]]
+
+    mirrored = []
+    driver, fake = make(responder, completion="DONE", on_line=mirrored.append)
+    driver.start()
+    try:
+        driver.manual("f")
+        driver.execute(Straight("FORWARD", 30))
+        assert wait_until(lambda: len(mirrored) >= 7)
+        assert mirrored == [
+            "STM> PING", "STM< PONG",
+            "STM> F", "STM< ACK,F",
+            "STM> FW 30", "STM< ACK,FW", "STM< DONE,FW",
+        ]
+    finally:
+        driver.close()
+
+
+def test_a_failing_mirror_hook_never_breaks_the_driver():
+    def hook(text):
+        raise RuntimeError("tablet gone")
+
+    driver, fake = make(on_line=hook)
+    driver.start()
+    try:
+        driver.manual("f")
+        assert fake.written == ["PING", "F"]
+    finally:
+        driver.close()

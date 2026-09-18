@@ -17,6 +17,7 @@ def test_defaults():
     assert cfg.PLANNER_URL == ""
     assert cfg.VISION_URL == ""
     assert cfg.STM_COMPLETION == "DONE"
+    assert cfg.STM_TO_TABLET is True
     assert cfg.MOTOR_A_PCT is None
     assert cfg.MANUAL_TURN_DEG == 45
     assert cfg.CAPTURE_FRAMES == 3
@@ -33,6 +34,7 @@ def test_environment_overrides(monkeypatch):
         MOTOR_A_PCT="55",
         TURN_RADIUS_FORWARD_LEFT="31",
         ALLOW_STUB_PLANNER="true",
+        STM_TO_TABLET="0",
     )
     assert cfg.PLANNER_URL == "http://10.0.0.2:5000"      # trailing slash stripped
     assert cfg.STM_COMPLETION == "ACK"                     # upper-cased
@@ -40,6 +42,7 @@ def test_environment_overrides(monkeypatch):
     assert cfg.TURN_RADIUS_CM["FORWARD_LEFT"] == 31
     assert cfg.TURN_RADIUS_CM["FORWARD_RIGHT"] == 40
     assert cfg.ALLOW_STUB_PLANNER is True
+    assert cfg.STM_TO_TABLET is False
 
 
 def test_straight_deadline_scales_with_distance():

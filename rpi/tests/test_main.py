@@ -104,3 +104,38 @@ def test_face_search_over_the_wired_program_without_a_planner_url(monkeypatch):
         "MSG,No robot pose in start - assuming start zone",
         "MSG,Planner error: Planner URL not configured",
     ]
+
+
+def test_stm_traffic_reaches_the_tablets_raw_log():
+    wiring = build(fake_stm=True, fake_camera=True)
+    read_fd, write_fd = os.pipe()
+    wiring.link._attach(write_fd)
+    try:
+        wiring.dispatcher.handle("f")
+        wiring.link.send("END")
+        lines = _read_until_end(read_fd)
+    finally:
+        wiring.link.close()
+        wiring.vision.close()
+        os.close(read_fd)
+    assert lines == ["STM> F", "STM< ACK,F"]
+
+
+def test_stm_traffic_mirror_can_be_switched_off(monkeypatch):
+    monkeypatch.setenv("RPI_STM_TO_TABLET", "0")
+    import importlib
+    from rpi import config
+    importlib.reload(config)
+    wiring = build(fake_stm=True, fake_camera=True)
+    read_fd, write_fd = os.pipe()
+    wiring.link._attach(write_fd)
+    try:
+        wiring.dispatcher.handle("f")
+        wiring.link.send("END")
+        lines = _read_until_end(read_fd)
+    finally:
+        wiring.link.close()
+        wiring.vision.close()
+        os.close(read_fd)
+    assert lines == []
+    assert wiring.stm.sent == ["F"]
