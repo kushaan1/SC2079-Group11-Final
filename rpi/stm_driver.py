@@ -39,12 +39,12 @@ class StmUnavailable(StmError):
 _MANUAL_PLAIN = {"f": "F", "b": "B", "s": "S"}
 _MANUAL_ARCS = {"tl": "TL", "tr": "TR", "sl": "BL", "sr": "BR"}
 _ARC_VERBS = {"FORWARD_LEFT": "TL", "FORWARD_RIGHT": "TR", "BACKWARD_LEFT": "BL", "BACKWARD_RIGHT": "BR"}
-_MOTION_VERBS = ("FW", "BW", "FS", "TL", "TR", "BL", "BR", "PL", "PR")
+_MOTION_VERBS = ("FS", "BS", "FW", "BW", "TL", "TR", "BL", "BR", "PL", "PR")
 
 
 def encode_instruction(instr: Instruction) -> str:
     if isinstance(instr, Straight):
-        verb = "FW" if instr.move == "FORWARD" else "BW"
+        verb = "FS" if instr.move == "FORWARD" else "BS"
         return "%s %d" % (verb, instr.cm)
     if isinstance(instr, Arc) and instr.kind in ARC_KINDS:
         return "%s %d" % (_ARC_VERBS[instr.kind], instr.degrees)
@@ -67,7 +67,7 @@ def is_motion(line: str) -> bool:
 # --- traffic mirror ----------------------------------------------------------------
 
 def _mirror(hook: Optional[Callable[[str], None]], text: str) -> None:
-    """Hand one line of the serial conversation ("STM> FW 30" / "STM< ACK,FW") to the
+    """Hand one line of the serial conversation ("STM> FS 30" / "STM< ACK,FS") to the
     optional hook - the tablet's raw log. A failing hook must never touch the driver."""
     if hook is None:
         return
@@ -403,7 +403,7 @@ class SerialStmDriver(StmDriver):
         parts = line.split(" ")
         verb = parts[0]
         amount = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-        if verb in ("FW", "BW", "FS"):
+        if verb in ("FS", "BS", "FW", "BW"):
             return self._straight_deadline(amount)
         if verb in ("TL", "TR", "BL", "BR", "PL", "PR"):
             return self._turn_deadline_s

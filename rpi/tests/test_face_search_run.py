@@ -94,7 +94,7 @@ def test_bullseye_on_the_declared_face_then_the_cheapest_other_face_has_the_imag
         "MSG,Found image on W face of B1",
     ]
     assert planner.faces == ["SOUTH", "NORTH", "EAST", "WEST"]
-    assert stm.sent == ["FW 10"]
+    assert stm.sent == ["FS 10"]
 
 
 def test_all_faces_examined_without_an_image():

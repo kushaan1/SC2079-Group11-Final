@@ -18,6 +18,7 @@ def test_defaults():
     assert cfg.VISION_URL == ""
     assert cfg.STM_COMPLETION == "DONE"
     assert cfg.STM_TO_TABLET is True
+    assert cfg.STM_STRAIGHT_CM_PER_S == 10.0
     assert cfg.MOTOR_A_PCT is None
     assert cfg.MANUAL_TURN_DEG == 45
     assert cfg.CAPTURE_FRAMES == 3
@@ -48,3 +49,9 @@ def test_environment_overrides(monkeypatch):
 def test_straight_deadline_scales_with_distance():
     assert config.stm_straight_deadline_s(30) == 8.0
     assert config.stm_straight_deadline_s(100) == 15.0
+
+
+def test_straight_deadline_stretches_for_a_slower_straight(monkeypatch):
+    cfg = _reload(monkeypatch, STM_STRAIGHT_CM_PER_S="5")
+    assert cfg.stm_straight_deadline_s(100) == 25.0     # 20 s of driving plus the 5 s slack
+    assert cfg.stm_straight_deadline_s(30) == 11.0

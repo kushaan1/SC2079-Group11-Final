@@ -65,8 +65,8 @@ Each step adds one real device. Do not skip ahead: a failure then has one cause.
    itself: check `raspistill -o /tmp/t.jpg` works outside this program first.
 3. **STM** — drop `--fake-stm`. The log's first lines must show `PING` and
    `PONG`. F/B/STOP from the tablet jog the car. IMAGE REC needs the STM's
-   `BW <cm>` and the widened `FW` range (spec §3.2); until then the run stops
-   at the first reverse with `Aborted at BW 10: ERR,UNKNOWN`, which is correct.
+   `BS <cm>` and the widened `FS` range (spec §3.2); until then the run stops
+   at the first reverse with `Aborted at BS 10: ERR,UNKNOWN`, which is correct.
 4. **Face search** — needs the tablet's `faceSearch` trigger.
 
 The STM replies `ACK,<verb>` on receipt and `DONE,<verb>` when the motion ends;
@@ -81,7 +81,7 @@ For calibration and for trying a new firmware command without the tablet:
 python3 -m rpi.stm_console
 ```
 
-Type commands as you would in CoolTerm — `FW 50`, `TL 90`, `PING`, `RANGE`,
+Type commands as you would in CoolTerm — `FS 50`, `TL 90`, `PING`, `RANGE`,
 `SEEK 30` — and the board's replies print as they arrive, with the time each
 motion took. It uses the same driver as the runs (same line endings, the same
 `ACK`→`DONE` wait and deadlines, `S` and re-`PING` on silence), so a command

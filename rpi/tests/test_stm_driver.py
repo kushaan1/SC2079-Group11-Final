@@ -12,8 +12,8 @@ from rpi.stm_driver import (
 # --- encoding (spec §5.5) ------------------------------------------------------
 
 @pytest.mark.parametrize("instr,line", [
-    (Straight("FORWARD", 30), "FW 30"),
-    (Straight("BACKWARD", 10), "BW 10"),
+    (Straight("FORWARD", 30), "FS 30"),
+    (Straight("BACKWARD", 10), "BS 10"),
     (Arc("FORWARD_LEFT", 90), "TL 90"),
     (Arc("FORWARD_RIGHT", 90), "TR 90"),
     (Arc("BACKWARD_LEFT", 90), "BL 90"),
@@ -43,7 +43,7 @@ def test_encode_manual_rejects_unknown_token():
 
 
 @pytest.mark.parametrize("line,motion", [
-    ("FW 30", True), ("BW 5", True), ("TL 90", True), ("BR 45", True), ("PL 180", True),
+    ("FS 30", True), ("BS 5", True), ("FW 30", True), ("BW 5", True), ("TL 90", True), ("BR 45", True), ("PL 180", True),
     ("F", False), ("B", False), ("S", False), ("PING", False), ("MA 50", False),
 ])
 def test_is_motion(line, motion):
@@ -59,7 +59,7 @@ def test_fake_records_what_it_would_send():
     stm.execute(Straight("FORWARD", 20))
     stm.execute(Arc("BACKWARD_RIGHT", 90))
     stm.manual_raw("beginFastest")
-    assert stm.sent == ["F", "FW 20", "BR 90", "beginFastest"]
+    assert stm.sent == ["F", "FS 20", "BR 90", "beginFastest"]
 
 
 def test_fake_execute_takes_time_proportional_to_distance():
@@ -106,7 +106,7 @@ def test_fake_mirrors_the_conversation_it_pretends_to_have():
     stm.stop()
     assert mirrored == [
         "STM> F", "STM< ACK,F",
-        "STM> FW 20", "STM< ACK,FW", "STM< DONE,FW",
+        "STM> FS 20", "STM< ACK,FS", "STM< DONE,FS",
         "STM> S", "STM< ACK,S",
     ]
 

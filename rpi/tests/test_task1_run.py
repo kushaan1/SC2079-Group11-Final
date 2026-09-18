@@ -105,20 +105,20 @@ def test_full_run_line_by_line():
     assert sent == [
         "MSG,Planning...",
         "MSG,Visiting 2 of 2",
-        "ROBOT,1.00,4.00,0",            # FW 30 from (1,1,N)
+        "ROBOT,1.00,4.00,0",            # FS 30 from (1,1,N)
         "ROBOT,5.00,8.00,90",           # TR 90, radius 40 cm
         "MSG,Capturing B1",
         "ROBOT,4.00,4.00,90",           # snap to the planner's capture pose (spec §6.2 order)
-        "ROBOT,3.00,4.00,90",           # BW 10 facing east
+        "ROBOT,3.00,4.00,90",           # BS 10 facing east
         "ROBOT,7.00,8.00,0",            # FL 90
-        "ROBOT,7.00,10.00,0",           # FW 20
+        "ROBOT,7.00,10.00,0",           # FS 20
         "MSG,Capturing B2",
         "ROBOT,8.00,8.00,0",            # snap
         "TARGET,B1,16",
         "MSG,B2: bullseye - wrong face?",
         "MSG,Done: 1 of 2 recognised",
     ]
-    assert stm.sent == ["FW 30", "TR 90", "BW 10", "TL 90", "FW 20"]
+    assert stm.sent == ["FS 30", "TR 90", "BS 10", "TL 90", "FS 20"]
     assert state.last_robot_line == "ROBOT,8.00,8.00,0"
     assert run.submitted == [1, 2]
 
@@ -171,13 +171,13 @@ def test_stop_mid_segment():
     run, controller, sent, stm, worker, _ = harness(stm=FakeStmDriver(straight_cm_per_s=1.0))
     try:
         controller.start(run)
-        assert wait_for(stm.sent, "FW 30")       # the 30 s move is in flight
+        assert wait_for(stm.sent, "FS 30")       # the 30 s move is in flight
         controller.stop()
         controller.join(5.0)
     finally:
         worker.close()
     assert sent[-1] == "MSG,Stopped"
-    assert stm.sent == ["FW 30", "S"]
+    assert stm.sent == ["FS 30", "S"]
     assert not any(line.startswith("MSG,Done") for line in sent)
 
 
@@ -189,7 +189,7 @@ def test_stm_error_aborts_with_the_reply():
     finally:
         worker.close()
     assert sent[-1] == "MSG,Aborted at TR 90: ERR,GYRO"
-    assert stm.sent == ["FW 30", "TR 90", "S"]
+    assert stm.sent == ["FS 30", "TR 90", "S"]
 
 
 def test_camera_failure_is_reported_and_the_run_continues():

@@ -14,7 +14,7 @@ freely, the Pi side adapts to whatever names and shapes you pick.
 | | |
 |---|---|
 | Port | `/dev/ttyACM0` (USB CDC), 115200 baud — `RPI_STM_PORT` / `RPI_STM_BAUD` if it moves |
-| Direction Pi → STM | ASCII, one command per line, terminated `\n`, no padding, one space between verb and argument: `FW 30`, `TL 90` |
+| Direction Pi → STM | ASCII, one command per line, terminated `\n`, no padding, one space between verb and argument: `FS 30`, `TL 90` |
 | Direction STM → Pi | ASCII lines, `\n` or `\r\n` terminated; blank lines ignored; anything the Pi is not waiting for is logged and skipped |
 | Concurrency | **One command in flight at a time.** The Pi never sends a second motion command until the first has completed or errored. It does not need `ERR,BUSY` to avoid this — but see 4.4 for why it would still like it. |
 | Startup | `PING` → `PONG`, then any configured trims (`MA <pct>`, `MB <pct>`, `AS <n>`), each awaited. The Pi waits up to 5.5 s for the first `PONG`; if it never comes it keeps retrying every 3 s in the background and the tablet sees `STM disconnected`. |
@@ -22,7 +22,7 @@ freely, the Pi side adapts to whatever names and shapes you pick.
 
 ## 2. Reply model (confirmed 2026-09-17: ACK on receipt, DONE on completion)
 
-For every **motion** command (`FW BW TL TR BL BR PL PR`, and the Task 2 ones
+For every **motion** command (`FS BS TL TR BL BR PL PR`, and the Task 2 ones
 in §5), the Pi waits for exactly this sequence:
 
 ```
@@ -35,8 +35,8 @@ Pi  → STM   <next command>
 
 | Rule | Detail |
 |---|---|
-| `ACK,<verb>` | The verb echoed exactly as sent (`ACK,FW` for `FW 30`). Must arrive within **1 s** or the Pi treats the command as dropped (see "silence" below). |
-| `DONE,<verb>` | Same verb. Deadline: straights **cm ÷ 10 + 5 s** (so `FW 30` gets 8 s, `FW 100` 15 s); arcs and pivots **10 s**. `DONE,FW 30` also matches — the Pi matches on the prefix `DONE,FW` — so you may append data after the verb if useful. A bare `DONE` does **not** match. |
+| `ACK,<verb>` | The verb echoed exactly as sent (`ACK,FS` for `FS 30`). Must arrive within **1 s** or the Pi treats the command as dropped (see "silence" below). |
+| `DONE,<verb>` | Same verb. Deadline: straights **cm ÷ 10 + 5 s** (so `FS 30` gets 8 s, `FS 100` 15 s; the 10 cm/s is the Pi's `RPI_STM_STRAIGHT_CM_PER_S` — tell us the real `FS` speed and we set it); arcs and pivots **10 s**. `DONE,FS 30` also matches — the Pi matches on the prefix `DONE,FS` — so you may append data after the verb if useful. A bare `DONE` does **not** match. |
 | `ERR,...` on receipt | `ERR,RANGE`, `ERR,GYRO`, `ERR,BUSY`, `ERR,UNKNOWN` — the Pi stops the run and tells the tablet `Aborted at TL 90: ERR,GYRO`. |
 | `ERR,...` instead of `DONE` | `ERR,TIMEOUT` (or any `ERR,`) after the `ACK` ends the run the same way. |
 | Non-motion commands | `PING`, `F`, `B`, `S`, `MA/MB/AS <n>`: one reply line (`PONG` / `ACK,F` / `ACK,S` …) within 1 s (`PING`: 2 s). **Please do not send `DONE,F` / `DONE,B`** for the jogs; if you do, the Pi skips them harmlessly, but they clutter the log. |
@@ -47,13 +47,13 @@ Pi  → STM   <next command>
 thread, while a motion command is still in flight — that is the tablet's STOP
 button or a run being aborted. After `S` the Pi does the same drain-and-`PING`
 resync as above. So it does not matter what the interrupted move replies —
-`DONE,FW`, `ERR,STOPPED`, or nothing — as long as `PING` still gets `PONG`
+`DONE,FS`, `ERR,STOPPED`, or nothing — as long as `PING` still gets `PONG`
 afterwards. What the Pi needs from `S` is that **the motors are off within a
 few hundred milliseconds and the next motion command is accepted normally**.
 
 ## 3. Commands the Pi uses today
 
-Everything below is already in your reference except `BW`, marked ★.
+Everything below is already in your reference except `BS`, marked ★.
 
 | Pi sends | When | Argument |
 |---|---|---|
@@ -61,8 +61,9 @@ Everything below is already in your reference except `BW`, marked ★.
 | `F` / `B` | tablet F / B buttons | — (500 ms jog) |
 | `S` | tablet STOP, run abort, any silence | — |
 | `TL d` `TR d` `BL d` `BR d` | tablet FL/FR/BL/BR buttons: `d` = 45. Planner arcs: `d` = 90 (45 if the planner's diagonal mode is ever switched on) | degrees |
-| `FW cm` | planner straights | **5–200 in steps of 5** (planner output); most are 5–100 |
-| `BW cm` ★ | planner reverse straights — **every Task 1 segment after the first starts with one** | as `FW` |
+| `FS cm` | planner straights (the slow straight) | **5–200 in steps of 5** (planner output); most are 5–100 |
+| `BS cm` ★ | planner reverse straights — **every Task 1 segment after the first starts with one** | as `FS` |
+| `FW cm` `BW cm` | never sent by a run — only if someone types them in the Pi's STM console. Keep them. | as `FS` |
 | `MA p` `MB p` `AS n` | startup only, and only if set in the Pi's config | as your reference |
 | `PL d` `PR d` | not used yet — the planner's pivot mode is off, and the Pi will only learn to send them when it is switched on. Keep them. | degrees |
 
@@ -74,15 +75,15 @@ two-literal swap on the Pi.
 
 Numbered so you can answer by number.
 
-1. **`BW <cm>`** — reverse straight, encoder closed-loop like `FW`, same reply
+1. **`BS <cm>`** — reverse straight, encoder closed-loop like `FS`, same reply
    model. Without it a Task 1 run stops at its first reverse. This is the
    blocker.
-2. **`FW`/`BW` range 5–200** — the reference says 80–120 (the A.3 test band).
-   The planner emits 5 cm multiples from 5 up; the trial runs produced `FW 5`,
-   `FW 10`, `FW 85`. Anything outside your range must reply `ERR,RANGE` (it
+2. **`FS`/`BS` range 5–200** — the reference says 80–120 (the A.3 test band).
+   The planner emits 5 cm multiples from 5 up; the trial runs produced `FS 5`,
+   `FS 10`, `FS 85`. Anything outside your range must reply `ERR,RANGE` (it
    already does), never move a different distance.
 3. **Exact completion strings** — please confirm the line is literally
-   `DONE,<verb>` with the verb as sent (`DONE,FW`, `DONE,BL`, …). One real
+   `DONE,<verb>` with the verb as sent (`DONE,FS`, `DONE,BL`, …). One real
    transcript of a `TL 90` from your terminal, bytes as they come off the UART,
    would let us pin the driver test to your strings.
 4. **`ERR,BUSY` instead of silence** when a motion command arrives mid-move.
@@ -102,10 +103,10 @@ already has the sensors, only the firmware has to expose them:
 
 7. **`RANGE` → `RANGE,<cm>`** — one forward ultrasonic reading, any time. The Pi
    would read it at every capture pose and nudge the car with a short
-   `FW`/`BW` so the camera is at the trained range before photographing,
+   `FS`/`BS` so the camera is at the trained range before photographing,
    instead of wherever dead reckoning left it. Please tell us the sensor's
    offset from the front edge of the car.
-8. **Obstacle guard on `FW`/`BW`** — abort the move with `ERR,OBSTACLE` if the
+8. **Obstacle guard on `FS`/`BS`** — abort the move with `ERR,OBSTACLE` if the
    ultrasonic (or the IR, if it is a near-object switch) sees something
    closer than a threshold you pick (~8 cm). The Pi already treats any `ERR`
    as "stop the run", so this costs nothing on our side and turns a slipped
@@ -154,7 +155,7 @@ calibration lives:
 ```
 Pi: SEEK 30        STM: drive until the ultrasonic reads ≤ 30 cm (3 readings in a row), stop,
                         DONE,SEEK,<cm travelled>
-Pi: (photograph, decide LEFT or RIGHT; if no decision, BW 10 and try again)
+Pi: (photograph, decide LEFT or RIGHT; if no decision, BS 10 and try again)
 Pi: ROUND 1 L/R    STM: round obstacle 1 on that side, back onto the centre line facing onward, DONE
 Pi: SEEK 30        STM: as above — DONE,SEEK,0 straight away if already inside 30 cm
 Pi: (photograph, decide)
@@ -177,7 +178,7 @@ behind obstacle 1. A 25 cm lane change at this car's turn radius eats
 35–55 cm of forward travel each way, so from a 30 cm standoff `ROUND 1`
 probably needs to start with a short reverse, and it must end less than
 (60 − 30 − ultrasonic offset) cm past obstacle 1's rear face, or `SEEK` for
-obstacle 2 has nothing to do. This makes `BW` a Task 2 blocker as well as a
+obstacle 2 has nothing to do. This makes `BS` a Task 2 blocker as well as a
 Task 1 one.
 
 The alternative — the STM runs the whole thing after one start command and
@@ -208,7 +209,7 @@ from where `SEEK` stops (25–40 cm is where the Task 1 camera work sits; we
 will confirm with the CV side), and every obstacle contact costs 10 s, so
 the manoeuvres should trade a little time for clearance.
 
-**Suggested build order:** `BW` → ultrasonic + `RANGE` + `SEEK` → fixed
+**Suggested build order:** `BS` → ultrasonic + `RANGE` + `SEEK` → fixed
 `ROUND 1`, `ROUND 2`, `HOME` (with the block's width as a constant) → side
 IRs and the IR-terminated loop last. The Pi has a `--fake-arrows` mode so
 you can rehearse the whole sequence on the real car with no camera and no
@@ -229,15 +230,15 @@ firmware against it by hand. `>` is the Pi, `<` is the STM.
 ```
 > PING
 < PONG
-> FW 35
-< ACK,FW
-< DONE,FW
+> FS 35
+< ACK,FS
+< DONE,FS
 > TR 90
 < ACK,TR
 < DONE,TR
-> BW 5
-< ACK,BW
-< DONE,BW
+> BS 5
+< ACK,BS
+< DONE,BS
 > TL 90
 < ACK,TL
 < DONE,TL

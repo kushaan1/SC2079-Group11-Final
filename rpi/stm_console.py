@@ -67,7 +67,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         say("Is the main program running? Stop it first: pkill -f '^python3 -m rpi'")
         stm.close()
         return 1
-    say("STM link up. Type a command (FW 50, TL 90, PING, RANGE ...); s = stop, quit = exit, Ctrl-C = S.")
+    say("STM link up. Type a command (FS 50, TL 90, PING, RANGE ...); s = stop, quit = exit, Ctrl-C = S.")
 
     def read() -> str:
         while True:

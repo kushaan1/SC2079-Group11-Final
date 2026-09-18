@@ -99,8 +99,8 @@ def test_execute_waits_for_the_ack_and_ignores_data_lines():
     def responder(line):
         if line == "PING":
             return ["PONG"]
-        if line.startswith("FW"):
-            return ["ENC,A,120,B,118", "ACK,FW"]
+        if line.startswith("FS"):
+            return ["ENC,A,120,B,118", "ACK,FS"]
         return ["ACK," + line.split(" ")[0]]
 
     driver, fake = make(responder)
@@ -108,7 +108,7 @@ def test_execute_waits_for_the_ack_and_ignores_data_lines():
     try:
         driver.execute(Straight("FORWARD", 30))
         driver.execute(Arc("FORWARD_LEFT", 90))
-        assert fake.written == ["PING", "FW 30", "TL 90"]
+        assert fake.written == ["PING", "FS 30", "TL 90"]
     finally:
         driver.close()
 
@@ -140,7 +140,7 @@ def test_no_reply_sends_stop_and_resyncs():
         with pytest.raises(StmError) as info:
             driver.execute(Straight("BACKWARD", 10))
         assert info.value.reply == "no reply"
-        assert fake.written == ["PING", "BW 10", "S", "PING"]
+        assert fake.written == ["PING", "BS 10", "S", "PING"]
     finally:
         driver.close()
 
@@ -202,7 +202,7 @@ def test_stop_aborts_an_in_flight_execute_then_resyncs():
             return ["PONG"]
         if line == "S":
             return ["ACK,S"]
-        return []   # FW never completes
+        return []   # FS never completes
 
     driver, fake = make(responder)
     driver.start()
@@ -219,12 +219,12 @@ def test_stop_aborts_an_in_flight_execute_then_resyncs():
 
     thread = threading.Thread(target=drive)
     thread.start()
-    assert wait_until(lambda: "FW 100" in fake.written)
+    assert wait_until(lambda: "FS 100" in fake.written)
     driver.stop()
     thread.join(timeout=2.0)
     try:
         assert outcome == ["aborted"]
-        assert fake.written == ["PING", "FW 100", "S", "PING"]
+        assert fake.written == ["PING", "FS 100", "S", "PING"]
     finally:
         driver.close()
 
@@ -235,7 +235,7 @@ def test_stop_with_nothing_in_flight_is_harmless():
     try:
         driver.stop()
         driver.execute(Straight("FORWARD", 5))
-        assert fake.written == ["PING", "S", "PING", "FW 5"]
+        assert fake.written == ["PING", "S", "PING", "FS 5"]
     finally:
         driver.close()
 
@@ -278,8 +278,8 @@ def test_traffic_is_mirrored_to_the_hook_in_order():
     def responder(line):
         if line == "PING":
             return ["PONG"]
-        if line.startswith("FW"):
-            return ["ACK,FW", "DONE,FW"]
+        if line.startswith("FS"):
+            return ["ACK,FS", "DONE,FS"]
         return ["ACK," + line.split(" ")[0]]
 
     mirrored = []
@@ -292,7 +292,7 @@ def test_traffic_is_mirrored_to_the_hook_in_order():
         assert mirrored == [
             "STM> PING", "STM< PONG",
             "STM> F", "STM< ACK,F",
-            "STM> FW 30", "STM< ACK,FW", "STM< DONE,FW",
+            "STM> FS 30", "STM< ACK,FS", "STM< DONE,FS",
         ]
     finally:
         driver.close()

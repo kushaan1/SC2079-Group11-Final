@@ -62,6 +62,9 @@ STM_ACK_DEADLINE_S = _number("STM_ACK_DEADLINE_S", 1.0)
 STM_TURN_DEADLINE_S = _number("STM_TURN_DEADLINE_S", 10.0)
 STM_PING_DEADLINE_S = _number("STM_PING_DEADLINE_S", 2.0)
 STM_STOP_DRAIN_S = _number("STM_STOP_DRAIN_S", 0.5)
+# Slowest straight speed the STM is expected to manage, for the DONE deadline below. Time an
+# `FS 100` in the console and set this a little under 100 / that.
+STM_STRAIGHT_CM_PER_S = _number("STM_STRAIGHT_CM_PER_S", 10.0)
 # Mirror every serial line both ways to the tablet as "STM> ..." / "STM< ..." lines. The
 # app shows them only in its raw Bluetooth log (they decode as Unknown); off with 0.
 STM_TO_TABLET = _flag("STM_TO_TABLET", True)
@@ -73,7 +76,7 @@ STEER_STEPS = _optional_int("STEER_STEPS", None)
 
 def stm_straight_deadline_s(cm: int) -> float:
     """How long to wait for a straight of `cm` to be acknowledged (spec §5.1)."""
-    return cm / 10.0 + 5.0
+    return cm / STM_STRAIGHT_CM_PER_S + 5.0
 
 
 # --- driving ------------------------------------------------------------------
