@@ -111,7 +111,7 @@ ROBOT_BODY_CM = (19, 23)
 # The greedy planner still costs in cm and does not read it.
 # SOURCE: STM | placeholder | NOT MEASURED. 30 is a guess. Update together with
 #   TURN_RADIUS_CM, which must be measured at the same speed.
-ROBOT_SPEED_CM_S = 30 # 
+ROBOT_SPEED_CM_S = 30  #
 
 # ---------------------------------------------------------------------------------------
 # Goal-pose generation (world/objective.py)
@@ -129,11 +129,11 @@ ROBOT_SPEED_CM_S = 30 #
 # this also lowers the clear space a face needs in front of it - see the arena rule in
 # docs/protocols/algorithm-service.md, which must be re-measured when this moves.
 # SOURCE: CV | measured | 30 cm from the middle of the robot, 2026-09-18. Was 25-30 (reference).
-STANDOFF_MIN_CM = 13
+STANDOFF_MIN_CM = 25
 
 # Furthest the robot's leading face may sit from that obstacle face, in cm. Exclusive bound.
 # SOURCE: CV | measured | See STANDOFF_MIN_CM: 13..17 inclusive, a 5 cm band like the original.
-STANDOFF_MAX_CM = 18
+STANDOFF_MAX_CM = 30
 
 # How far the goal pose may slide sideways along the obstacle face, in cm, in each direction.
 # Widening this buys reachability at the cost of off-centre images.
@@ -157,7 +157,7 @@ BOUNDARY_LATERAL_BONUS_CELLS = 2
 # Extra margin added around every obstacle beyond the robot half-extent, in centimetres.
 # SOURCE: ALGO | assumed | Reference value. The rules require 30 cm straight-line clearance between
 #   obstacles; this 6 cm sits on top of the 15 cm robot half-extent. AGENTS.md 3.2.
-OBSTACLE_CLEARANCE_CM = 6
+OBSTACLE_CLEARANCE_CM = 18
 
 # Adjustment applied to the boundary keep-out band, in centimetres. NEGATIVE: it *relaxes* the
 # boundary by 1 cm, because the arena boundary is virtual and costs nothing to clip.
@@ -324,7 +324,7 @@ SERVER_HOST = "0.0.0.0"
 # SOURCE: RPI | placeholder | The reference disagreed with itself: app.py bound 5001 while its own
 #   README, and the simulator client's hardcoded http://localhost:5000, both said 5000. 5000 is
 #   what every client actually calls. Confirm with RPi before demo day.
-SERVER_PORT = 5000
+SERVER_PORT = 8001
 
 # Directory the service writes each incoming request to, one timestamped JSON file per request.
 # Relative paths resolve against the process's working directory, so where the artefacts land
