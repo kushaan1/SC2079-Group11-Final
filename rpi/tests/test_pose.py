@@ -41,8 +41,15 @@ def test_arcs_use_the_per_direction_radius():
     close(advance(Pose(0.0, 0.0, 0.0), Arc("FORWARD_RIGHT", 90), radii), 2.0, 2.0, 90.0)
 
 
-def test_45_degree_arc_is_half_the_displacement():
-    close(advance(Pose(10.0, 10.0, 0.0), Arc("FORWARD_LEFT", 45), RADII), 8.0, 12.0, 315.0)
+def test_45_degree_arc_follows_the_chord_not_half_the_90_degree_step():
+    # Radius 4 cells: forward 4*sin(45) = 2.828, left 4*(1 - cos(45)) = 1.172 - not 2 and 2.
+    close(advance(Pose(10.0, 10.0, 0.0), Arc("FORWARD_LEFT", 45), RADII),
+          10.0 - 1.1715729, 10.0 + 2.8284271, 315.0)
+
+
+def test_180_degree_arc_ends_beside_the_start_facing_back():
+    # A half circle of radius 4 cells: no forward displacement, 2R to the right.
+    close(advance(Pose(0.0, 0.0, 0.0), Arc("FORWARD_RIGHT", 180), RADII), 8.0, 0.0, 180.0)
 
 
 def test_heading_wraps():
