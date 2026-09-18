@@ -111,7 +111,7 @@ ROBOT_BODY_CM = (19, 23)
 # The greedy planner still costs in cm and does not read it.
 # SOURCE: STM | placeholder | NOT MEASURED. 30 is a guess. Update together with
 #   TURN_RADIUS_CM, which must be measured at the same speed.
-ROBOT_SPEED_CM_S = 30
+ROBOT_SPEED_CM_S = 30 # 
 
 # ---------------------------------------------------------------------------------------
 # Goal-pose generation (world/objective.py)
@@ -122,14 +122,18 @@ ROBOT_SPEED_CM_S = 30
 # ---------------------------------------------------------------------------------------
 
 # Closest the robot's leading face may sit to the obstacle face it is photographing, in cm.
-# SOURCE: CV | placeholder | The reference used a 25-30 cm band. AGENTS.md states the standoff three
-#   mutually inconsistent ways (~20 cm camera optimum vs. a 25-30 cm goal band vs. two different
-#   representations in 7.2). CV must pick one against the real lens. AGENTS.md 3.1.
-STANDOFF_MIN_CM = 25
+# "Leading face" is the edge of the 31 cm PLANNING footprint, 15 cm ahead of the robot's centre,
+# so CENTRE-to-face = 15 + this. The spec is given from the centre: 30 cm optimal. A band of
+# 13..17 here puts the centre 28-32 cm from the face, centred on 30; the physical nose
+# (ROBOT_BODY_CM is 23 long, so 11.5 cm ahead of centre) lands 16.5-20.5 cm from it. Lowering
+# this also lowers the clear space a face needs in front of it - see the arena rule in
+# docs/protocols/algorithm-service.md, which must be re-measured when this moves.
+# SOURCE: CV | measured | 30 cm from the middle of the robot, 2026-09-18. Was 25-30 (reference).
+STANDOFF_MIN_CM = 13
 
 # Furthest the robot's leading face may sit from that obstacle face, in cm. Exclusive bound.
-# SOURCE: CV | placeholder | Upper end of the same unreconciled 25-30 cm band. Needs CV sign-off.
-STANDOFF_MAX_CM = 30
+# SOURCE: CV | measured | See STANDOFF_MIN_CM: 13..17 inclusive, a 5 cm band like the original.
+STANDOFF_MAX_CM = 18
 
 # How far the goal pose may slide sideways along the obstacle face, in cm, in each direction.
 # Widening this buys reachability at the cost of off-centre images.
@@ -168,15 +172,33 @@ BOUNDARY_CLEARANCE_ADJUST_CM = -1
 # so both config.TURN_RADIUS_CM["FORWARD_LEFT"] and config.TURN_RADIUS_CM[TurnInstruction.
 # FORWARD_LEFT] resolve (TurnInstruction is a str enum whose values equal its names). The dict is
 # keyed by string rather than by the enum so that this module stays free of project imports.
-# SOURCE: STM | placeholder | 39/40/37/39 are the PRIOR-YEAR team's measurements on THEIR car. The
-#   asymmetry is real and large, and radius grows with speed. Re-measure all four at competition
-#   speed on our chassis before trusting any plan. Do NOT fall back to the "~25 cm nominal" figure.
-#   AGENTS.md 3.1.
+# SOURCE: STM | measured | 2026-09-18, on our chassis, from a tape mark: centre displacement after
+#   one 90 degree turn command (dx = dy = R for a clean quarter arc). Left turns are much tighter
+#   than right - a 14 cm gap - and it is a property of the car, not noise. Speed setting, floor
+#   surface and the straight-run figures (ROBOT_SPEED_CM_S, TURN_TIME_S) were NOT recorded with
+#   these; re-measure all of it together if the speed setting changes.
+#   These are the QUARTER-TURN radii. The 45 degree commands have their own table below.
 TURN_RADIUS_CM = {
-    "FORWARD_LEFT": 39,
-    "FORWARD_RIGHT": 40,
-    "BACKWARD_LEFT": 37,
-    "BACKWARD_RIGHT": 39,
+    "FORWARD_LEFT": 42,
+    "FORWARD_RIGHT": 56,
+    "BACKWARD_LEFT": 41,
+    "BACKWARD_RIGHT": 55,
+}
+
+# How far the car's centre moves ALONG ITS ORIGINAL HEADING after one 45 DEGREE turn command, in
+# centimetres - the tape-measure number, entered as measured. TurnInstruction.radius derives the
+# 45 degree turning radius from it (R = this / sin 45 = this / 0.7071), and every consumer of a
+# *_45 token's radius - the traced arc, its cost, its arc length - reads that. A 45 is therefore
+# NOT modelled as the quarter-turn radius held for half the arc; it was, and the measured car did
+# not agree, covering 7-19% less ground than that model predicts.
+# SOURCE: STM | measured | 2026-09-18, same session and speed as TURN_RADIUS_CM. Derived radii
+#   today: 34 / 52 / 38 / 45 cm (FL / FR / BL / BR). The quarter turns need no such table because
+#   a 90 degree arc's displacement along the heading IS its radius.
+TURN_45_DISPLACEMENT_CM = {
+    "FORWARD_LEFT": 24,
+    "FORWARD_RIGHT": 37,
+    "BACKWARD_LEFT": 27,
+    "BACKWARD_RIGHT": 32,
 }
 
 # Offset applied to the pivot point of a turn, in centimetres, to compensate for the fact that the
@@ -190,6 +212,22 @@ TURN_PIVOT_OFFSET_CM = 3
 # SOURCE: ALGO | assumed | Reference offered exactly one chunk length, 5 cells.
 STRAIGHT_CHUNK_CELLS = (5,)
 
+# The longest single FORWARD/BACKWARD command, in centimetres, that may be put on the wire. The
+# search merges consecutive same-direction chunks with no upper bound, so a clear run across the
+# arena arrives as one large command: measured 2026-09-17, a lone obstacle at (100,80) facing
+# NORTH gives a 140 cm FORWARD, and 300 random 4-8 obstacle arenas produced one of 160 cm against
+# a hard ceiling of 170 (the robot centre is confined to a 171 cm band, driven in 5 cm chunks).
+# Anything at or above 170 therefore disables the cap; 0 disables it explicitly.
+#
+# This is a WIRE-FORMAT limit, not a planning one. Splitting a command does not move the robot
+# differently - same cells, same cost, same seconds - it only chunks the command stream, so the
+# number is the STM owner's to set from their calibration and costs nothing here to change.
+# SOURCE: STM | placeholder | NOT MEASURED. 100 is the figure the STM owner proposed on
+#   2026-09-17 ("we can j do 2 100 cm fw") before running their 0-200 accuracy sweep. Note that
+#   93% of straights this planner emits are under 80 cm, so the sweep matters far more at the
+#   short end than at this one.
+MAX_STRAIGHT_CM = 100
+
 # Seconds the robot takes for one 90 degree turn at competition speed, arc included. The time
 # model charges this per turn and cells/ROBOT_SPEED_CM_S per straight cell; the optimiser and the
 # simulator clock both use it.
@@ -202,9 +240,10 @@ TURN_TIME_S = 3.0
 # was. EXPERIMENTAL: the STM has to be able to execute and stop a 45 degree turn for any plan
 # made with this on to survive contact with the robot.
 # SOURCE: ALGO | assumed | Measured 2026-09-04 on branch kejun-experimental-algo: the
-#   shortest-time planner saves 22% on testdata 02 and 34% on 04. OFF by default until the STM
-#   owner confirms the car can execute and stop a 45 degree turn - see docs/algorithms-todo.md.
-DIAGONAL_HEADINGS = False
+#   shortest-time planner saves 22% on testdata 02 and 34% on 04. Switched ON 2026-09-18 once the
+#   STM owner had driven and measured 45 degree turns in all four directions; those are
+#   TURN_45_DISPLACEMENT_CM, separate from the quarter turns'. The RPi must decode the four *_45 tokens.
+DIAGONAL_HEADINGS = True
 
 # Whether the search may rotate on the spot, by shuffling: full steering lock forward, full lock
 # back the other way, both strokes swinging the nose the same way. INDEPENDENT of

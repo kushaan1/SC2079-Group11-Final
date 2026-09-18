@@ -165,12 +165,19 @@ Four token types, mixed in one list:
 |---|---|
 | `{"move": "FORWARD"\|"BACKWARD", "amount": <cm>}` | Drive straight. `amount` is centimetres, always ≥ 1 |
 | `"FORWARD_LEFT"` `"FORWARD_RIGHT"` `"BACKWARD_LEFT"` `"BACKWARD_RIGHT"` | A quarter-turn arc |
-| `"FORWARD_LEFT_45"` `"FORWARD_RIGHT_45"` `"BACKWARD_LEFT_45"` `"BACKWARD_RIGHT_45"` | A 45° arc: the same steering lock, held half as long. **Experimental — only emitted when the planner runs with `DIAGONAL_HEADINGS` on, which is off by default.** Tell us before you rely on receiving these, and tell us if your decoder cannot ignore them |
+| `"FORWARD_LEFT_45"` `"FORWARD_RIGHT_45"` `"BACKWARD_LEFT_45"` `"BACKWARD_RIGHT_45"` | A 45° arc: the same steering lock, commanded for 45°. **On the wire as of 2026-09-18** — `DIAGONAL_HEADINGS` is on, and the geometry comes from the STM's own 45° measurements (`config.TURN_45_DISPLACEMENT_CM`), not from half a 90. Your decoder must map these to the STM's 45° turn command |
 | `"PIVOT_LEFT_45"` `"PIVOT_RIGHT_45"` `"PIVOT_LEFT_90"` `"PIVOT_RIGHT_90"` | Turn (nearly) on the spot by shuffling: full lock forward, full lock back the other way, both strokes swinging the nose the same way. **Experimental — only emitted when the planner runs with `PIVOT_TURNS` on, which is off by default**, and **these four names are placeholders that nobody has agreed yet** (open item 5). The 45° pair additionally needs `DIAGONAL_HEADINGS`, since a 45° pivot ends on a diagonal heading |
 | `"CAPTURE_IMAGE"` | Stop and photograph. **Terminates every segment** |
 
-- Consecutive same-direction moves are already merged, so you will not receive two `FORWARD`s in a
-  row.
+- Consecutive same-direction moves are merged, **then split again if the merged distance exceeds
+  `config.MAX_STRAIGHT_CM` (currently 100 cm)**. So you *can* receive two `FORWARD`s in a row, and
+  when you do it is one straight chopped up for the firmware's benefit, not two separate legs —
+  there is nothing to do between them. The split is even rather than greedy, so a 140 cm run
+  arrives as `70 + 70`, never as `100 + 40`, and never with a short stub on the end.
+  **Tell us if your decoder would rather have the single long command**: the cap is one number in
+  `config.py`, and setting it to 0 (or anything ≥ 170) turns the splitting off entirely.
+  Uncapped, the longest command we can physically emit is 170 cm; measured over 300 random 4–8
+  obstacle arenas, 1.6% of straights exceeded 120 cm and the worst was 160 cm.
 - **A turn token carries no radius or angle.** Its geometry comes from the algorithm's
   `config.TURN_RADIUS_CM`, which is currently the *prior-year* team's numbers. The four directions
   have genuinely different radii and radius grows with speed, so these must be re-measured on our

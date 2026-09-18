@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from math import radians
+from math import radians, sin
 
 from pydantic import BaseModel, Field
 
@@ -36,7 +36,10 @@ class Straight(str, Enum):
 class TurnInstruction(str, Enum):
     """
     A turn. The bare names are the original quarter turns; the ``_45`` variants are the same
-    steering lock held for half as long, so they share a radius and cost half the arc.
+    steering lock commanded for 45 degrees. They do NOT share a radius: a 90 reads its radius
+    from ``config.TURN_RADIUS_CM``, a 45 derives its own from the measured displacement in
+    ``config.TURN_45_DISPLACEMENT_CM``, because the real car's 45 covers less ground than a
+    half-held 90 would.
     """
 
     FORWARD_LEFT = 'FORWARD_LEFT'
@@ -60,14 +63,22 @@ class TurnInstruction(str, Enum):
 
     def radius(self, cell_size: int) -> int:
         """
-        The turning radius (in grid cells). The turning radius is different for each direction.
+        The turning radius (in grid cells). Different for each direction AND for each angle. A
+        90 reads ``config.TURN_RADIUS_CM`` directly. A 45 reads the measured displacement along
+        the heading from ``config.TURN_45_DISPLACEMENT_CM`` and derives the radius as
+        ``d / sin(45)``: config holds the tape number, this is the only place that converts it.
 
-        Call-time config rule: the radii are read from ``config.TURN_RADIUS_CM`` on every call,
-        so a caller may drop in freshly measured values at runtime without touching this module.
+        Call-time config rule: the radii are read from config on every call, so a caller may
+        drop in freshly measured values at runtime without touching this module. Every consumer
+        of a turn's radius - the traced arc in ``turn.py`` (which keys its cache on this value),
+        ``arc_length``, both cost models - comes through here, so the two tables cannot disagree
+        with each other anywhere downstream.
 
         :param cell_size: the cell size
         :return: the turning radius in grid cells.
         """
+        if self.degrees == 45:
+            return round(config.TURN_45_DISPLACEMENT_CM[self.lock] / sin(radians(45))) // cell_size
         return config.TURN_RADIUS_CM[self.lock] // cell_size
 
     def arc_length(self, cell_size: int) -> int:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+import config
 from pathfinding import cost
 from pathfinding.report import UnreachableObstacle, UnreachableReason
 from pathfinding.search.instructions import (
@@ -15,6 +16,26 @@ from pathfinding.world.primitives import Vector
 from pathfinding.world.world import World, Obstacle
 
 logger = logging.getLogger(__name__)
+
+
+def split_straight(amount: int, limit: int) -> list[int]:
+    """
+    Break one straight of ``amount`` cm into commands of at most ``limit`` cm each.
+
+    Divides as evenly as the integers allow rather than taking the limit greedily. Greedy would
+    turn 105 into ``100 + 5``, and a 5 cm command is the worst case the STM can be handed: its
+    error is nearly all fixed overhead, so the shorter the move the worse it is proportionally.
+    ``53 + 52`` covers the same ground at the same cost and drives better.
+
+    :param amount: the distance to drive, in centimetres. Always at least 1.
+    :param limit: the longest single command allowed. Anything below 1 means no cap.
+    :return: the command amounts in driving order, summing to ``amount``, each at least 1.
+    """
+    if limit < 1 or amount <= limit:
+        return [amount]
+    pieces = -(-amount // limit)          # ceil, without importing math for one call
+    base, remainder = divmod(amount, pieces)
+    return [base + 1] * remainder + [base] * (pieces - remainder)
 
 
 @dataclass
@@ -227,6 +248,21 @@ class Segment:
                     vectors.extend(move.vectors)
                     moves.append(move)
 
+
+        # Applied here rather than inside the merge above, so that the merge keeps converting a
+        # whole run of chunks to centimetres exactly once and the cm-rounding it guards against
+        # stays guarded against. The cap reads config on every call, like TurnInstruction.radius:
+        # it is the STM owner's number and nothing may freeze it at import.
+        limit = config.MAX_STRAIGHT_CM
+        instructions = [
+            piece
+            for instruction in instructions
+            for piece in (
+                [MoveInstruction(move=instruction.move, amount=amount)
+                 for amount in split_straight(instruction.amount, limit)]
+                if isinstance(instruction, MoveInstruction) else [instruction]
+            )
+        ]
 
         instructions.append(MiscInstruction.CAPTURE_IMAGE)
 
