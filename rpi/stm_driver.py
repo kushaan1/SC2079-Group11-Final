@@ -72,8 +72,9 @@ class StmDriver(ABC):
         """Open the link and prove it (raises StmUnavailable)."""
 
     @abstractmethod
-    def manual(self, token: str) -> None:
-        """A tablet movement token. Waits for the STM's reply."""
+    def manual(self, token: str) -> str:
+        """A tablet movement token. Waits for and returns the STM's reply line
+        (`ACK,F` for a jog; the completion line, `DONE,TL`, for an arc)."""
 
     @abstractmethod
     def manual_raw(self, line: str) -> None:
@@ -117,8 +118,10 @@ class FakeStmDriver(StmDriver):
     def available(self) -> bool:
         return True
 
-    def manual(self, token: str) -> None:
-        self.sent.append(encode_manual(token, self._turn_deg))
+    def manual(self, token: str) -> str:
+        line = encode_manual(token, self._turn_deg)
+        self.sent.append(line)
+        return "ACK," + line.split(" ", 1)[0]
 
     def manual_raw(self, line: str) -> None:
         self.sent.append(line)
@@ -408,9 +411,9 @@ class SerialStmDriver(StmDriver):
 
     # -- StmDriver --
 
-    def manual(self, token: str) -> None:
+    def manual(self, token: str) -> str:
         line = encode_manual(token, self._manual_turn_deg)
-        self._command(line, self._deadline(line), motion=is_motion(line))
+        return self._command(line, self._deadline(line), motion=is_motion(line))
 
     def manual_raw(self, line: str) -> None:
         # A passthrough line has no known verb on the STM side, so any ACK or ERR is its reply.

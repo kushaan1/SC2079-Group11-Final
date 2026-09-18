@@ -96,3 +96,10 @@ def test_fake_execute_refuses_when_the_runs_abort_event_is_already_set():
     with pytest.raises(StmAborted):
         stm.execute(Straight("FORWARD", 10), abort=abort)
     assert stm.sent == []
+
+
+def test_fake_manual_returns_the_stm_reply():
+    stm = FakeStmDriver(straight_cm_per_s=1000.0, turn_s=0.0)
+    assert stm.manual("f") == "ACK,F"
+    assert stm.manual("tl") == "ACK,TL"
+    assert stm.manual("s") == "ACK,S"

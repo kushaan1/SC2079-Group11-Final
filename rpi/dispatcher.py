@@ -74,11 +74,14 @@ class Dispatcher:
 
     def _manual(self, token: str) -> None:
         try:
-            self._stm.manual(token)
+            reply = self._stm.manual(token)
         except StmUnavailable:
             self._send(protocol.msg("STM unavailable"))
         except StmError as error:
             self._send(protocol.msg("STM error: %s" % error.reply))
+        else:
+            # The STM's own reply, relayed: the operator sees each press acknowledged.
+            self._send(protocol.msg("STM: %s" % reply))
 
     def _start(self, name: str, factory: Optional[RunFactory], message: object) -> None:
         if factory is None:
