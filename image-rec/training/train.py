@@ -66,6 +66,9 @@ def train_task(
         "name": config.training.run_name,
         "seed": config.dataset.seed,
         "deterministic": True,
+        # Flipping changes arrow direction and can invalidate other glyph labels.
+        "fliplr": 0.0,
+        "flipud": 0.0,
         "val": True,
         "plots": True,
         "save": True,

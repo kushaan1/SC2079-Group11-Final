@@ -1,8 +1,12 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from training.backend import BackendChoice
+from training.config import load_task_config
 from training.export_int8 import export_int8, locate_tflite
 from training.train import train_task
 
@@ -73,6 +77,28 @@ def test_training_passes_reproducible_arguments_and_writes_metadata(tmp_path):
     metadata = json.loads((outcome.save_dir / "run-metadata.json").read_text(encoding="utf-8"))
     assert metadata["backend"]["name"] == "cpu"
     assert metadata["training_arguments"]["imgsz"] == 320
+
+
+@pytest.mark.parametrize("task", ("task1", "task2"))
+def test_both_tasks_disable_direction_changing_flips(tmp_path, task):
+    config = load_task_config(task)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    config = replace(config, dataset=replace(config.dataset, manifest=manifest))
+    data_path = tmp_path / "data.yaml"
+    data_path.write_text("{}", encoding="utf-8")
+    model = FakeTrainModel(tmp_path / "run")
+    outcome = train_task(
+        config,
+        yolo_factory=lambda checkpoint: model,
+        prepare=lambda ignored: data_path,
+        backend_choices=(BackendChoice("cpu", "cpu", "test"),),
+    )
+    assert model.arguments["fliplr"] == 0.0
+    assert model.arguments["flipud"] == 0.0
+    metadata = json.loads((outcome.save_dir / "run-metadata.json").read_text())
+    assert metadata["training_arguments"]["fliplr"] == 0.0
+    assert metadata["training_arguments"]["flipud"] == 0.0
 
 
 class FakeExportModel:

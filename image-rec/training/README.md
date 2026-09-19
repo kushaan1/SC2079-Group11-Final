@@ -56,7 +56,8 @@ Keep each task's images, labels, and class order separate:
 **Task 1 synthetic data:** follow the [synthesis guide](docs/synthesis.md) to register stand
 orientations, configure backgrounds, generate scenes, and visually audit masks and boxes.
 Generation applies mild whole-frame camera-shake blur to 30% of images by default; the synthesis
-guide documents recipe settings to tune it or opt out.
+guide documents recipe settings to tune it or opt out. About 30% of glyph cards also receive
+dark, irregular camouflage textures; the remaining cards retain the existing pattern treatment.
 
 **Task 2 or real Task 1 photos:** follow the [manual annotation guide](docs/dataset.md#manual-annotations).
 Labels mirror the image's relative path and use the same stem with a `.txt` extension.
@@ -114,6 +115,7 @@ The wrapper validates and prepares again before training. Both configurations de
 ```sh
 python -m training.train --task task1 --epochs 5 --batch-size 4
 ```
+
 
 Automatic backend order is CUDA → ROCm → DirectML → MPS → CPU, using available devices.
 Use `--backend directml` (or `cuda`, `rocm`, `mps`, `cpu`) to require a specific backend.

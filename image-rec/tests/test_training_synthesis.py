@@ -77,7 +77,10 @@ def test_procedural_patterns_are_deterministic_and_keep_the_glyph_black(family):
     assert int(first.image[30:65, 30:65].min()) == 0
     resized_mask = cv2.resize(mask, (96, 96), interpolation=cv2.INTER_AREA)
     background = cv2.cvtColor(first.image, cv2.COLOR_BGR2GRAY)[resized_mask == 0]
-    assert int(background.min()) >= MIN_GLYPH_BACKGROUND_LUMA
+    floor = (synthesis.CAMOUFLAGE_MIN_BACKGROUND_LUMA
+             if first.parameters["camouflage"]["applied"] else MIN_GLYPH_BACKGROUND_LUMA)
+    assert int(background.min()) >= floor
+    assert first.parameters["minimum_background_luma"] == floor
     assert (
         PATTERN_EXPOSURE_RANGE[0]
         <= first.parameters["exposure_scale"]
@@ -94,6 +97,39 @@ def test_pattern_schedule_and_distractors_are_balanced_and_distinct():
     distractors = distractor_ids(11, 8, "scene-a", 0)
     assert len(distractors) == len(set(distractors))
     assert 11 not in distractors
+
+
+@pytest.mark.parametrize("fraction", (0.0, 1.0))
+def test_camouflage_preserves_asymmetric_glyph_and_records_contrast(monkeypatch, fraction):
+    monkeypatch.setattr(synthesis, "CAMOUFLAGE_FRACTION", fraction)
+    mask = np.zeros((96, 96), dtype=np.uint8)
+    # Right-pointing arrow with an off-centre shaft also exposes vertical flips.
+    cv2.fillPoly(mask, [np.asarray([(10, 26), (55, 26), (55, 14),
+                                  (84, 36), (55, 58), (55, 46), (10, 46)])], 255)
+    first = render_pattern_card(mask, "stripes", 123, size=96)
+    second = render_pattern_card(mask, "stripes", 123, size=96)
+    assert np.array_equal(first.image, second.image)
+    assert first.parameters == second.parameters
+    gray = cv2.cvtColor(first.image, cv2.COLOR_BGR2GRAY)
+    assert np.array_equal(gray == 0, mask == 255)
+    background = gray[mask == 0]
+    assert first.parameters["camouflage"]["applied"] == bool(fraction)
+    if fraction:
+        assert 0.10 < float((background < MIN_GLYPH_BACKGROUND_LUMA).mean()) < 0.50
+        assert float((background > 40).mean()) > 0.30
+        assert first.parameters["observed_minimum_background_luma"] >= synthesis.CAMOUFLAGE_MIN_BACKGROUND_LUMA
+    else:
+        assert int(background.min()) >= MIN_GLYPH_BACKGROUND_LUMA
+
+
+def test_camouflage_mix_is_approximately_thirty_percent_and_independent_of_glyph():
+    mask = np.zeros((32, 32), dtype=np.uint8)
+    cards = [render_pattern_card(mask, "stripes", seed, size=32) for seed in range(200)]
+    fraction = sum(card.parameters["camouflage"]["applied"] for card in cards) / len(cards)
+    assert 0.23 <= fraction <= 0.37
+    for seed in range(10):
+        other = render_pattern_card(np.full_like(mask, 255), "checks", seed, size=32)
+        assert other.parameters["camouflage"] == cards[seed].parameters["camouflage"]
 
 
 def test_custom_patterns_are_validated_and_rendered(tmp_path):
@@ -504,6 +540,11 @@ def test_generate_writes_ninety_mirrored_labels_and_provenance(tmp_path):
     assert metadata["primary_competition_id"] == 11
     all_metadata = [json.loads(path.read_text()) for path in (tmp_path / "labels").rglob("*.meta.json")]
     assert sum(item["shake_blur"]["applied"] for item in all_metadata) == 27
+    pattern_parameters = [item["objects"][0]["pattern"]["parameters"] for item in all_metadata]
+    assert {params["camouflage"]["applied"] for params in pattern_parameters} == {False, True}
+    for params in pattern_parameters:
+        assert params["camouflage"]["fraction"] == 0.30
+        assert params["observed_minimum_background_luma"] >= params["minimum_background_luma"]
     repeated_metadata = json.loads(
         next((tmp_path / "labels").rglob("sample-060.meta.json")).read_text(
             encoding="utf-8"

@@ -42,6 +42,9 @@ DEFAULT_MIN_VISIBLE_FRACTION = 0.20
 DEFAULT_MIN_PRIMARY_FRACTION = 0.50
 MIN_GLYPH_BACKGROUND_LUMA = 24
 PATTERN_EXPOSURE_RANGE = (0.55, 0.80)
+CAMOUFLAGE_FRACTION = 0.30
+CAMOUFLAGE_MIN_BACKGROUND_LUMA = 6
+CAMOUFLAGE_PATCH_FRACTION_RANGE = (0.30, 0.45)
 DEFAULT_AUTO_PLACEMENT = {
     "placement_model": "perspective-v2",
     "minimum_stands": 1,
@@ -306,8 +309,21 @@ def render_pattern_card(
         np.uint8
     )
     parameters["exposure_scale"] = exposure_scale
-    pattern = _enforce_minimum_luma(pattern, MIN_GLYPH_BACKGROUND_LUMA)
-    parameters["minimum_background_luma"] = MIN_GLYPH_BACKGROUND_LUMA
+    # Keep texture difficulty independent of glyph shape, family and placement.
+    camouflage_rng = np.random.default_rng(stable_seed(seed, "camouflage-v1"))
+    camouflage = bool(camouflage_rng.random() < CAMOUFLAGE_FRACTION)
+    parameters["camouflage"] = {
+        "applied": camouflage,
+        "fraction": CAMOUFLAGE_FRACTION,
+        "profile": "dark-fragments-v1",
+    }
+    minimum_luma = MIN_GLYPH_BACKGROUND_LUMA
+    if camouflage:
+        pattern, details = _camouflage_pattern(pattern, camouflage_rng)
+        parameters["camouflage"].update(details)
+        minimum_luma = CAMOUFLAGE_MIN_BACKGROUND_LUMA
+    pattern = _enforce_minimum_luma(pattern, minimum_luma)
+    parameters["minimum_background_luma"] = minimum_luma
     parameters["observed_minimum_background_luma"] = int(
         cv2.cvtColor(pattern, cv2.COLOR_BGR2GRAY).min()
     )
@@ -396,6 +412,43 @@ def _procedural_pattern(family: str, size: int, rng: np.random.Generator) -> Tup
 
     canvas = cv2.resize(np.clip(canvas, 0, 255).astype(np.uint8), (size, size), interpolation=cv2.INTER_AREA)
     return canvas, params
+
+
+def _camouflage_pattern(
+    pattern: np.ndarray, rng: np.random.Generator
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Add irregular near-black patches and angular fragments behind the glyph."""
+    height, width = pattern.shape[:2]
+    canvas = pattern.copy()
+    # Two spatial scales break up the regular base without obscuring the whole card.
+    broad = cv2.resize(rng.random((8, 8)).astype(np.float32), (width, height), interpolation=cv2.INTER_CUBIC)
+    fine = cv2.resize(rng.random((24, 24)).astype(np.float32), (width, height), interpolation=cv2.INTER_CUBIC)
+    field = broad * 0.70 + fine * 0.30
+    patch_fraction = float(rng.uniform(*CAMOUFLAGE_PATCH_FRACTION_RANGE))
+    patches = field < np.quantile(field, patch_fraction)
+    dark_luma = int(rng.integers(CAMOUFLAGE_MIN_BACKGROUND_LUMA, 19))
+    canvas[patches] = dark_luma
+    fragment_count = int(rng.integers(60, 101))
+    for _ in range(fragment_count):
+        centre = rng.uniform(0.0, 1.0, 2) * (width, height)
+        length = float(rng.uniform(0.04, 0.18)) * min(width, height)
+        half_width = float(rng.uniform(0.008, 0.025)) * min(width, height)
+        angle = float(rng.uniform(0.0, 2.0 * math.pi))
+        along = np.asarray((math.cos(angle), math.sin(angle))) * length / 2.0
+        across = np.asarray((-math.sin(angle), math.cos(angle))) * half_width
+        polygon = np.rint([
+            centre - along - across,
+            centre + along - across * 0.5,
+            centre + along * 0.7 + across,
+            centre - along + across * 0.6,
+        ]).astype(np.int32)
+        level = int(rng.integers(45, 146))
+        cv2.fillConvexPoly(canvas, polygon, (level, level, level), cv2.LINE_AA)
+    return canvas, {
+        "patch_fraction": patch_fraction,
+        "patch_luma": dark_luma,
+        "fragment_count": fragment_count,
+    }
 
 
 def _enforce_minimum_luma(image: np.ndarray, minimum_luma: int) -> np.ndarray:
