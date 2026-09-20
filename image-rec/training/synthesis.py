@@ -11,7 +11,7 @@ import math
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -20,6 +20,7 @@ from .yolo import format_yolo_row
 
 
 SCHEMA_VERSION = "1.0"
+SYNTHESIS_RENDERER_VERSION = "2.0"
 TASK1_TARGET_IDS = tuple(range(11, 41))
 TASK2_TARGET_IDS = (36, 37, 38, 39, 40)
 TARGET_IDS = TASK1_TARGET_IDS
@@ -96,6 +97,8 @@ class SynthesisTaskProfile:
     target_ids: Tuple[int, ...]
     class_indices: Mapping[int, int]
     bullseye_class_index: int
+    render_long_edge: int
+    output_long_edge: int
 
 
 TASK_PROFILES = {
@@ -104,12 +107,16 @@ TASK_PROFILES = {
         TASK1_TARGET_IDS,
         {target_id: target_id - 11 for target_id in TASK1_TARGET_IDS},
         30,
+        1280,
+        640,
     ),
     "task2": SynthesisTaskProfile(
         "task2",
         TASK2_TARGET_IDS,
         {target_id: index for index, target_id in enumerate(TASK2_TARGET_IDS)},
         5,
+        640,
+        320,
     ),
 }
 
@@ -148,6 +155,7 @@ class RenderedSample:
     annotations: Tuple[Tuple[int, float, float, float, float], ...]
     objects: Tuple[Mapping[str, Any], ...]
     shake_blur: Mapping[str, Any] = field(default_factory=dict)
+    renderer: Mapping[str, Any] = field(default_factory=dict)
 
 
 def file_sha256(path: Path) -> str:
@@ -172,6 +180,51 @@ def load_image(path: Path, unchanged: bool = False) -> np.ndarray:
     if image is None:
         raise SynthesisError("OpenCV could not decode {}".format(path))
     return image
+
+
+def _resize_to_long_edge(image: np.ndarray, long_edge: int) -> np.ndarray:
+    if long_edge <= 0:
+        raise SynthesisError("render resolution must be positive")
+    current_long_edge = max(image.shape[:2])
+    if current_long_edge <= long_edge:
+        return image
+    scale = long_edge / float(current_long_edge)
+    width = max(1, int(round(image.shape[1] * scale)))
+    height = max(1, int(round(image.shape[0] * scale)))
+    return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+
+
+@dataclass
+class SynthesisAssetCache:
+    """Per-process cache of immutable, render-sized synthesis source assets."""
+
+    root: Path
+    render_long_edge: int
+    _images: Dict[Tuple[Path, bool], np.ndarray] = field(default_factory=dict)
+    _templates: Dict[Path, Mapping[str, Any]] = field(default_factory=dict)
+    _glyph_masks: Dict[Path, Mapping[int, np.ndarray]] = field(default_factory=dict)
+
+    def image(self, path: Path, unchanged: bool = False) -> np.ndarray:
+        resolved = path.resolve()
+        key = (resolved, unchanged)
+        if key not in self._images:
+            decoded = load_image(resolved, unchanged=unchanged)
+            self._images[key] = _resize_to_long_edge(decoded, self.render_long_edge)
+        return self._images[key]
+
+    def template(self, path: Path) -> Mapping[str, Any]:
+        resolved = path.resolve()
+        if resolved not in self._templates:
+            self._templates[resolved] = load_template(
+                resolved, self.root, image_loader=self.image
+            )
+        return self._templates[resolved]
+
+    def glyph_masks(self, directory: Path) -> Mapping[int, np.ndarray]:
+        resolved = directory.resolve()
+        if resolved not in self._glyph_masks:
+            self._glyph_masks[resolved] = load_glyph_masks(resolved)
+        return self._glyph_masks[resolved]
 
 
 def normalized_quad(points: Sequence[Sequence[float]], width: int, height: int) -> List[List[float]]:
@@ -541,7 +594,17 @@ def distractor_ids(
     return tuple(ordered[index % len(ordered)] for index in range(count))
 
 
-def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
+def validate_recipe(
+    recipe: Mapping[str, Any],
+    root: Path,
+    assets: Optional[SynthesisAssetCache] = None,
+) -> None:
+    image_loader = assets.image if assets is not None else load_image
+    template_loader = (
+        assets.template
+        if assets is not None
+        else lambda path: load_template(path, root)
+    )
     _effective_shake_blur(recipe.get("shake_blur", {}))
     if recipe.get("schema_version") != SCHEMA_VERSION:
         raise SynthesisError("unsupported synthesis recipe schema_version")
@@ -552,7 +615,7 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
     mode = recipe.get("mode")
     if mode == "in_scene":
         image_path = resolve_resource(root, recipe.get("source_image"))
-        image = load_image(image_path)
+        image = image_loader(image_path)
         _validate_source_hash(image_path, recipe.get("source_sha256"))
         height, width = image.shape[:2]
         pixel_quad(recipe.get("target_quad", ()), width, height)
@@ -560,7 +623,7 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
             pixel_quad(quad, width, height)
     elif mode in ("separated", "auto_background"):
         background_path = resolve_resource(root, recipe.get("background_image"))
-        background = load_image(background_path)
+        background = image_loader(background_path)
         _validate_source_hash(background_path, recipe.get("background_sha256"))
         height, width = background.shape[:2]
         if mode == "auto_background":
@@ -568,7 +631,7 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
             if not isinstance(templates, dict) or set(templates) != set(STAND_ORIENTATIONS):
                 raise SynthesisError("auto_background requires front, left, and right templates")
             for orientation in STAND_ORIENTATIONS:
-                template = load_template(resolve_resource(root, templates[orientation]), root)
+                template = template_loader(resolve_resource(root, templates[orientation]))
                 if template.get("orientation") != orientation:
                     raise SynthesisError("{} template does not declare orientation {}".format(orientation, orientation))
                 if template.get("bullseye_mode") != "baked":
@@ -603,19 +666,24 @@ def validate_recipe(recipe: Mapping[str, Any], root: Path) -> None:
                 height,
                 allowed_outside,
             )
-            load_template(resolve_resource(root, stand.get("template")), root)
+            template_loader(resolve_resource(root, stand.get("template")))
     else:
         raise SynthesisError(
             "recipe mode must be in_scene, separated, or auto_background"
         )
 
 
-def load_template(path: Path, root: Path) -> Mapping[str, Any]:
+def load_template(
+    path: Path,
+    root: Path,
+    image_loader: Optional[Callable[[Path, bool], np.ndarray]] = None,
+) -> Mapping[str, Any]:
+    loader = image_loader if image_loader is not None else load_image
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("schema_version") != SCHEMA_VERSION or data.get("kind") != "stand_template":
         raise SynthesisError("invalid stand template recipe: {}".format(path))
     image_path = resolve_resource(root, data.get("image"))
-    image = load_image(image_path, unchanged=True)
+    image = loader(image_path, True)
     if (
         image.ndim != 3
         or image.shape[2] != 4
@@ -880,9 +948,14 @@ def render_recipe_variant(
     min_visible_fraction: float = DEFAULT_MIN_VISIBLE_FRACTION,
     min_primary_fraction: float = DEFAULT_MIN_PRIMARY_FRACTION,
     task: str = "task1",
+    assets: Optional[SynthesisAssetCache] = None,
+    validate: bool = True,
 ) -> RenderedSample:
-    validate_recipe(recipe, root)
     profile = synthesis_profile(task)
+    if assets is None:
+        assets = SynthesisAssetCache(root.resolve(), profile.render_long_edge)
+    if validate:
+        validate_recipe(recipe, root, assets=assets)
     if not 0 <= variant_index < DEFAULT_VARIANT_COUNT:
         raise SynthesisError(
             "variant_index must be in 0..{}".format(DEFAULT_VARIANT_COUNT - 1)
@@ -895,7 +968,8 @@ def render_recipe_variant(
     seed = int(recipe.get("seed", 2079))
     mode = recipe["mode"]
     if mode == "in_scene":
-        base = load_image(resolve_resource(root, recipe["source_image"]))
+        source_path = resolve_resource(root, recipe["source_image"])
+        base = assets.image(source_path) if assets is not None else load_image(source_path)
         height, width = base.shape[:2]
         objects: List[VisibleObject] = []
         pattern_name = select_pattern(names, scene_key, variant_index, 0)
@@ -927,9 +1001,12 @@ def render_recipe_variant(
             custom_patterns,
             seed,
             task,
+            assets,
         )
     else:
-        separated = _automatic_variant_recipe(recipe, root, variant_index, task)
+        separated = _automatic_variant_recipe(
+            recipe, root, variant_index, task, assets
+        )
         base, objects = _render_separated(
             separated,
             root,
@@ -941,10 +1018,23 @@ def render_recipe_variant(
             custom_patterns,
             seed,
             task,
+            assets,
         )
     sample = _finalize_sample(base, objects, min_visible_fraction, min_primary_fraction)
     image, shake_blur = _apply_shake_blur(sample.image, recipe, variant_index)
-    return RenderedSample(image, sample.annotations, sample.objects, shake_blur)
+    internal_height, internal_width = image.shape[:2]
+    output = _resize_to_long_edge(image, profile.output_long_edge)
+    renderer = {
+        "version": SYNTHESIS_RENDERER_VERSION,
+        "render_long_edge": profile.render_long_edge,
+        "output_long_edge": profile.output_long_edge,
+        "internal_size": [internal_width, internal_height],
+        "output_size": [output.shape[1], output.shape[0]],
+        "downsampling": "opencv-inter-area",
+    }
+    return RenderedSample(
+        output, sample.annotations, sample.objects, shake_blur, renderer
+    )
 
 
 def _automatic_variant_recipe(
@@ -952,6 +1042,7 @@ def _automatic_variant_recipe(
     root: Path,
     variant_index: int,
     task: str = "task1",
+    assets: Optional[SynthesisAssetCache] = None,
 ) -> Mapping[str, Any]:
     settings = _effective_auto_placement(recipe.get("placement", {}))
     recipe_seed = int(recipe.get("seed", 2079))
@@ -975,6 +1066,7 @@ def _automatic_variant_recipe(
                 recipe_seed,
                 rng,
                 task,
+                assets,
             )
         except _AutomaticPlacementError as error:
             last_error = error
@@ -994,6 +1086,7 @@ def _automatic_variant_recipe_once(
     recipe_seed: int,
     rng: np.random.Generator,
     task: str = "task1",
+    assets: Optional[SynthesisAssetCache] = None,
 ) -> Mapping[str, Any]:
     minimum = int(settings["minimum_stands"])
     maximum = int(settings["maximum_stands"])
@@ -1032,6 +1125,7 @@ def _automatic_variant_recipe_once(
         rng,
         primary_edge_crop,
         tuple(settings["edge_visible_fraction_range"]),
+        assets,
     )
     distractor_stands: List[Dict[str, Any]] = []
     occupied: List[np.ndarray] = [np.asarray(primary_quad, dtype=np.float32)]
@@ -1073,6 +1167,7 @@ def _automatic_variant_recipe_once(
             rng,
             edge_crop,
             tuple(settings["edge_visible_fraction_range"]),
+            assets,
         )
         occupied.append(np.asarray(quad, dtype=np.float32))
         distractor_stands.append(
@@ -1171,9 +1266,19 @@ def _sample_automatic_quad(
     rng: np.random.Generator,
     edge_crop: bool,
     edge_visible_range: Sequence[float],
+    assets: Optional[SynthesisAssetCache] = None,
 ) -> List[List[float]]:
-    template_data = load_template(template_recipe_path, root)
-    full_template = load_image(resolve_resource(root, template_data["image"]), unchanged=True)
+    template_data = (
+        assets.template(template_recipe_path)
+        if assets is not None
+        else load_template(template_recipe_path, root)
+    )
+    template_image_path = resolve_resource(root, template_data["image"])
+    full_template = (
+        assets.image(template_image_path, unchanged=True)
+        if assets is not None
+        else load_image(template_image_path, unchanged=True)
+    )
     template, offset = _trim_rgba_template(full_template)
     aspect_ratio = template.shape[1] / float(template.shape[0])
     width = height * aspect_ratio
@@ -1291,8 +1396,14 @@ def _render_separated(
     custom_patterns: Sequence[Path],
     seed: int,
     task: str = "task1",
+    assets: Optional[SynthesisAssetCache] = None,
 ) -> Tuple[np.ndarray, List[VisibleObject]]:
-    base = load_image(resolve_resource(root, recipe["background_image"]))
+    background_path = resolve_resource(root, recipe["background_image"])
+    base = (
+        assets.image(background_path)
+        if assets is not None
+        else load_image(background_path)
+    )
     scene_key = str(recipe["recipe_id"])
     stands = sorted(recipe["stands"], key=lambda item: int(item.get("z_index", 0)))
     distractors = distractor_ids(
@@ -1310,8 +1421,18 @@ def _render_separated(
             distractor_cursor += 1
         pattern_name = select_pattern(pattern_names, scene_key, variant_index, stand_index)
         pattern = render_pattern_card(glyph_masks[target_id], pattern_name, stable_seed(seed, scene_key, variant_index, stand_index), custom_patterns=custom_patterns)
-        template_data = load_template(resolve_resource(root, stand["template"]), root)
-        full_template = load_image(resolve_resource(root, template_data["image"]), unchanged=True)
+        template_path = resolve_resource(root, stand["template"])
+        template_data = (
+            assets.template(template_path)
+            if assets is not None
+            else load_template(template_path, root)
+        )
+        template_image_path = resolve_resource(root, template_data["image"])
+        full_template = (
+            assets.image(template_image_path, unchanged=True)
+            if assets is not None
+            else load_image(template_image_path, unchanged=True)
+        )
         template, template_offset = _trim_rgba_template(full_template)
         local_bgr = template[:, :, :3].copy()
         local_alpha = template[:, :, 3]
@@ -1546,12 +1667,22 @@ def generate_recipe(
     overwrite: bool = False,
     jpeg_quality: int = 95,
     task: str = "task1",
+    assets: Optional[SynthesisAssetCache] = None,
 ) -> Tuple[Path, ...]:
     profile = synthesis_profile(task)
     recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
-    validate_recipe(recipe, root)
-    glyph_masks = load_glyph_masks(glyph_dir)
-    bullseye = load_image(glyph_dir / "41.png")
+    if assets is None:
+        assets = SynthesisAssetCache(root.resolve(), profile.render_long_edge)
+    elif (
+        assets.root.resolve() != root.resolve()
+        or assets.render_long_edge != profile.render_long_edge
+    ):
+        raise SynthesisError(
+            "asset cache root or resolution does not match the {} synthesis profile".format(task)
+        )
+    validate_recipe(recipe, root, assets=assets)
+    glyph_masks = assets.glyph_masks(glyph_dir)
+    bullseye = assets.image(glyph_dir / "41.png")
     custom_patterns = discover_custom_patterns(custom_pattern_dir)
     scene_hash = hashlib.sha256(json.dumps(recipe, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:12]
     relative_dir = Path("scene-{}".format(scene_hash))
@@ -1587,6 +1718,8 @@ def generate_recipe(
                     variant_index,
                     custom_patterns,
                     task=task,
+                    assets=assets,
+                    validate=False,
                 )
                 _write_image(image_path, rendered.image, jpeg_quality)
                 label_path.write_text(
@@ -1613,6 +1746,7 @@ def generate_recipe(
                     else None,
                     "objects": list(rendered.objects),
                     "shake_blur": dict(rendered.shake_blur),
+                    "renderer": dict(rendered.renderer),
                 }
                 meta_path.write_text(
                     json.dumps(metadata, indent=2) + "\n", encoding="utf-8"

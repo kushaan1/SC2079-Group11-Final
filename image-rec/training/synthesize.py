@@ -2,7 +2,9 @@
 
 import argparse
 import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -16,6 +18,7 @@ from .synthesis import (
     IMAGE_SUFFIXES,
     SCHEMA_VERSION,
     STAND_ORIENTATIONS,
+    SynthesisAssetCache,
     SynthesisError,
     create_audit_sheet,
     file_sha256,
@@ -23,6 +26,7 @@ from .synthesis import (
     load_image,
     normalized_quad,
     save_glyph_masks,
+    synthesis_profile,
     validate_recipe,
 )
 
@@ -114,6 +118,16 @@ def parse_args() -> argparse.Namespace:
     generate_all.add_argument("--output-annotations", type=Path)
     generate_all.add_argument("--jpeg-quality", type=int, default=95)
     generate_all.add_argument("--overwrite", action="store_true")
+    generate_all.add_argument(
+        "--parallel",
+        action="store_true",
+        help="generate independent recipes in worker processes (serial by default)",
+    )
+    generate_all.add_argument(
+        "--workers",
+        type=int,
+        help="parallel worker count; requires --parallel (default: up to 4)",
+    )
 
     audit = subparsers.add_parser("audit", help="render a labelled contact sheet for generated images")
     audit.add_argument("--task", choices=("task1", "task2"), default="task1")
@@ -386,6 +400,7 @@ def _synthesis_plan(recipe_paths: Sequence[Path], task: str) -> Dict[str, int]:
 
 
 def _print_synthesis_plan(plan: Dict[str, int], task: str) -> None:
+    profile = synthesis_profile(task)
     print(
         "{} synthesis plan: {} recipe(s), {} background(s), {} source group(s), "
         "{} image(s), about {} primary image(s) per replaceable glyph class".format(
@@ -395,6 +410,11 @@ def _print_synthesis_plan(plan: Dict[str, int], task: str) -> None:
             plan["source_groups"],
             plan["images"],
             plan["primary_images_per_class"],
+        )
+    )
+    print(
+        "{} rendering: {} px internal long edge -> {} px saved long edge".format(
+            task, profile.render_long_edge, profile.output_long_edge
         )
     )
     if plan["backgrounds"] < RECOMMENDED_BACKGROUND_COUNT:
@@ -422,6 +442,25 @@ def _print_synthesis_plan(plan: Dict[str, int], task: str) -> None:
             ),
             file=sys.stderr,
         )
+
+
+_WORKER_ASSET_CACHES: Dict[Tuple[str, str], SynthesisAssetCache] = {}
+
+
+def _generate_recipe_worker(job: Dict[str, Any]) -> int:
+    """Generate one recipe in a spawned worker with a reusable local asset cache."""
+
+    cv2.setNumThreads(1)
+    root = Path(job["root"])
+    task = str(job["task"])
+    cache_key = (str(root.resolve()), task)
+    assets = _WORKER_ASSET_CACHES.get(cache_key)
+    if assets is None:
+        assets = SynthesisAssetCache(
+            root.resolve(), synthesis_profile(task).render_long_edge
+        )
+        _WORKER_ASSET_CACHES[cache_key] = assets
+    return len(generate_recipe(assets=assets, **job))
 
 
 def main() -> None:
@@ -466,28 +505,54 @@ def main() -> None:
         elif args.command == "generate-all":
             if not 1 <= args.jpeg_quality <= 100:
                 raise SynthesisError("jpeg quality must be in 1..100")
+            if args.workers is not None and not args.parallel:
+                raise SynthesisError("--workers requires --parallel")
+            if args.workers is not None and args.workers <= 0:
+                raise SynthesisError("--workers must be positive")
             recipe_paths = _discover_auto_recipes(args.recipe_dir)
             plan = _synthesis_plan(recipe_paths, args.task)
             _print_synthesis_plan(plan, args.task)
             output_images, output_annotations = _resolved_output_paths(
                 args.task, args.output_images, args.output_annotations
             )
-            generated = []
-            for recipe_path in recipe_paths:
-                generated.extend(
-                    generate_recipe(
-                        recipe_path,
-                        IMAGE_REC_ROOT,
-                        args.glyph_dir,
-                        output_images,
-                        output_annotations,
-                        args.custom_patterns,
-                        args.overwrite,
-                        args.jpeg_quality,
-                        args.task,
-                    )
+            jobs = [
+                {
+                    "recipe_path": recipe_path,
+                    "root": IMAGE_REC_ROOT,
+                    "glyph_dir": args.glyph_dir,
+                    "output_images": output_images,
+                    "output_annotations": output_annotations,
+                    "custom_pattern_dir": args.custom_patterns,
+                    "overwrite": args.overwrite,
+                    "jpeg_quality": args.jpeg_quality,
+                    "task": args.task,
+                }
+                for recipe_path in recipe_paths
+            ]
+            if args.parallel:
+                workers = (
+                    args.workers
+                    if args.workers is not None
+                    else min(4, len(recipe_paths), max(1, os.cpu_count() or 1))
                 )
-            print("generated {} images under {}".format(len(generated), output_images))
+                print("parallel generation enabled with {} worker(s)".format(workers))
+                with ProcessPoolExecutor(max_workers=workers) as executor:
+                    generated_count = sum(
+                        executor.map(_generate_recipe_worker, jobs)
+                    )
+            else:
+                profile = synthesis_profile(args.task)
+                assets = SynthesisAssetCache(
+                    IMAGE_REC_ROOT.resolve(), profile.render_long_edge
+                )
+                generated_count = sum(
+                    len(generate_recipe(assets=assets, **job)) for job in jobs
+                )
+            print(
+                "generated {} images under {}".format(
+                    generated_count, output_images
+                )
+            )
         elif args.command == "audit":
             if args.columns <= 0:
                 raise SynthesisError("columns must be positive")

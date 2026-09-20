@@ -15,6 +15,7 @@ from training.synthesis import (
     PATTERN_FAMILIES,
     PATTERN_EXPOSURE_RANGE,
     PRIMARY_DISTANCE_BANDS,
+    SynthesisAssetCache,
     SynthesisError,
     TASK2_TARGET_IDS,
     _automatic_edge_variants,
@@ -536,6 +537,75 @@ def test_separated_scene_renders_and_labels_multiple_stands(tmp_path):
     assert len(target_ids) == len(set(target_ids))
 
 
+@pytest.mark.parametrize(
+    ("task", "expected_internal", "expected_output"),
+    [
+        ("task1", [1280, 960], [640, 480]),
+        ("task2", [640, 480], [320, 240]),
+    ],
+)
+def test_task_render_profiles_bound_internal_and_saved_resolution(
+    tmp_path, task, expected_internal, expected_output
+):
+    image_path = tmp_path / "large-background.jpg"
+    write_image(image_path, np.full((1500, 2000, 3), 170, dtype=np.uint8))
+    recipe = {
+        "schema_version": "1.0",
+        "mode": "in_scene",
+        "recipe_id": "resolution-{}".format(task),
+        "source_group": "resolution-test",
+        "source_image": image_path.name,
+        "source_sha256": file_sha256(image_path),
+        "target_quad": [[0.25, 0.2], [0.75, 0.2], [0.75, 0.8], [0.25, 0.8]],
+    }
+
+    rendered = render_recipe_variant(
+        recipe, tmp_path, glyph_masks(), bullseye_tile(), 0, task=task
+    )
+
+    assert rendered.renderer["internal_size"] == expected_internal
+    assert rendered.renderer["output_size"] == expected_output
+    assert [rendered.image.shape[1], rendered.image.shape[0]] == expected_output
+
+
+def test_asset_cache_decodes_a_source_image_once_across_variants(
+    tmp_path, monkeypatch
+):
+    image_path = tmp_path / "cached-background.jpg"
+    write_image(image_path, np.full((160, 240, 3), 170, dtype=np.uint8))
+    recipe = {
+        "schema_version": "1.0",
+        "mode": "in_scene",
+        "recipe_id": "cache-test",
+        "source_group": "cache-test",
+        "source_image": image_path.name,
+        "source_sha256": file_sha256(image_path),
+        "target_quad": [[0.25, 0.2], [0.75, 0.2], [0.75, 0.8], [0.25, 0.8]],
+    }
+    original_load_image = synthesis.load_image
+    calls = []
+
+    def counting_load_image(path, unchanged=False):
+        calls.append((Path(path).resolve(), unchanged))
+        return original_load_image(path, unchanged)
+
+    monkeypatch.setattr(synthesis, "load_image", counting_load_image)
+    assets = SynthesisAssetCache(tmp_path.resolve(), 1280)
+    validate_recipe(recipe, tmp_path, assets=assets)
+    for variant in (0, 1):
+        render_recipe_variant(
+            recipe,
+            tmp_path,
+            glyph_masks(),
+            bullseye_tile(),
+            variant,
+            assets=assets,
+            validate=False,
+        )
+
+    assert calls.count((image_path.resolve(), False)) == 1
+
+
 def test_separated_recipe_rejects_multiple_primary_stands(tmp_path):
     background_path = tmp_path / "background.jpg"
     write_image(background_path, np.full((100, 100, 3), 180, dtype=np.uint8))
@@ -594,6 +664,8 @@ def test_generate_writes_ninety_mirrored_labels_and_provenance(tmp_path):
     assert label.read_text(encoding="utf-8").startswith("0 ")
     assert metadata["source_group"] == "capture-z"
     assert metadata["primary_competition_id"] == 11
+    assert metadata["renderer"]["render_long_edge"] == 1280
+    assert metadata["renderer"]["output_long_edge"] == 640
     all_metadata = [json.loads(path.read_text()) for path in (tmp_path / "labels").rglob("*.meta.json")]
     assert sum(item["shake_blur"]["applied"] for item in all_metadata) == 27
     pattern_parameters = [item["objects"][0]["pattern"]["parameters"] for item in all_metadata]
@@ -669,6 +741,8 @@ def test_generate_task2_writes_six_class_compatible_labels_and_metadata(tmp_path
         target_id: 18 for target_id in TASK2_TARGET_IDS
     }
     assert {item["task"] for item in metadata} == {"task2"}
+    assert {item["renderer"]["render_long_edge"] for item in metadata} == {640}
+    assert {item["renderer"]["output_long_edge"] for item in metadata} == {320}
     label_classes = {
         int(line.split()[0])
         for path in (tmp_path / "task2-labels").rglob("*.txt")
