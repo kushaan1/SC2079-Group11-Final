@@ -38,6 +38,22 @@ Place independent, manually reviewed photographs in `training/evaluation/task1/`
 physically printed fuzzed targets, front and oblique stands, one to three stands, bull's-eyes,
 partial edge crops, darker patterns, varied depths, and locations not used as synthesis backgrounds.
 
+The repository convenience script accepts any image folder, trained `.pt` checkpoint, and output
+folder. From `image-rec/`, for example:
+
+```powershell
+..\.venv\Scripts\python.exe predict_images.py `
+  --model training/runs/task1/yolov8s-targets/weights/best.pt `
+  --source misc/test_real `
+  --output training/predictions/test-real
+```
+
+It uses the Task 1 runtime defaults of `imgsz=640`, confidence `0.60`, and IoU `0.45`. It defaults to
+CPU for portable offline checks; pass `--device 0` to request the first GPU. Override the other
+settings with `--imgsz`, `--conf`, or `--iou`. The output folder contains annotated images and a
+`labels/` subfolder with YOLO-format predictions and confidence values. Reusing an output folder
+overwrites same-named results but does not delete unrelated or stale files.
+
 **Bash (Linux/macOS):**
 
 ```bash

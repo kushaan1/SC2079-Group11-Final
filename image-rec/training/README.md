@@ -53,13 +53,13 @@ Keep each task's images, labels, and class order separate:
 | Task 1 | `training/training_set/` | `training/annotations/task1/` | [task1.json](classes/task1.json) |
 | Task 2 | `training/task2_training_set/` | `training/annotations/task2/` | [task2.json](classes/task2.json) |
 
-**Task 1 synthetic data:** follow the [synthesis guide](docs/synthesis.md) to register stand
-orientations, configure backgrounds, generate scenes, and visually audit masks and boxes.
+**Synthetic data:** follow the [synthesis guide](docs/synthesis.md) to register stand orientations,
+configure backgrounds, generate Task 1 or Task 2 scenes, and visually audit masks and boxes.
 Generation applies mild whole-frame camera-shake blur to 30% of images by default; the synthesis
 guide documents recipe settings to tune it or opt out. About 30% of glyph cards also receive
 dark, irregular camouflage textures; the remaining cards retain the existing pattern treatment.
 
-**Task 2 or real Task 1 photos:** follow the [manual annotation guide](docs/dataset.md#manual-annotations).
+**Real Task 1 or Task 2 photos:** follow the [manual annotation guide](docs/dataset.md#manual-annotations).
 Labels mirror the image's relative path and use the same stem with a `.txt` extension.
 A `.txt.todo` placeholder is incomplete; replace it with reviewed labels before continuing.
 

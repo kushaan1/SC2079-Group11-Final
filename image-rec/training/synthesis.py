@@ -1,4 +1,4 @@
-"""Deterministic synthetic Task 1 card and multi-stand compositing.
+"""Deterministic synthetic Task 1 and Task 2 card compositing.
 
 The module deliberately keeps glyph shape, card texture, stand appearance, and
 environment separate.  It contains no GUI code so the renderer is testable on
@@ -20,11 +20,12 @@ from .yolo import format_yolo_row
 
 
 SCHEMA_VERSION = "1.0"
-TARGET_IDS = tuple(range(11, 41))
+TASK1_TARGET_IDS = tuple(range(11, 41))
+TASK2_TARGET_IDS = (36, 37, 38, 39, 40)
+TARGET_IDS = TASK1_TARGET_IDS
 BULLSEYE_ID = 41
 PRIMARY_DISTANCE_BANDS = ("far", "medium", "near")
-VARIANTS_PER_TARGET = len(PRIMARY_DISTANCE_BANDS)
-DEFAULT_VARIANT_COUNT = len(TARGET_IDS) * VARIANTS_PER_TARGET
+DEFAULT_VARIANT_COUNT = 90
 PATTERN_FAMILIES = (
     "stripes",
     "checks",
@@ -87,6 +88,37 @@ class SynthesisError(ValueError):
 
 class _AutomaticPlacementError(SynthesisError):
     """Raised when one randomized automatic layout cannot satisfy its constraints."""
+
+
+@dataclass(frozen=True)
+class SynthesisTaskProfile:
+    name: str
+    target_ids: Tuple[int, ...]
+    class_indices: Mapping[int, int]
+    bullseye_class_index: int
+
+
+TASK_PROFILES = {
+    "task1": SynthesisTaskProfile(
+        "task1",
+        TASK1_TARGET_IDS,
+        {target_id: target_id - 11 for target_id in TASK1_TARGET_IDS},
+        30,
+    ),
+    "task2": SynthesisTaskProfile(
+        "task2",
+        TASK2_TARGET_IDS,
+        {target_id: index for index, target_id in enumerate(TASK2_TARGET_IDS)},
+        5,
+    ),
+}
+
+
+def synthesis_profile(task: str) -> SynthesisTaskProfile:
+    try:
+        return TASK_PROFILES[task]
+    except KeyError as error:
+        raise SynthesisError("synthesis task must be task1 or task2") from error
 
 
 @dataclass(frozen=True)
@@ -490,8 +522,18 @@ def select_pattern(pattern_names: Sequence[str], scene_key: str, variant_index: 
     return pattern_names[(offset + variant_index + stand_index) % len(pattern_names)]
 
 
-def distractor_ids(primary_id: int, count: int, scene_key: str, variant_index: int) -> Tuple[int, ...]:
-    available = [target_id for target_id in TARGET_IDS if target_id != primary_id]
+def distractor_ids(
+    primary_id: int,
+    count: int,
+    scene_key: str,
+    variant_index: int,
+    task: str = "task1",
+) -> Tuple[int, ...]:
+    available = [
+        target_id
+        for target_id in synthesis_profile(task).target_ids
+        if target_id != primary_id
+    ]
     start = stable_seed(scene_key, variant_index, "distractors") % len(available)
     ordered = available[start:] + available[:start]
     if count <= len(ordered):
@@ -837,15 +879,17 @@ def render_recipe_variant(
     custom_patterns: Sequence[Path] = (),
     min_visible_fraction: float = DEFAULT_MIN_VISIBLE_FRACTION,
     min_primary_fraction: float = DEFAULT_MIN_PRIMARY_FRACTION,
+    task: str = "task1",
 ) -> RenderedSample:
     validate_recipe(recipe, root)
+    profile = synthesis_profile(task)
     if not 0 <= variant_index < DEFAULT_VARIANT_COUNT:
         raise SynthesisError(
             "variant_index must be in 0..{}".format(DEFAULT_VARIANT_COUNT - 1)
         )
     if not 0.0 < min_visible_fraction <= 1.0 or not 0.0 < min_primary_fraction <= 1.0:
         raise SynthesisError("visibility fractions must be in (0, 1]")
-    primary_id = TARGET_IDS[variant_index % len(TARGET_IDS)]
+    primary_id = profile.target_ids[variant_index % len(profile.target_ids)]
     scene_key = str(recipe["recipe_id"])
     names = available_pattern_names(custom_patterns)
     seed = int(recipe.get("seed", 2079))
@@ -858,11 +902,19 @@ def render_recipe_variant(
         pattern = render_pattern_card(glyph_masks[primary_id], pattern_name, stable_seed(seed, scene_key, variant_index, 0), custom_patterns=custom_patterns)
         target_quad = pixel_quad(recipe["target_quad"], width, height)
         base, target_mask = warp_opaque_tile(base, pattern.image, target_quad)
-        objects.append(_visible_target(primary_id, "primary", "primary", target_mask, pattern))
+        objects.append(
+            _visible_target(
+                primary_id, "primary", "primary", target_mask, pattern, task=task
+            )
+        )
         for bullseye_index, quad_data in enumerate(recipe.get("bullseye_quads", [])):
             quad = pixel_quad(quad_data, width, height)
             base, mask = warp_opaque_tile(base, bullseye_tile, quad)
-            objects.append(_visible_bullseye("primary", "primary", mask, bullseye_index))
+            objects.append(
+                _visible_bullseye(
+                    "primary", "primary", mask, bullseye_index, task=task
+                )
+            )
     elif mode == "separated":
         base, objects = _render_separated(
             recipe,
@@ -874,9 +926,10 @@ def render_recipe_variant(
             names,
             custom_patterns,
             seed,
+            task,
         )
     else:
-        separated = _automatic_variant_recipe(recipe, root, variant_index)
+        separated = _automatic_variant_recipe(recipe, root, variant_index, task)
         base, objects = _render_separated(
             separated,
             root,
@@ -887,6 +940,7 @@ def render_recipe_variant(
             names,
             custom_patterns,
             seed,
+            task,
         )
     sample = _finalize_sample(base, objects, min_visible_fraction, min_primary_fraction)
     image, shake_blur = _apply_shake_blur(sample.image, recipe, variant_index)
@@ -897,6 +951,7 @@ def _automatic_variant_recipe(
     recipe: Mapping[str, Any],
     root: Path,
     variant_index: int,
+    task: str = "task1",
 ) -> Mapping[str, Any]:
     settings = _effective_auto_placement(recipe.get("placement", {}))
     recipe_seed = int(recipe.get("seed", 2079))
@@ -919,6 +974,7 @@ def _automatic_variant_recipe(
                 settings,
                 recipe_seed,
                 rng,
+                task,
             )
         except _AutomaticPlacementError as error:
             last_error = error
@@ -937,11 +993,12 @@ def _automatic_variant_recipe_once(
     settings: Mapping[str, Any],
     recipe_seed: int,
     rng: np.random.Generator,
+    task: str = "task1",
 ) -> Mapping[str, Any]:
     minimum = int(settings["minimum_stands"])
     maximum = int(settings["maximum_stands"])
     plan = _automatic_variant_plan(
-        str(recipe["recipe_id"]), variant_index, minimum, maximum
+        str(recipe["recipe_id"]), variant_index, minimum, maximum, task
     )
     stand_count = int(plan["stand_count"])
     primary_orientation = str(plan["primary_orientation"])
@@ -1065,9 +1122,11 @@ def _automatic_variant_plan(
     variant_index: int,
     minimum_stands: int,
     maximum_stands: int,
+    task: str = "task1",
 ) -> Mapping[str, Any]:
-    target_index = variant_index % len(TARGET_IDS)
-    repetition_index = variant_index // len(TARGET_IDS)
+    target_ids = synthesis_profile(task).target_ids
+    target_index = variant_index % len(target_ids)
+    repetition_index = variant_index // len(target_ids)
     stand_count = minimum_stands + (
         (
             target_index
@@ -1084,7 +1143,9 @@ def _automatic_variant_plan(
     return {
         "target_index": target_index,
         "repetition_index": repetition_index,
-        "primary_distance_band": PRIMARY_DISTANCE_BANDS[repetition_index],
+        "primary_distance_band": PRIMARY_DISTANCE_BANDS[
+            repetition_index % len(PRIMARY_DISTANCE_BANDS)
+        ],
         "primary_orientation": STAND_ORIENTATIONS[orientation_index],
         "stand_count": stand_count,
     }
@@ -1229,11 +1290,18 @@ def _render_separated(
     pattern_names: Sequence[str],
     custom_patterns: Sequence[Path],
     seed: int,
+    task: str = "task1",
 ) -> Tuple[np.ndarray, List[VisibleObject]]:
     base = load_image(resolve_resource(root, recipe["background_image"]))
     scene_key = str(recipe["recipe_id"])
     stands = sorted(recipe["stands"], key=lambda item: int(item.get("z_index", 0)))
-    distractors = distractor_ids(primary_id, sum(1 for item in stands if item["role"] == "distractor"), scene_key, variant_index)
+    distractors = distractor_ids(
+        primary_id,
+        sum(1 for item in stands if item["role"] == "distractor"),
+        scene_key,
+        variant_index,
+        task,
+    )
     distractor_cursor = 0
     objects: List[VisibleObject] = []
     for stand_index, stand in enumerate(stands):
@@ -1260,7 +1328,17 @@ def _render_separated(
         local_bgr, target_mask = warp_opaque_tile(local_bgr, pattern.image, target_quad)
         target_mask = cv2.bitwise_and(target_mask, local_alpha)
         orientation = stand.get("orientation", template_data.get("orientation"))
-        local_objects.append(_visible_target(target_id, str(stand["instance_id"]), str(stand["role"]), target_mask, pattern, orientation))
+        local_objects.append(
+            _visible_target(
+                target_id,
+                str(stand["instance_id"]),
+                str(stand["role"]),
+                target_mask,
+                pattern,
+                orientation,
+                task,
+            )
+        )
         for bullseye_index, quad_data in enumerate(template_data.get("bullseye_quads", [])):
             bullseye_quad = _trimmed_surface_quad(
                 quad_data,
@@ -1275,7 +1353,16 @@ def _render_separated(
             else:
                 local_bgr, mask = warp_opaque_tile(local_bgr, bullseye_tile, bullseye_quad)
             mask = cv2.bitwise_and(mask, local_alpha)
-            local_objects.append(_visible_bullseye(str(stand["instance_id"]), str(stand["role"]), mask, bullseye_index, orientation))
+            local_objects.append(
+                _visible_bullseye(
+                    str(stand["instance_id"]),
+                    str(stand["role"]),
+                    mask,
+                    bullseye_index,
+                    orientation,
+                    task,
+                )
+            )
         rendered_rgba = np.dstack((local_bgr, local_alpha))
         destination = pixel_quad(
             stand["destination_quad"],
@@ -1306,9 +1393,10 @@ def _visible_target(
     mask: np.ndarray,
     pattern: PatternCard,
     orientation: Optional[str] = None,
+    task: str = "task1",
 ) -> VisibleObject:
     return VisibleObject(
-        class_index=target_id - 11,
+        class_index=synthesis_profile(task).class_indices[target_id],
         competition_id=target_id,
         stand_id=stand_id,
         role=role,
@@ -1326,8 +1414,19 @@ def _visible_bullseye(
     mask: np.ndarray,
     index: int,
     orientation: Optional[str] = None,
+    task: str = "task1",
 ) -> VisibleObject:
-    return VisibleObject(30, None, stand_id, role, "bullseye", orientation, mask.copy(), mask.copy(), {"surface_index": index})
+    return VisibleObject(
+        synthesis_profile(task).bullseye_class_index,
+        None,
+        stand_id,
+        role,
+        "bullseye",
+        orientation,
+        mask.copy(),
+        mask.copy(),
+        {"surface_index": index},
+    )
 
 
 def warp_opaque_tile(base: np.ndarray, tile: np.ndarray, destination_quad: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -1446,7 +1545,9 @@ def generate_recipe(
     custom_pattern_dir: Optional[Path] = None,
     overwrite: bool = False,
     jpeg_quality: int = 95,
+    task: str = "task1",
 ) -> Tuple[Path, ...]:
+    profile = synthesis_profile(task)
     recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
     validate_recipe(recipe, root)
     glyph_masks = load_glyph_masks(glyph_dir)
@@ -1485,6 +1586,7 @@ def generate_recipe(
                     bullseye,
                     variant_index,
                     custom_patterns,
+                    task=task,
                 )
                 _write_image(image_path, rendered.image, jpeg_quality)
                 label_path.write_text(
@@ -1499,11 +1601,13 @@ def generate_recipe(
                     "source_group": str(recipe["source_group"]),
                     "recipe_id": str(recipe["recipe_id"]),
                     "variant_index": variant_index,
-                    "primary_competition_id": TARGET_IDS[
-                        variant_index % len(TARGET_IDS)
+                    "task": task,
+                    "primary_competition_id": profile.target_ids[
+                        variant_index % len(profile.target_ids)
                     ],
                     "primary_distance_band": PRIMARY_DISTANCE_BANDS[
-                        variant_index // len(TARGET_IDS)
+                        (variant_index // len(profile.target_ids))
+                        % len(PRIMARY_DISTANCE_BANDS)
                     ]
                     if recipe["mode"] == "auto_background"
                     else None,
@@ -1520,7 +1624,7 @@ def generate_recipe(
             details = "; ".join(
                 "sample-{:03d} (ID {}): {}".format(
                     variant_index,
-                    TARGET_IDS[variant_index % len(TARGET_IDS)],
+                    profile.target_ids[variant_index % len(profile.target_ids)],
                     message,
                 )
                 for variant_index, message in failures

@@ -1,6 +1,8 @@
-# Task 1 synthetic data
+# Synthetic data
 
 [Back to model training](../README.md). Run commands from `image-rec/` in the training environment.
+
+## Task 1 workflow
 
 The current Task 1 loop composites one to three photographed stand cutouts onto each stand-free
 background. Every stand uses one of three fixed orientations—front, left, or right—and only its
@@ -19,6 +21,68 @@ The complete loop is:
 8. Prepare grouped train, validation, and test splits.
 
 Do not start training until all eight steps pass.
+
+## Task 2 six-class synthesis
+
+Task 2 reuses the same stand templates, background recipes, automatic placement, distance bands,
+perspective, stand counts, edge crops, overlap ceiling, patterns, camouflage, shadows, and
+whole-frame shake blur as Task 1. It writes to separate Task 2 image and annotation trees.
+
+The Task 2 model uses contiguous YOLO indices while retaining competition IDs as metadata:
+
+| YOLO index | Label | Competition ID |
+|---:|---|---:|
+| 0 | Up Arrow | 36 |
+| 1 | Down Arrow | 37 |
+| 2 | Right Arrow | 38 |
+| 3 | Left Arrow | 39 |
+| 4 | Stop sign | 40 |
+| 5 | Bullseye | none |
+
+Bullseye has no official competition ID. It is nevertheless a genuine positive detector class,
+not background. The five replaceable glyphs each appear as the primary target 18 times per
+background recipe. Those 18 appearances are balanced six each across the far, medium, and near
+distance bands. Bullseyes are annotated wherever a visible photographed marker exists on a stand.
+
+Generate every available `*-auto.json` background recipe with:
+
+```powershell
+python -m training.synthesize generate-all --task task2
+```
+
+The command discovers the available recipes instead of assuming a fixed count. It reports the
+actual number of recipes, unique backgrounds, source groups, total images, and primary images per
+replaceable glyph class before generation. It warns when there are fewer than 100 backgrounds,
+12 source groups, or approximately 1,500 primary images per replaceable glyph class, but these
+scale warnings are non-fatal and generation continues normally.
+
+The currently checked-in recipes resolve to 15 backgrounds across 7 distinct source groups, so a
+complete run creates 1,350 images and 270 primary appearances of each replaceable glyph. These
+counts are suitable for a pipeline baseline but are below the full-dataset target. Do not rename or
+split source groups merely to suppress the warning.
+
+Defaults for Task 2 are:
+
+```text
+training/task2_training_set/synthetic/
+training/annotations/task2/synthetic/
+```
+
+After generation, run the complete gate in order:
+
+```powershell
+python -m training.synthesize audit --task task2 --output training/.generated/synthesis/task2-dataset-audit.jpg
+python -m training.validate --task task2
+python -m training.prepare --task task2
+python -m training.train --task task2
+```
+
+`training.validate` and `training.prepare` are shared task-aware commands; both already accept
+`--task task2`. Preparation keeps each recipe's complete `source_group` in one split and writes the
+Task 2 dataset YAML and replay manifest. Real Pi-camera photographs remain outside this synthetic
+generation method and should be retained as an independent acceptance set.
+
+## Task 1 detailed procedure
 
 ### Inputs and generated outputs
 
@@ -192,11 +256,26 @@ The eight built-in pattern families are stripes, checks, dots, scales, diamonds,
 marble/noise, and weave. Their scale, angle, phase, intensity, and restrained colour vary with the
 recipe seed. Pattern assignment rotates independently of class. Every built-in or custom texture
 receives a deterministic 0.55–0.80 exposure multiplier so the black glyph has less contrast against
-the fuzzing pattern. The post-transform background luma floor is 24 on the 0–255 scale, permitting
-much darker card regions while preventing them from collapsing completely to black.
+the fuzzing pattern. The regular post-transform background luma floor is 24 on the 0–255 scale.
+
+About 30% of cards additionally receive irregular near-black patches and small angular gray
+fragments, allowing portions of the black glyph to blend into the texture. These harder cards
+use a background luma floor of 6. Dark patches initially occupy 30–45% of the card, before the
+lighter fragments are drawn. The glyph mask is applied last: its shape, direction, and label
+remain unchanged. The other approximately 70% retain the existing pattern treatment.
+This applies to built-in and custom patterns in every synthesis mode, for primary and distractor
+cards; it does not change bull's-eye textures. Selection is deterministic from each card's seed,
+independent of glyph identity and pattern family. The 30% is a probability per card, not an exact
+quota per recipe. Constants in `training/synthesis.py` control the mix and contrast floors.
+
+Each card's pattern parameters record `camouflage.applied`, the configured fraction, profile,
+patch and fragment settings when applied, and its effective and observed background luma floors.
+These settings permit partial camouflage but do not guarantee readability at every distance;
+inspect the rendered cards during the visual audit. Existing generated data is unchanged until
+deliberately regenerated with `--overwrite`, followed by audit, validation, preparation, and retraining.
 
 Optional custom patterns must be pattern-only images that decode, tile cleanly, contain sufficient
-variation, and have no source pixel below the same luma floor. Every generated image has a mirrored
+variation, and have no source pixel below the regular luma floor of 24. Every generated image has a corresponding
 YOLO `.txt` label and `.meta.json` provenance record containing its recipe hash, `source_group`,
 objects, primary distance band, pattern exposure, contrast floor, and generation parameters.
 Existing outputs are refused unless the specific generation command includes `--overwrite`.

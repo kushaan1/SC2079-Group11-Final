@@ -27,6 +27,7 @@ generated images, weights, prepared datasets, run directories, and model exports
 The three approved stand-template PNGs are retained as explicit exceptions to the image ignore rule.
 
 Task 2 keeps images in `training/task2_training_set/` and labels in `training/annotations/task2/`.
+Its synthetic subset is created with the [Task 2 synthesis workflow](synthesis.md#task-2-six-class-synthesis).
 Preserve each image's relative path in its annotation tree.
 
 ## Manual annotations
@@ -65,8 +66,9 @@ has a same-stem `.txt` file containing one row per visible object:
 Coordinates are normalized to image width and height. Empty labels are rejected because generated
 competition scenes must contain at least one visible target or bull's-eye.
 
-Task 2 uses its own [ordered registry](../classes/task2.json): indices 0, 1, 2, and 3 mean
-Up, Down, Right, and Left Arrow respectively. Do not reuse Task 1 class indices.
+Task 2 uses its own [ordered registry](../classes/task2.json): indices 0 through 5 mean Up, Down,
+Right, Left, Stop, and Bullseye respectively. Their competition IDs are retained separately as
+36 through 40; Bullseye has no competition ID. Do not reuse Task 1 class indices.
 
 ## Source groups
 

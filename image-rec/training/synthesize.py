@@ -1,9 +1,10 @@
-"""Configure, generate, and audit synthetic Task 1 training images."""
+"""Configure, generate, and audit synthetic Task 1 and Task 2 images."""
 
 import argparse
 import json
+import sys
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -30,6 +31,12 @@ DEFAULT_GLYPH_DIR = IMAGE_REC_ROOT / "misc" / "resources" / "glyphs"
 DEFAULT_MASK_DIR = IMAGE_REC_ROOT / "training" / ".generated" / "synthesis" / "glyph-masks"
 DEFAULT_SYNTHETIC_IMAGES = IMAGE_REC_ROOT / "training" / "training_set" / "synthetic"
 DEFAULT_SYNTHETIC_ANNOTATIONS = IMAGE_REC_ROOT / "training" / "annotations" / "task1" / "synthetic"
+DEFAULT_TASK2_SYNTHETIC_IMAGES = IMAGE_REC_ROOT / "training" / "task2_training_set" / "synthetic"
+DEFAULT_TASK2_SYNTHETIC_ANNOTATIONS = IMAGE_REC_ROOT / "training" / "annotations" / "task2" / "synthetic"
+DEFAULT_RECIPE_DIR = IMAGE_REC_ROOT / "training" / "annotations" / "synthesis"
+RECOMMENDED_BACKGROUND_COUNT = 100
+RECOMMENDED_SOURCE_GROUP_COUNT = 12
+RECOMMENDED_PRIMARY_IMAGES_PER_CLASS = 1500
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,17 +93,32 @@ def parse_args() -> argparse.Namespace:
     generate = subparsers.add_parser(
         "generate", help="generate all 90 balanced primary-target variants"
     )
+    generate.add_argument("--task", choices=("task1", "task2"), default="task1")
     generate.add_argument("--recipe", type=Path, required=True)
     generate.add_argument("--glyph-dir", type=Path, default=DEFAULT_GLYPH_DIR)
     generate.add_argument("--custom-patterns", type=Path)
-    generate.add_argument("--output-images", type=Path, default=DEFAULT_SYNTHETIC_IMAGES)
-    generate.add_argument("--output-annotations", type=Path, default=DEFAULT_SYNTHETIC_ANNOTATIONS)
+    generate.add_argument("--output-images", type=Path)
+    generate.add_argument("--output-annotations", type=Path)
     generate.add_argument("--jpeg-quality", type=int, default=95)
     generate.add_argument("--overwrite", action="store_true")
 
+    generate_all = subparsers.add_parser(
+        "generate-all",
+        help="generate every auto-background recipe and warn when dataset diversity is suboptimal",
+    )
+    generate_all.add_argument("--task", choices=("task1", "task2"), required=True)
+    generate_all.add_argument("--recipe-dir", type=Path, default=DEFAULT_RECIPE_DIR)
+    generate_all.add_argument("--glyph-dir", type=Path, default=DEFAULT_GLYPH_DIR)
+    generate_all.add_argument("--custom-patterns", type=Path)
+    generate_all.add_argument("--output-images", type=Path)
+    generate_all.add_argument("--output-annotations", type=Path)
+    generate_all.add_argument("--jpeg-quality", type=int, default=95)
+    generate_all.add_argument("--overwrite", action="store_true")
+
     audit = subparsers.add_parser("audit", help="render a labelled contact sheet for generated images")
-    audit.add_argument("--images", type=Path, default=DEFAULT_SYNTHETIC_IMAGES)
-    audit.add_argument("--annotations", type=Path, default=DEFAULT_SYNTHETIC_ANNOTATIONS)
+    audit.add_argument("--task", choices=("task1", "task2"), default="task1")
+    audit.add_argument("--images", type=Path)
+    audit.add_argument("--annotations", type=Path)
     audit.add_argument("--output", type=Path, required=True)
     audit.add_argument("--columns", type=int, default=4)
     return parser.parse_args()
@@ -305,6 +327,103 @@ def _discover_images(directory: Path) -> Tuple[Path, ...]:
     return tuple(sorted((path for path in directory.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES), key=lambda path: path.as_posix().casefold()))
 
 
+def _task_output_paths(task: str) -> Tuple[Path, Path]:
+    if task == "task1":
+        return DEFAULT_SYNTHETIC_IMAGES, DEFAULT_SYNTHETIC_ANNOTATIONS
+    if task == "task2":
+        return DEFAULT_TASK2_SYNTHETIC_IMAGES, DEFAULT_TASK2_SYNTHETIC_ANNOTATIONS
+    raise SynthesisError("synthesis task must be task1 or task2")
+
+
+def _resolved_output_paths(
+    task: str, images: Optional[Path], annotations: Optional[Path]
+) -> Tuple[Path, Path]:
+    default_images, default_annotations = _task_output_paths(task)
+    return images or default_images, annotations or default_annotations
+
+
+def _discover_auto_recipes(directory: Path) -> Tuple[Path, ...]:
+    if not directory.is_dir():
+        raise SynthesisError("recipe directory does not exist: {}".format(directory))
+    paths = tuple(
+        sorted(directory.glob("*-auto.json"), key=lambda path: path.as_posix().casefold())
+    )
+    if not paths:
+        raise SynthesisError("no *-auto.json recipes found under {}".format(directory))
+    return paths
+
+
+def _synthesis_plan(recipe_paths: Sequence[Path], task: str) -> Dict[str, int]:
+    from .synthesis import synthesis_profile
+
+    profile = synthesis_profile(task)
+    backgrounds = set()
+    source_groups = set()
+    for recipe_path in recipe_paths:
+        recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+        if recipe.get("mode") != "auto_background":
+            raise SynthesisError(
+                "generate-all only accepts auto_background recipes: {}".format(recipe_path)
+            )
+        background = str(recipe.get("background_image", "")).strip()
+        source_group = str(recipe.get("source_group", "")).strip()
+        if not background or not source_group:
+            raise SynthesisError(
+                "recipe must declare background_image and source_group: {}".format(
+                    recipe_path
+                )
+            )
+        backgrounds.add(background)
+        source_groups.add(source_group)
+    image_count = len(recipe_paths) * 90
+    return {
+        "recipes": len(recipe_paths),
+        "backgrounds": len(backgrounds),
+        "source_groups": len(source_groups),
+        "images": image_count,
+        "primary_images_per_class": image_count // len(profile.target_ids),
+    }
+
+
+def _print_synthesis_plan(plan: Dict[str, int], task: str) -> None:
+    print(
+        "{} synthesis plan: {} recipe(s), {} background(s), {} source group(s), "
+        "{} image(s), about {} primary image(s) per replaceable glyph class".format(
+            task,
+            plan["recipes"],
+            plan["backgrounds"],
+            plan["source_groups"],
+            plan["images"],
+            plan["primary_images_per_class"],
+        )
+    )
+    if plan["backgrounds"] < RECOMMENDED_BACKGROUND_COUNT:
+        print(
+            "Warning: {} independent backgrounds are recommended; found {}. "
+            "Generation will continue.".format(
+                RECOMMENDED_BACKGROUND_COUNT, plan["backgrounds"]
+            ),
+            file=sys.stderr,
+        )
+    if plan["source_groups"] < RECOMMENDED_SOURCE_GROUP_COUNT:
+        print(
+            "Warning: {} independent source groups are recommended; found {}. "
+            "Generation will continue.".format(
+                RECOMMENDED_SOURCE_GROUP_COUNT, plan["source_groups"]
+            ),
+            file=sys.stderr,
+        )
+    if plan["primary_images_per_class"] < RECOMMENDED_PRIMARY_IMAGES_PER_CLASS:
+        print(
+            "Warning: the plan provides about {} primary images per replaceable glyph class; "
+            "{} is the initial full-dataset target. Generation will continue.".format(
+                plan["primary_images_per_class"],
+                RECOMMENDED_PRIMARY_IMAGES_PER_CLASS,
+            ),
+            file=sys.stderr,
+        )
+
+
 def main() -> None:
     args = parse_args()
     try:
@@ -329,22 +448,54 @@ def main() -> None:
         elif args.command == "generate":
             if not 1 <= args.jpeg_quality <= 100:
                 raise SynthesisError("jpeg quality must be in 1..100")
+            output_images, output_annotations = _resolved_output_paths(
+                args.task, args.output_images, args.output_annotations
+            )
             paths = generate_recipe(
                 args.recipe,
                 IMAGE_REC_ROOT,
                 args.glyph_dir,
-                args.output_images,
-                args.output_annotations,
+                output_images,
+                output_annotations,
                 args.custom_patterns,
                 args.overwrite,
                 args.jpeg_quality,
+                args.task,
             )
-            print("generated {} images under {}".format(len(paths), args.output_images))
+            print("generated {} images under {}".format(len(paths), output_images))
+        elif args.command == "generate-all":
+            if not 1 <= args.jpeg_quality <= 100:
+                raise SynthesisError("jpeg quality must be in 1..100")
+            recipe_paths = _discover_auto_recipes(args.recipe_dir)
+            plan = _synthesis_plan(recipe_paths, args.task)
+            _print_synthesis_plan(plan, args.task)
+            output_images, output_annotations = _resolved_output_paths(
+                args.task, args.output_images, args.output_annotations
+            )
+            generated = []
+            for recipe_path in recipe_paths:
+                generated.extend(
+                    generate_recipe(
+                        recipe_path,
+                        IMAGE_REC_ROOT,
+                        args.glyph_dir,
+                        output_images,
+                        output_annotations,
+                        args.custom_patterns,
+                        args.overwrite,
+                        args.jpeg_quality,
+                        args.task,
+                    )
+                )
+            print("generated {} images under {}".format(len(generated), output_images))
         elif args.command == "audit":
             if args.columns <= 0:
                 raise SynthesisError("columns must be positive")
-            images = _discover_images(args.images)
-            print(create_audit_sheet(images, args.annotations, args.output, args.columns, args.images))
+            image_root, annotation_root = _resolved_output_paths(
+                args.task, args.images, args.annotations
+            )
+            images = _discover_images(image_root)
+            print(create_audit_sheet(images, annotation_root, args.output, args.columns, image_root))
     except (OSError, SynthesisError, json.JSONDecodeError) as error:
         raise SystemExit("Error: {}".format(error))
 

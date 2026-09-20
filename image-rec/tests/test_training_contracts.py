@@ -20,6 +20,8 @@ def test_task_datasets_are_separate_and_task2_labels_match_pi_metadata():
     assert task1.training.backend_preference == expected_backends
     assert task2.training.backend_preference == expected_backends
     assert task1.dataset.source_images != task2.dataset.source_images
+    assert [item.index for item in task2.classes] == list(range(6))
+    assert [item.competition_id for item in task2.classes] == [36, 37, 38, 39, 40, None]
     with (task2.root / "rpi/models/arrow-labels.json").open("r", encoding="utf-8") as handle:
         deployed_labels = json.load(handle)
     assert deployed_labels == list(task2.class_names)

@@ -16,6 +16,7 @@ from training.synthesis import (
     PATTERN_EXPOSURE_RANGE,
     PRIMARY_DISTANCE_BANDS,
     SynthesisError,
+    TASK2_TARGET_IDS,
     _automatic_edge_variants,
     _automatic_variant_recipe,
     _automatic_variant_plan,
@@ -29,6 +30,7 @@ from training.synthesis import (
     render_pattern_card,
     render_recipe_variant,
     select_pattern,
+    synthesis_profile,
     validate_recipe,
 )
 
@@ -302,6 +304,60 @@ def test_automatic_recipe_balances_counts_orientations_and_distances():
     assert len(_automatic_edge_variants("automatic-test", 0.30)) == 27
 
 
+def test_task2_profile_keeps_competition_ids_with_contiguous_model_classes():
+    profile = synthesis_profile("task2")
+    assert profile.target_ids == TASK2_TARGET_IDS == (36, 37, 38, 39, 40)
+    assert profile.class_indices == {36: 0, 37: 1, 38: 2, 39: 3, 40: 4}
+    assert profile.bullseye_class_index == 5
+
+    plans = [
+        _automatic_variant_plan("task2-test", variant, 1, 3, "task2")
+        for variant in range(DEFAULT_VARIANT_COUNT)
+    ]
+    primary_ids = [profile.target_ids[item["target_index"]] for item in plans]
+    assert {target_id: primary_ids.count(target_id) for target_id in profile.target_ids} == {
+        target_id: 18 for target_id in profile.target_ids
+    }
+    for target_id in profile.target_ids:
+        target_plans = [
+            plan for plan, primary_id in zip(plans, primary_ids) if primary_id == target_id
+        ]
+        assert {
+            band: sum(plan["primary_distance_band"] == band for plan in target_plans)
+            for band in PRIMARY_DISTANCE_BANDS
+        } == {"far": 6, "medium": 6, "near": 6}
+
+
+def test_task2_render_maps_stop_and_bullseye_to_separate_classes(tmp_path):
+    image_path = tmp_path / "base.png"
+    write_image(image_path, np.full((160, 240, 3), 170, dtype=np.uint8))
+    recipe = {
+        "schema_version": "1.0",
+        "mode": "in_scene",
+        "recipe_id": "task2-class-map",
+        "source_group": "capture-a",
+        "source_image": "base.png",
+        "source_sha256": file_sha256(image_path),
+        "target_quad": [[0.05, 0.15], [0.45, 0.15], [0.45, 0.85], [0.05, 0.85]],
+        "bullseye_quads": [
+            [[0.55, 0.15], [0.95, 0.15], [0.95, 0.85], [0.55, 0.85]]
+        ],
+    }
+    rendered = render_recipe_variant(
+        recipe,
+        tmp_path,
+        glyph_masks(),
+        bullseye_tile(),
+        4,
+        task="task2",
+    )
+    included = [item for item in rendered.objects if item["included"]]
+    assert [(item["class_index"], item["competition_id"], item["kind"]) for item in included] == [
+        (4, 40, "target"),
+        (5, None, "bullseye"),
+    ]
+
+
 def test_automatic_recipe_places_each_primary_distance_band(tmp_path):
     recipe = automatic_recipe_fixture(tmp_path)
     validate_recipe(recipe, tmp_path)
@@ -559,6 +615,66 @@ def test_generate_writes_ninety_mirrored_labels_and_provenance(tmp_path):
             tmp_path / "images",
             tmp_path / "labels",
         )
+
+
+def test_generate_task2_writes_six_class_compatible_labels_and_metadata(tmp_path):
+    image_path = tmp_path / "base.jpg"
+    write_image(image_path, np.full((100, 140, 3), 170, dtype=np.uint8))
+    recipe_path = tmp_path / "task2-recipe.json"
+    recipe_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "mode": "in_scene",
+                "recipe_id": "task2-generation-test",
+                "source_group": "capture-task2",
+                "source_image": str(image_path),
+                "source_sha256": file_sha256(image_path),
+                "target_quad": [
+                    [0.05, 0.15],
+                    [0.45, 0.15],
+                    [0.45, 0.85],
+                    [0.05, 0.85],
+                ],
+                "bullseye_quads": [
+                    [
+                        [0.55, 0.15],
+                        [0.95, 0.15],
+                        [0.95, 0.85],
+                        [0.55, 0.85],
+                    ]
+                ],
+                "seed": 2079,
+            }
+        ),
+        encoding="utf-8",
+    )
+    module_root = Path(__file__).resolve().parents[1]
+    images = generate_recipe(
+        recipe_path,
+        module_root,
+        module_root / "misc/resources/glyphs",
+        tmp_path / "task2-images",
+        tmp_path / "task2-labels",
+        task="task2",
+    )
+
+    assert len(images) == DEFAULT_VARIANT_COUNT
+    metadata = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "task2-labels").rglob("*.meta.json")
+    ]
+    primary_ids = [item["primary_competition_id"] for item in metadata]
+    assert {target_id: primary_ids.count(target_id) for target_id in TASK2_TARGET_IDS} == {
+        target_id: 18 for target_id in TASK2_TARGET_IDS
+    }
+    assert {item["task"] for item in metadata} == {"task2"}
+    label_classes = {
+        int(line.split()[0])
+        for path in (tmp_path / "task2-labels").rglob("*.txt")
+        for line in path.read_text(encoding="utf-8").splitlines()
+    }
+    assert label_classes == set(range(6))
 
 
 def test_generate_reports_all_variant_failures_without_partial_outputs(
