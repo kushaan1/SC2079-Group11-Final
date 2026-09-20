@@ -50,6 +50,17 @@ Generate every available `*-auto.json` background recipe with:
 python -m training.synthesize generate-all --task task2
 ```
 
+Generation is serial by default. To opt into parallel recipe generation, add `--parallel`;
+the default is at most four workers, or choose a positive limit explicitly:
+
+```powershell
+python -m training.synthesize generate-all --task task2 --parallel --workers 4
+```
+
+The same toggle is available for Task 1 by replacing `task2` with `task1`. Parallel workers each
+use one OpenCV thread and keep their own decoded-asset cache. Use fewer workers on a memory-limited
+machine. A recipe remains atomically staged and published whether generation is serial or parallel.
+
 The command discovers the available recipes instead of assuming a fixed count. It reports the
 actual number of recipes, unique backgrounds, source groups, total images, and primary images per
 replaceable glyph class before generation. It warns when there are fewer than 100 backgrounds,
@@ -175,6 +186,29 @@ Use `--overwrite` only for the specific recipe being deliberately recalibrated. 
 without the required perspective calibration are rejected.
 
 ### Step 5: generate all configured backgrounds
+
+The generator bounds work to the resolution the models consume while retaining 2x supersampling:
+
+| Task | Internal render long edge | Saved long edge |
+|---|---:|---:|
+| Task 1 | 1280 px | 640 px |
+| Task 2 | 640 px | 320 px |
+
+Backgrounds, stand templates, glyph masks, and template recipes are decoded and validated once per
+process and then reused. The final downsample uses OpenCV area interpolation. Every provenance file
+records the renderer version, configured resolutions, actual internal size, and saved size. This
+does not change the 90-variant schedule, classes, distance bands, patterns, camouflage, shadows, or
+shake-blur selection.
+
+For all Task 1 recipes, use serial generation (the default) or explicitly enable parallel workers:
+
+```powershell
+python -m training.synthesize generate-all --task task1
+python -m training.synthesize generate-all --task task1 --parallel --workers 4
+```
+
+Use only one of those commands for a run. Existing scene outputs still require `--overwrite`; the
+command stages all 90 replacements before publishing them.
 
 Choose either the single-recipe command or the all-recipes loop below. Do not run both on the same outputs; existing outputs are refused.
 
