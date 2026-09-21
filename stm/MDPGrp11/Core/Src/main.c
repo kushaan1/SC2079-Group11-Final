@@ -6,7 +6,7 @@
   ******************************************************************************
   * @attention
   *
-  * Copyright (c) 2026 STMicroelectronics....
+  * Copyright (c) 2026 STMicroelectronics.
   * All rights reserved.
   *
   * This software is licensed under terms that can be found in the LICENSE file
@@ -81,8 +81,68 @@ uint8_t ack_s[] = "ACK,S\r\n";	// Stop (only stop verb — STOP removed)
 // Timed F/B duration (ms). Keep as short jog; use FW <cm> for distance.
 #define MOVE_DURATION_MS 500
 
+// Confirmed 2026-09-20: rear-left wheel (MotorB) visibly spins faster than
+// rear-right (MotorA) at the same commanded duty, off the ground with no
+// load/traction involved -- a real motor/gearbox difference, not floor
+// friction or an encoder artifact. Matches every straight-line encoder trial
+// this whole session: B consistently logs more counts than A, every FW and
+// BW run, forward and backward (~3.3% avg on FW runs, ~1.2% avg on BW runs).
+// This is very likely the source of the "backwards drifts right" observation.
+// Fix: trim A up / B down symmetrically around the commanded duty so the
+// AVERAGE stays ~unchanged (distance calibration above is based on the
+// average of the two encoders, so it shouldn't need re-deriving because of
+// this), only the left/right split shifts. Value is a first pass from the
+// averaged imbalance across FW+BW cal data, not independently re-tuned.
+// 2.5 -> 5.0 (2026-09-20): still drifting right at 2.5, not overcorrected
+// to the left, so direction was right but magnitude too small -- next data
+// point rather than a re-derivation. If 5.0 overshoots into a left drift,
+// split the difference; if still right, keep pushing up. Also worth ruling
+// out separately: whether SERVO_CENTER_US (1500) is actually dead straight
+// on this chassis -- with the car up so wheels spin free, send SC and
+// visually check the front wheels are square to the chassis, not just
+// symmetric between LL/RR. A miscentered SC would cause a constant-direction
+// drift independent of any motor trim and this fix can't correct for that.
+#define MOTOR_TRIM_PCT 5.0f
+
 // FW/BW distance (RPi Task 1: 5–200 cm). Cal was A.3 band 80–120 — short/long may need retune.
-#define COUNTS_PER_100CM 6185
+// Re-derived 2026-09-20 from FW 80 (3 runs) and FW 110 (3 runs), tape-measured:
+//   old C=6185 undershot both -- 80->~77.8cm, 110->~102.3cm.
+//   Encoder overshoot past the old target was ~520-550 counts on BOTH runs
+//   despite the very different target sizes, i.e. roughly a FIXED number of
+//   counts, not a percentage -- consistent with brake/coast momentum during
+//   FW_BRAKE_MS rather than a pure ratio error. True counts/cm (back-solved
+//   from actual measured distance) was ~70-72 both times -> ~7103 counts/100cm.
+//   So the fix is two constants: a corrected ratio, and a fixed count
+//   subtracted from the stop target before checking it, matching how
+//   Pivot_Run already handles PIVOT_STOP_MARGIN_DEG. Only re-verified at
+//   80/110cm so far (within the graded A.3 80-120 band); not reverified at
+//   the short/long extremes of the full 5-200cm range.
+#define COUNTS_PER_100CM 7103
+#define FW_BRAKE_OVERSHOOT_COUNTS 533	// avg counts the car coasts past target during Motors_Brake+FW_BRAKE_MS
+
+// BW given its own constants 2026-09-20: FW 100/120 re-test came back within
+// ~1.7-2.5% of commanded (fine), but BW 80/100/110/120 (12 runs) consistently
+// undershot more than FW -- 80cm landed at -5.4%, close to the A.3 +/-6%
+// edge. Back-solved true ratio from those 12 runs was ~74.18 counts/cm
+// (vs ~72 for FW) and avg brake-coast overshoot ~523 counts -- both close to
+// FW's numbers but consistently a bit higher, so BW no longer borrows FW's
+// constants directly.
+#define BW_COUNTS_PER_100CM 7418
+#define BW_BRAKE_OVERSHOOT_COUNTS 523
+
+// Separately: across every FW *and* BW run logged so far, MotorB(left) has
+// consistently traveled ~50-190 more encoder counts than MotorA(right) for
+// the "same" straight-line command (see ENC data for FW80/FW100/FW110/FW120/
+// BW80/BW100/BW110/BW120). That matches the "backwards drifts right"
+// observation directly -- right side is consistently under-traveling versus
+// left, in both directions, not just reverse. This isn't something
+// COUNTS_PER_100CM can fix (it only tunes the *average* of the two sides).
+// Likely a real mechanical/motor imbalance (tire wear, gearbox, or the
+// MotorA IN1/IN2 swap noted below interacting with it) -- worth a physical
+// check (spin both wheels off the ground at the same commanded duty and see
+// if one is visibly slower), or eventually a small per-side duty trim
+// similar to how Pivot_Run already uses asymmetric FWD/REV duties. Not
+// applied here yet -- no duty-trim data collected.
 #define FW_CM_MIN 5
 #define FW_CM_MAX 200
 #define FW_TIMEOUT_MS 60000
@@ -145,7 +205,12 @@ volatile uint16_t pending_arc_deg = 0;
 #define ARC_BIAS_DT_MS 5
 #define ARC_TIMEOUT_MS_PER_90 8000
 /* Task 18: overshoot grew with angle (~1.4%); stop early by percent, not fixed °. */
-#define ARC_STOP_EARLY_PCT 1.4f
+/* Bumped from 1.4 -> 3.0 (2026-09-20): 90 deg was visibly overshooting, 45 deg
+ * was fine. No protractor measurement taken -- this is a rough increase, not
+ * a re-derived cal. Re-check TL/TR at 45/90/180 after reflashing: if 90 still
+ * overshoots, nudge this up another ~1%; if 45 now undershoots noticeably,
+ * back it off slightly. */
+#define ARC_STOP_EARLY_PCT 4.5f
 
 volatile uint16_t pending_fw_cm = 0;	// 0 = none; else FW distance cm
 volatile uint16_t pending_bw_cm = 0;	// 0 = none; else BW distance cm
@@ -158,6 +223,7 @@ volatile uint8_t pending_gyro = 0;	// 1 = run GYRO sample in main loop
 volatile uint8_t drive_abort = 0;	// set by S to stop an in-progress drive/pivot/arc
 
 uint8_t err_range[] = "ERR,RANGE\r\n";
+uint8_t err_busy[] = "ERR,BUSY\r\n";	// sent when a valid command arrives while another motion is still in progress
 uint8_t ack_fw[] = "ACK,FW\r\n";
 uint8_t ack_bw[] = "ACK,BW\r\n";
 uint8_t ack_fs[] = "ACK,FS\r\n";
@@ -178,6 +244,8 @@ uint8_t done_tl[] = "DONE,TL\r\n";
 uint8_t done_tr[] = "DONE,TR\r\n";
 uint8_t done_bl[] = "DONE,BL\r\n";
 uint8_t done_br[] = "DONE,BR\r\n";
+uint8_t done_f[] = "DONE,F\r\n";	// sent after the timed F jog physically finishes
+uint8_t done_b[] = "DONE,B\r\n";	// sent after the timed B jog physically finishes
 
 #define MOTION_IDLE() \
   (pending_move == 0 && pending_arc == 0 && pending_fw_cm == 0 && \
@@ -408,7 +476,7 @@ int main(void)
 		  HAL_Delay(200);
 	  }
   }
-  /* USER CODE END 3 *////
+  /* USER CODE END 3 */
 }
 
 /**
@@ -714,28 +782,48 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         }
         else if (strcmp((char *)rx_buf, "SC") == 0)
         {
+          char msg[24];
+          int n;
           Steer_Center();
-          HAL_UART_Transmit(&huart3, ack_sc, sizeof(ack_sc) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,SC,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "SL") == 0)
         {
+          char msg[24];
+          int n;
           Steer_StepLeft();
-          HAL_UART_Transmit(&huart3, ack_sl, sizeof(ack_sl) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,SL,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "SR") == 0)
         {
+          char msg[24];
+          int n;
           Steer_StepRight();
-          HAL_UART_Transmit(&huart3, ack_sr, sizeof(ack_sr) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,SR,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "LL") == 0)
         {
+          char msg[24];
+          int n;
           Steer_LockLeft();
-          HAL_UART_Transmit(&huart3, ack_ll, sizeof(ack_ll) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,LL,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "RR") == 0)
         {
+          char msg[24];
+          int n;
           Steer_LockRight();
-          HAL_UART_Transmit(&huart3, ack_rr, sizeof(ack_rr) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,RR,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "ENC") == 0)
         {
@@ -769,6 +857,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_arc_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_tl, sizeof(ack_tl) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "TR ", 3) == 0)
         {
@@ -781,6 +871,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_arc_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_tr, sizeof(ack_tr) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "BL ", 3) == 0)
         {
@@ -793,6 +885,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_arc_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_bl, sizeof(ack_bl) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "BR ", 3) == 0)
         {
@@ -805,6 +899,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_arc_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_br, sizeof(ack_br) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "FW ", 3) == 0)
         {
@@ -818,6 +914,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_fw_cm = (uint16_t)cm;
             HAL_UART_Transmit(&huart3, ack_fw, sizeof(ack_fw) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "BW ", 3) == 0)
         {
@@ -831,6 +929,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_bw_cm = (uint16_t)cm;
             HAL_UART_Transmit(&huart3, ack_bw, sizeof(ack_bw) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "FS ", 3) == 0)
         {
@@ -844,6 +944,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_fs_cm = (uint16_t)cm;
             HAL_UART_Transmit(&huart3, ack_fs, sizeof(ack_fs) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "BS ", 3) == 0)
         {
@@ -857,6 +959,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_bs_cm = (uint16_t)cm;
             HAL_UART_Transmit(&huart3, ack_bs, sizeof(ack_bs) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "PL ", 3) == 0)
         {
@@ -871,6 +975,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_pivot_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_pl, sizeof(ack_pl) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "PR ", 3) == 0)
         {
@@ -885,6 +991,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_pivot_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_pr, sizeof(ack_pr) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else
         {
@@ -995,18 +1103,24 @@ void Motors_Brake(void)
 
 void Motors_Forward(void)
 {
-  MotorA_Forward(MOTOR_DUTY);
-  MotorB_Forward(MOTOR_DUTY);
+  drive_abort = 0;
+  MotorA_Forward((uint32_t)((float)MOTOR_DUTY * (1.0f + MOTOR_TRIM_PCT / 100.0f)));
+  MotorB_Forward((uint32_t)((float)MOTOR_DUTY * (1.0f - MOTOR_TRIM_PCT / 100.0f)));
   HAL_Delay(MOVE_DURATION_MS);
   Motors_Stop();
+  if (!drive_abort)
+    HAL_UART_Transmit(&huart3, done_f, sizeof(done_f) - 1, HAL_MAX_DELAY);
 }
 
 void Motors_Backward(void)
 {
-  MotorA_Backward(MOTOR_DUTY);
-  MotorB_Backward(MOTOR_DUTY);
+  drive_abort = 0;
+  MotorA_Backward((uint32_t)((float)MOTOR_DUTY * (1.0f + MOTOR_TRIM_PCT / 100.0f)));
+  MotorB_Backward((uint32_t)((float)MOTOR_DUTY * (1.0f - MOTOR_TRIM_PCT / 100.0f)));
   HAL_Delay(MOVE_DURATION_MS);
   Motors_Stop();
+  if (!drive_abort)
+    HAL_UART_Transmit(&huart3, done_b, sizeof(done_b) - 1, HAL_MAX_DELAY);
 }
 
 // Average |A|,|B| — A counts negative on forward in cal data.
@@ -1022,9 +1136,12 @@ uint32_t Encoder_DistCounts(void)
 // SC → reset encoders → drive until avg counts hit target → brake → DONE
 // dir: 0 = forward (FW/FS), 1 = backward (BW)
 static void Drive_CmAt(uint16_t cm, uint32_t duty, uint32_t counts_per_100,
+                       uint32_t brake_overshoot_counts,
                        uint8_t reverse, uint8_t *done, uint16_t done_len)
 {
-  uint32_t target = ((uint32_t)cm * counts_per_100) / 100U;
+  int32_t target_signed = (int32_t)(((uint32_t)cm * counts_per_100) / 100U)
+                           - (int32_t)brake_overshoot_counts;
+  uint32_t target = (target_signed < 1) ? 1U : (uint32_t)target_signed;
   uint32_t t0;
 
   drive_abort = 0;
@@ -1033,15 +1150,19 @@ static void Drive_CmAt(uint16_t cm, uint32_t duty, uint32_t counts_per_100,
   HAL_Delay(TURN_SERVO_SETTLE_MS);
 
   Encoder_Reset();
-  if (reverse)
   {
-    MotorA_Backward(duty);
-    MotorB_Backward(duty);
-  }
-  else
-  {
-    MotorA_Forward(duty);
-    MotorB_Forward(duty);
+    uint32_t duty_a = (uint32_t)((float)duty * (1.0f + MOTOR_TRIM_PCT / 100.0f));
+    uint32_t duty_b = (uint32_t)((float)duty * (1.0f - MOTOR_TRIM_PCT / 100.0f));
+    if (reverse)
+    {
+      MotorA_Backward(duty_a);
+      MotorB_Backward(duty_b);
+    }
+    else
+    {
+      MotorA_Forward(duty_a);
+      MotorB_Forward(duty_b);
+    }
   }
 
   t0 = HAL_GetTick();
@@ -1065,23 +1186,25 @@ static void Drive_CmAt(uint16_t cm, uint32_t duty, uint32_t counts_per_100,
 
 void Drive_ForwardCm(uint16_t cm)
 {
-  Drive_CmAt(cm, MOTOR_DUTY, COUNTS_PER_100CM, 0, done_fw, (uint16_t)(sizeof(done_fw) - 1));
+  Drive_CmAt(cm, MOTOR_DUTY, COUNTS_PER_100CM, FW_BRAKE_OVERSHOOT_COUNTS, 0, done_fw, (uint16_t)(sizeof(done_fw) - 1));
 }
 
 void Drive_BackwardCm(uint16_t cm)
 {
-  Drive_CmAt(cm, MOTOR_DUTY, COUNTS_PER_100CM, 1, done_bw, (uint16_t)(sizeof(done_bw) - 1));
+  /* Own cal as of 2026-09-20 -- see BW_COUNTS_PER_100CM comment above. */
+  Drive_CmAt(cm, MOTOR_DUTY, BW_COUNTS_PER_100CM, BW_BRAKE_OVERSHOOT_COUNTS, 1, done_bw, (uint16_t)(sizeof(done_bw) - 1));
 }
 
 void Drive_ForwardSlowCm(uint16_t cm)
 {
-  Drive_CmAt(cm, FS_DUTY, COUNTS_PER_100CM_FS, 0, done_fs, (uint16_t)(sizeof(done_fs) - 1));
+  /* No coast-overshoot data for the slow duty yet -- 0 margin, unchanged from before. */
+  Drive_CmAt(cm, FS_DUTY, COUNTS_PER_100CM_FS, 0, 0, done_fs, (uint16_t)(sizeof(done_fs) - 1));
 }
 
 void Drive_BackwardSlowCm(uint16_t cm)
 {
   /* Same slow duty + FS cal until a separate BS tape cal exists. */
-  Drive_CmAt(cm, FS_DUTY, COUNTS_PER_100CM_FS, 1, done_bs, (uint16_t)(sizeof(done_bs) - 1));
+  Drive_CmAt(cm, FS_DUTY, COUNTS_PER_100CM_FS, 0, 1, done_bs, (uint16_t)(sizeof(done_bs) - 1));
 }
 
 // On-spot pivot: integrate ICM20948 yaw (Z) until |angle| hits command → brake → ACK.
