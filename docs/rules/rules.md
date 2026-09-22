@@ -37,6 +37,8 @@ transcription is the authority the two `-v2` design docs (`docs/superpowers/spec
    the Android tablet or the PC, **one representative image per recognised character, tiled into one
    window** — reachable from the same screen as the virtual map, or shown on the PC after the run.
    Only images matching the image ID shown on the tablet score. (Max obstacles: **8**.)
+
+   ![Example of the required tiled RAW-image display: four obstacle photos, each with a green bounding box around the recognised symbol and its image ID, plus two placeholder tiles for the remaining obstacles](2.jpg)
 8. A "RETRY" run happens immediately after all teams finish their first attempt. Equipment stays
    quarantined the whole time.
 9. Supervisors watch the image ID update live. The map with updated image IDs must be shown at the
@@ -53,21 +55,18 @@ IDs 11–19 are digits 1–9, 20–35 are letters A–Z (skipping I–R), 36–4
 and a stop marker — the same table as `AGENTS.md` §3.4. **4 to 8 obstacles**, drawn from a pool of
 **30 images**. Backgrounds can vary.
 
-### Sample arena (`docs/rules/4.jpg`)
+### Sample arena
 
-A worked example: 20×20 grid, start zone bottom-left (yellow, robot marked `S`), 5 obstacles each
-given as `(x, y)` plus a face — e.g. `Obstacle 1: (5, 13), image face "left"`. Confirms the naming
-convention `AGENTS.md` already assumes; no new information for `rpi/`.
+![Sample Task 1 arena: a 20x20 grid with the yellow start zone bottom-left holding the robot marked S, and five numbered/lettered obstacles each with a small arrow marking which face carries the image](4.jpg)
 
-## Task 2 — fastest car (`docs/rules/5.jpg`, `docs/rules/6.jpg`)
+*Confirms the naming convention `AGENTS.md` already assumes; no new information for `rpi/`.*
 
-**Layout** (`docs/rules/5.jpg`): a 60×60cm U-shaped carpark, open toward the course. Obstacle 1
-(10×10cm) is 60–150cm from the carpark; obstacle 2 is another 60–150cm past it. **Obstacle 2's
-dimension is only revealed just before the competition, after the preparation time** — 10cm wide,
-length variable from a minimum of 30cm up to a maximum. A minimum 50cm clearance is kept on both
-sides of the line between the carpark and obstacle 2. Arrow images are fixed at the centre of each
-obstacle's face toward the carpark; bull's-eyes mark the carpark's outer corners and the obstacles'
-other sides.
+## Task 2 — fastest car (`docs/rules/6.jpg`)
+
+![Task 2 layout figure: the 60x60cm U-shaped carpark on the left, a 60-150cm gap to obstacle 1 (10x10cm), another 60-150cm gap to obstacle 2, a 50cm minimum clearance marked above and below the obstacle line, and a legend for the left/right arrow markers and bull's-eye markers](5.jpg)
+
+*Obstacle 2's dimension (10cm wide, 30cm+ long) is only revealed just before the competition, after
+the preparation time — the exact number is printed on the figure above, not fixed in advance.*
 
 1. During the 2-minute prep, the team may check Bluetooth/Wi-Fi and calibrate, but **the robot must
    stay inside the carpark zone** the whole time.
