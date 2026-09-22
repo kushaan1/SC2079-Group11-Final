@@ -1,7 +1,7 @@
 # RPi program — Task 1 and A.5 design (v2, rules-checked)
 
 **Date:** 2026-09-22 (revision of shuenwei's 2026-09-17 original)
-**Status:** revised against the official MDP rules (`docs/rules.md`, `docs/rules/`), which did not
+**Status:** revised against the official MDP rules (`docs/rules/rules.md`, `docs/rules/`), which did not
 exist when the original was written. Sections marked **[RULE DELTA]** are new or changed from the
 original; everything else carries the original's content forward unchanged.
 **Scope:** the Raspberry Pi's program: manual drive, the Task 1
@@ -14,12 +14,12 @@ conversation that produced it, this document wins.
 
 ## 0. Rule deltas vs. the 2026-09-17 original (added 2026-09-22)
 
-Two gaps, found by checking the original design against `docs/rules.md`:
+Two gaps, found by checking the original design against `docs/rules/rules.md`:
 
 | # | Rules say | Original design | What changes |
 |---|---|---|---|
-| 1 | Task 1 scores **+10 per correct image ID, −10 per wrong ID** (`docs/rules.md` FAQ 3–4) | `vision_worker.decide()` reports the highest-confidence target seen, with no minimum confidence | Needs a confidence floor. Below it, report `no_detection` (0 points) rather than a guess (risking −10). See §5.8 below |
-| 2 | The robot **must stop by itself within 6 minutes** to qualify; a manual stop makes the run "incomplete" even if recognition succeeded (`docs/rules.md` rule 10, FAQ 15) | `Task1Run` drives the whole plan, then waits up to `VISION_DRAIN_TIMEOUT_S` for outstanding verdicts, with no ceiling tied to the competition's 6-minute cap | Needs an explicit run-level deadline, from the moment the run starts, that force-stops the robot and reports `Done` (even if incomplete) at or before 6 minutes. See §6.1 step 6a below |
+| 1 | Task 1 scores **+10 per correct image ID, −10 per wrong ID** (`docs/rules/rules.md` FAQ 3–4) | `vision_worker.decide()` reports the highest-confidence target seen, with no minimum confidence | Needs a confidence floor. Below it, report `no_detection` (0 points) rather than a guess (risking −10). See §5.8 below |
+| 2 | The robot **must stop by itself within 6 minutes** to qualify; a manual stop makes the run "incomplete" even if recognition succeeded (`docs/rules/rules.md` rule 10, FAQ 15) | `Task1Run` drives the whole plan, then waits up to `VISION_DRAIN_TIMEOUT_S` for outstanding verdicts, with no ceiling tied to the competition's 6-minute cap | Needs an explicit run-level deadline, from the moment the run starts, that force-stops the robot and reports `Done` (even if incomplete) at or before 6 minutes. See §6.1 step 6a below |
 
 Neither is a redesign — both are additions to `Task1Run` and `vision_worker`. The rest of this
 document is shuenwei's original, with these two points folded into the relevant sections below
@@ -207,7 +207,7 @@ is accepted with the start pose `(1.0, 1.0, 0°)` and a
 The tablet's `algorithm` value `turnInPlace` is not a planner strategy; the
 RPi maps it to `optimal` and says so with a `MSG`.
 
-**[RULE DELTA] Prep-time key-in already matches.** `docs/rules.md` Task 1
+**[RULE DELTA] Prep-time key-in already matches.** `docs/rules/rules.md` Task 1
 rule 3 — coordinates and faces keyed into the tablet during the 2-minute
 prep, in front of a supervisor — is exactly the `SEND ARENA` /
 `imageRec` start flow already designed here. No change.
@@ -299,7 +299,7 @@ import. No other module reads the environment.
 | `CAMERA_WIDTH/HEIGHT/ROTATION` | `640` / `480` / `0` | |
 | `LOG_FILE` | `/home/pi/rpi.log` | rotating, 512 KiB × 3, plus stdout |
 | `STRATEGY_FALLBACK` | `optimal` | what `turnInPlace` maps to |
-| **`TASK1_TIME_LIMIT_S`** **[RULE DELTA §0 #2]** | **`360`** | **the competition's 6-minute cap (`docs/rules.md` rule 10), from `Task1Run.run()` start; see §6.1 step 6a** |
+| **`TASK1_TIME_LIMIT_S`** **[RULE DELTA §0 #2]** | **`360`** | **the competition's 6-minute cap (`docs/rules/rules.md` rule 10), from `Task1Run.run()` start; see §6.1 step 6a** |
 | **`TARGET_MIN_CONFIDENCE`** **[RULE DELTA §0 #1]** | **`0.6`** (placeholder — tune against real captures) | **below this, `vision_worker.decide()` reports `no_detection` instead of a low-confidence target; see §5.8** |
 
 ### 5.2 `bt_link.py`
@@ -451,7 +451,7 @@ Never raises; the worker decides what to do.
   `bullseye` if any frame said so, else `no_detection` (or `error` if every
   frame errored).
 - **[RULE DELTA §0 #1] Confidence floor before reporting `target`.** A
-  correct ID is +10 and a wrong one is −10 (`docs/rules.md` FAQ 3–4), so a
+  correct ID is +10 and a wrong one is −10 (`docs/rules/rules.md` FAQ 3–4), so a
   low-confidence guess is worse than no answer. `decide()` changes to: among
   frames whose best detection is `target` **and whose confidence ≥
   `config.TARGET_MIN_CONFIDENCE`**, pick the highest-confidence one; if none
@@ -550,7 +550,7 @@ Input: the tablet's `ImageRec(algorithm, robot, obstacles)`.
 6. After the last segment: wait up to `VISION_DRAIN_TIMEOUT_S` for every
    submitted obstacle to have a result.
 
-   **6a. [RULE DELTA §0 #2] The 6-minute run deadline.** `docs/rules.md`
+   **6a. [RULE DELTA §0 #2] The 6-minute run deadline.** `docs/rules/rules.md`
    rule 10 requires the robot to **stop itself, automatically, within 6
    minutes of the run starting** — driving and recognition together, not just
    the verdict drain. `Task1Run.run()` records `start_time = monotonic()` as

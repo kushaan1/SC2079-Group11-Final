@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-22 (revision of shuenwei's 2026-09-18 original, itself revised the same day
 after review)
-**Status:** revised against the official MDP rules (`docs/rules.md`, `docs/rules/`), which did not
+**Status:** revised against the official MDP rules (`docs/rules/rules.md`, `docs/rules/`), which did not
 exist when the original was written. Sections marked **[RULE DELTA]** are new or changed from the
 original; everything else carries the original's content forward unchanged. The STM command names
 in §3.1 remain a proposal awaiting the STM team's reply to `docs/rpi-stm-handover.md` §5.
@@ -12,13 +12,13 @@ in §3.1 remain a proposal awaiting the STM team's reply to `docs/rpi-stm-handov
 
 ## 0. Rule deltas vs. the 2026-09-18 original (added 2026-09-22)
 
-Three gaps, found by checking the original design against `docs/rules.md`:
+Three gaps, found by checking the original design against `docs/rules/rules.md`:
 
 | # | Rules say | Original design | What changes |
 |---|---|---|---|
-| 1 | Obstacle 2's dimension (10cm wide, 30cm+ long) is **revealed only after the 2-minute prep, just before the run** (`docs/rules.md` Task 2 layout paragraph) | §3.1's `ROUND 2` v1 is "a fixed loop with obstacle 2's width as an **STM constant (measured on the day)**"; the build order (§9) puts this fixed loop before the IR-terminated v2 | A number handed to the team minutes before their run cannot be a firmware constant "measured on the day" in the sense the original meant (measured once, in advance, and flashed). It must be a fast runtime/config value the team can set during the 2-minute prep or between the STM handshake and `beginFastest`, and the IR-terminated loop (v2) — which needs no measured width at all — becomes the safer default to prioritise, not a v2 refinement. See §3.1 and §9 below |
-| 2 | Hitting the **carpark wall is an outright disqualification**; hitting a **goal obstacle is a +10s penalty** (`docs/rules.md` Task 2 rule 6, FAQ 6–7) | §7's error table (additions to Task 1 §7) doesn't distinguish carpark-wall contact from obstacle contact | `HOME`'s design intent must explicitly favour a safe, centred approach into the carpark over a fast one — see §3.1's `HOME` row and the new §7 row below |
-| 3 | Task 2 also requires the **RAW captured images with bounding boxes**, for images on goal obstacles, shown at the end of the run (`docs/rules.md` Task 2 rule 8, FAQ 16) | §3.2's on-Pi TFLite arrow source makes the left/right decision locally and never hands a frame to the PC server; only the HTTP source's frames reach it | Every arrow-read frame — regardless of which source decided the direction — must still be persisted where it can be shown, the same way Task 1's captures are. See §3.2 below |
+| 1 | Obstacle 2's dimension (10cm wide, 30cm+ long) is **revealed only after the 2-minute prep, just before the run** (`docs/rules/rules.md` Task 2 layout paragraph) | §3.1's `ROUND 2` v1 is "a fixed loop with obstacle 2's width as an **STM constant (measured on the day)**"; the build order (§9) puts this fixed loop before the IR-terminated v2 | A number handed to the team minutes before their run cannot be a firmware constant "measured on the day" in the sense the original meant (measured once, in advance, and flashed). It must be a fast runtime/config value the team can set during the 2-minute prep or between the STM handshake and `beginFastest`, and the IR-terminated loop (v2) — which needs no measured width at all — becomes the safer default to prioritise, not a v2 refinement. See §3.1 and §9 below |
+| 2 | Hitting the **carpark wall is an outright disqualification**; hitting a **goal obstacle is a +10s penalty** (`docs/rules/rules.md` Task 2 rule 6, FAQ 6–7) | §7's error table (additions to Task 1 §7) doesn't distinguish carpark-wall contact from obstacle contact | `HOME`'s design intent must explicitly favour a safe, centred approach into the carpark over a fast one — see §3.1's `HOME` row and the new §7 row below |
+| 3 | Task 2 also requires the **RAW captured images with bounding boxes**, for images on goal obstacles, shown at the end of the run (`docs/rules/rules.md` Task 2 rule 8, FAQ 16) | §3.2's on-Pi TFLite arrow source makes the left/right decision locally and never hands a frame to the PC server; only the HTTP source's frames reach it | Every arrow-read frame — regardless of which source decided the direction — must still be persisted where it can be shown, the same way Task 1's captures are. See §3.2 below |
 
 None of these change the run's state machine (§6) or the STM command shapes (§3.1) themselves —
 they change what value feeds `ROUND 2`, how cautious `HOME` is designed to be, and where arrow-read
@@ -34,7 +34,7 @@ to obstacle 1, read its arrow, go round it on that side, do the same at
 obstacle 2, loop behind it, and come home into the carpark — narrating to the
 tablet and stopping on STOP, exactly as the Task 1 run does.
 
-**The course** (`docs/rules.md` Task 2 section, and its layout figure):
+**The course** (`docs/rules/rules.md` Task 2 section, and its layout figure):
 
 - The carpark is a **60 × 60 cm U** with walls on three sides, open toward
   the course. The car starts inside it and must finish inside it, which
@@ -44,7 +44,7 @@ tablet and stopping on STOP, exactly as the Task 1 run does.
   both on the carpark's centre line. Obstacle 2 is the bigger block: 10cm
   wide, length from a minimum of 30cm up to some maximum, **and its exact
   dimension is disclosed only after the 2-minute prep, right before the
-  run** (`docs/rules.md`) — not something the team can pre-measure, unlike
+  run** (`docs/rules/rules.md`) — not something the team can pre-measure, unlike
   the original design's phrasing suggested.
 - Each obstacle carries a left (image id 39) or right (id 38) arrow at the
   centre of the face toward the carpark. Bullseyes sit on the carpark's outer
@@ -55,12 +55,12 @@ tablet and stopping on STOP, exactly as the Task 1 run does.
 - The approach **must be sensor-driven** (rules allow camera, IR or
   ultrasonic). 3-minute cap, **+10 s per obstacle contact** — but **hitting
   the carpark wall is a disqualification, not a time penalty**
-  (`docs/rules.md` FAQ 6–7) — and bulldozing disqualifies outright. A
+  (`docs/rules/rules.md` FAQ 6–7) — and bulldozing disqualifies outright. A
   misread arrow or a wrong side voids the run. One retry, shared with Task 1.
   Correctness first; then it is a stopwatch.
 - **[RULE DELTA]** The robot must stay inside the carpark zone for the
   whole 2-minute prep; moving it out during prep-time calibration is an
-  automatic disqualification (`docs/rules.md` FAQ 9). None of the pre-flight
+  automatic disqualification (`docs/rules/rules.md` FAQ 9). None of the pre-flight
   checks in §6 below move the robot, so this is a constraint on future
   changes, not on anything currently designed.
 
@@ -169,7 +169,7 @@ Two sources, one interface (§5.1):
   importable).
 
 **[RULE DELTA §0 #3] Every read frame reaches the PC server, whichever
-source decides.** `docs/rules.md` Task 2 rule 8 and FAQ 16 require the RAW
+source decides.** `docs/rules/rules.md` Task 2 rule 8 and FAQ 16 require the RAW
 image with its bounding box for each goal obstacle's recognised arrow, shown
 on Android or PC at the end of the run — the same requirement Task 1 has for
 its captures, and not satisfying it means the team does not qualify for
@@ -196,7 +196,7 @@ is not flipped. Both models must be trained with `fliplr: 0`, and released
 only after a left/right confusion run at `T2_STOP_CM` (≥100 frames per
 direction, ±15° yaw, lab and outdoor backgrounds) shows zero cross-errors at
 the confidence floor. §9 items 4 and 5. **[RULE DELTA]** A misread arrow is
-not merely a scoring loss here — `docs/rules.md` FAQ 10 makes a wrong image
+not merely a scoring loss here — `docs/rules/rules.md` FAQ 10 makes a wrong image
 or wrong turn an **automatic disqualification** for Task 2, the same
 severity as bulldozing. This raises the cost of the fliplr bug specifically
 for Task 2 above what it already was for Task 1 (where a wrong ID is only
@@ -342,7 +342,7 @@ Rules applied at each step:
   nothing sent to the STM. **[RULE DELTA] Pre-flight never drives the wheels
   — this matters more now than in the original, because moving the robot
   outside the carpark during prep-time calibration is an automatic
-  disqualification (`docs/rules.md` FAQ 9); confirming this stays true is
+  disqualification (`docs/rules/rules.md` FAQ 9); confirming this stays true is
   worth a one-line test assertion (§8).**
 - **Abort check** before every STM command and between frames; on STOP the
   run sends `MSG,Stopped` and ends (the controller has already sent `S`).
@@ -352,7 +352,7 @@ Rules applied at each step:
   `MSG,Arrow 1 not readable - stopped` and the run ends. Waiting is cheaper
   than guessing; a guess voids the run and the retry is shared with Task 1.
   **[RULE DELTA] A wrong turn is an automatic disqualification here
-  (`docs/rules.md` FAQ 10), not just an invalid run as the original phrased
+  (`docs/rules/rules.md` FAQ 10), not just an invalid run as the original phrased
   it — the same conclusion, stated with the rules' own severity.**
   Each nudge is narrated: `MSG,Arrow 1: no vote, nudging back 10 cm`.
 - **`DONE,SEEK,0`:** narrated as "already in range", not "at 0 cm".
@@ -379,9 +379,9 @@ Rules applied at each step:
 | STOP during any command | controller | `S`, resync | `Stopped` |
 | STM `ERR`/silence | driver | `S`, resync | `Aborted at <cmd>: <reply>` |
 | camera failure mid-read | run | none | counts as an empty frame |
-| **[RULE DELTA] contact with a goal obstacle** | judged, not software-detected | — | **+10s penalty per distinct contact — the run continues** (`docs/rules.md` FAQ 5, 7) |
-| **[RULE DELTA] contact with the carpark wall** | judged, not software-detected | — | **disqualification — not a timing penalty** (`docs/rules.md` rule 6, FAQ 6). No software change follows from this row directly; it's the reason `HOME`'s tuning (§3.1) should trade a little speed for certainty near the carpark, more than any other manoeuvre in this run |
-| **[RULE DELTA] wrong arrow read or wrong turn taken** | judged, not software-detected | — | **automatic disqualification** (`docs/rules.md` FAQ 10) — the reason the nudge-and-retry loop above waits rather than guesses |
+| **[RULE DELTA] contact with a goal obstacle** | judged, not software-detected | — | **+10s penalty per distinct contact — the run continues** (`docs/rules/rules.md` FAQ 5, 7) |
+| **[RULE DELTA] contact with the carpark wall** | judged, not software-detected | — | **disqualification — not a timing penalty** (`docs/rules/rules.md` rule 6, FAQ 6). No software change follows from this row directly; it's the reason `HOME`'s tuning (§3.1) should trade a little speed for certainty near the carpark, more than any other manoeuvre in this run |
+| **[RULE DELTA] wrong arrow read or wrong turn taken** | judged, not software-detected | — | **automatic disqualification** (`docs/rules/rules.md` FAQ 10) — the reason the nudge-and-retry loop above waits rather than guesses |
 
 ## 8. Testing
 
