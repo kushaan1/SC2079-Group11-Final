@@ -24,11 +24,11 @@ class BrokenStm(FakeStmDriver):
         raise self._error
 
 
-def make(stm=None, task1_factory=None, face_search_factory=None):
+def make(stm=None, task1_factory=None, face_search_factory=None, fastest_factory=None):
     sent = []
     stm = stm or FakeStmDriver()
     controller = RunController(stm, sent.append)
-    dispatcher = Dispatcher(sent.append, stm, controller, task1_factory, face_search_factory)
+    dispatcher = Dispatcher(sent.append, stm, controller, task1_factory, face_search_factory, fastest_factory)
     return dispatcher, sent, stm, controller
 
 
@@ -92,3 +92,16 @@ def test_run_start_uses_the_factory_and_blocks_manual_until_stopped():
     assert stm.sent == ["S"]
     dispatcher.handle("f")
     assert stm.sent == ["S", "F"]
+
+
+def test_begin_fastest_starts_the_run_when_a_factory_is_wired():
+    run = BlockingRun()
+    dispatcher, sent, stm, controller = make(fastest_factory=lambda message: run)
+    dispatcher.handle("beginFastest")
+    assert run.started.wait(1.0)
+    assert stm.sent == []                       # not passed through to the STM
+    dispatcher.handle("f")
+    assert sent == ["MSG,Run in progress - STOP first"]
+    dispatcher.handle("s")
+    controller.join(2.0)
+    assert stm.sent == ["S"]

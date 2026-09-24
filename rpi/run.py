@@ -1,5 +1,5 @@
-"""Runs: the Task 1 executor, the A.5 face search, and the controller that
-holds at most one of them (spec §5.11, §6).
+"""Runs: the Task 1 executor, the A.5 face search, the Task 2 fastest car, and the
+controller that holds at most one of them (spec §5.11, §6).
 """
 
 import logging
@@ -9,10 +9,11 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from rpi import arena, protocol
 from rpi import pose as posing
+from rpi.arrow import ArrowSource, Consensus, read_arrow
 from rpi.camera import Camera, CameraError
 from rpi.model import FACES, START_POSE, Capture, Obstacle, Pose, Segment
 from rpi.planner_client import PlannerError
-from rpi.protocol import FaceSearch, ImageRec
+from rpi.protocol import BeginFastest, FaceSearch, ImageRec
 from rpi.stm_driver import StmAborted, StmDriver, StmError, encode_instruction
 from rpi.vision_worker import Result, VisionWorker
 
@@ -334,3 +335,156 @@ class FaceSearchRun(_DrivingRun):
             if result is not None:
                 return result
         return None
+
+
+# --- Task 2 ---------------------------------------------------------------------------
+
+class FastestRun(BaseRun):
+    """The Task 2 run (Task 2 spec §6): seek, read, round, seek, read, round, home.
+    A BaseRun, not a _DrivingRun: the planner is not involved and there is no pose to
+    report. The tablet sees only MSG lines."""
+
+    def __init__(
+        self,
+        message: BeginFastest,
+        stm: StmDriver,
+        camera: Camera,
+        send: Send,
+        source: ArrowSource,
+        consensus: Consensus,
+        stop_cm: Tuple[int, int],
+        attempt_s: float,
+        budget_s: float,
+        nudge_cm: int,
+        settle_s: float,
+    ) -> None:
+        super().__init__()
+        self._message = message
+        self._stm = stm
+        self._camera = camera
+        self._send = send
+        self._source = source
+        self._consensus = consensus
+        self._stop_cm = stop_cm
+        self._attempt_s = attempt_s
+        self._budget_s = budget_s
+        self._nudge_cm = nudge_cm
+        self._settle_s = settle_s
+
+    def _msg(self, text: str) -> None:
+        self._send(protocol.msg(text))
+
+    def run(self) -> None:
+        self._msg("Fastest: arrow source %s" % self._source.describe)
+        if not self._source.configured:
+            self._msg("Arrow source not configured")
+            return
+        reason = self._source.check()
+        if reason is not None:
+            self._msg(reason)
+            return
+        if not self._stm.available:
+            self._msg("STM unavailable")
+            return
+
+        started = time.monotonic()
+        for number, stop_cm in ((1, self._stop_cm[0]), (2, self._stop_cm[1])):
+            approached = self._approach(number, stop_cm)
+            if approached is None:
+                return
+            travelled, reading = approached
+            direction = self._read(number, stop_cm, travelled, reading)
+            if direction is None:
+                return
+            side = "L" if direction == "left" else "R"
+            ok, _ = self._call(lambda: self._stm.round(number, side, abort=self.abort))
+            if not ok:
+                return
+        self._msg("Returning")
+        ok, _ = self._call(lambda: self._stm.home(abort=self.abort))
+        if not ok:
+            return
+        self._msg("Parked in %.1f s (Pi clock)" % (time.monotonic() - started))
+
+    def _call(self, call: Callable[[], object]) -> Tuple[bool, object]:
+        """One STM call. (True, its result), or (False, None) after MSG,Stopped or
+        MSG,Aborted at <command>: <reply> - the command text is the driver's own."""
+        if self.abort.is_set():
+            self._msg("Stopped")
+            return False, None
+        try:
+            return True, call()
+        except StmAborted:
+            self._msg("Stopped")
+            return False, None
+        except StmError as error:
+            self._stm.stop()
+            self._msg("Aborted at %s: %s" % (error.command, error.reply))
+            return False, None
+
+    def _approach(self, number: int, stop_cm: int) -> Optional[Tuple[Optional[int], Optional[int]]]:
+        """Seek the obstacle, then ask the sensor. (travelled, reading); None once the run is over."""
+        self._msg("Seeking obstacle %d" % number)
+        ok, travelled = self._call(lambda: self._stm.seek(stop_cm, abort=self.abort))
+        if not ok:
+            return None
+        if travelled == 0:
+            self._msg("Obstacle %d already in range" % number)
+        elif travelled is None:
+            self._msg("Obstacle %d reached" % number)
+        else:
+            self._msg("Obstacle %d at %d cm" % (number, travelled))
+        ok, reading = self._call(lambda: self._stm.range_cm(abort=self.abort))
+        if not ok:
+            return None
+        LOG.info("obstacle %d: seek travelled=%s cm, sensor reads %s cm", number, travelled, reading)
+        if reading is None:
+            self._msg("Warning: no sensor reading")
+        elif reading > stop_cm + 15:
+            self._msg("Warning: sensor reads %d cm" % reading)
+        return travelled, reading
+
+    def _read(self, number: int, stop_cm: int, travelled: Optional[int],
+              reading: Optional[int]) -> Optional[str]:
+        """Read the arrow, nudging between attempts, within the budget. None once the run is over."""
+        self._msg("Reading arrow %d" % number)
+        end = time.monotonic() + self._budget_s
+        first = True
+        while True:
+            remaining = end - time.monotonic()
+            if remaining > 0:
+                direction = read_arrow(self._camera, self._source, self._consensus,
+                                       min(self._attempt_s, remaining), self.abort, self._settle_s)
+                if self.abort.is_set():
+                    self._msg("Stopped")
+                    return None
+                if direction is not None:
+                    self._msg("Arrow %d: %s" % (number, direction.upper()))
+                    return direction
+            if time.monotonic() >= end:
+                self._msg("Arrow %d not readable - stopped" % number)
+                return None
+            # No vote: move a little and look again (spec §6). Back is the norm; forward when
+            # the sensor says the obstacle is further than it should be, or once after a seek
+            # so short it may have stopped on a spurious echo - unless the sensor now sees
+            # the obstacle at the stop distance, in which case the stop was real (obstacle 1
+            # can legitimately be 60 cm out, a ~35 cm seek) and forward is the wrong way.
+            false_stop = (first and travelled is not None and 0 < travelled < 50
+                          and (reading is None or reading > stop_cm))
+            forward = false_stop or (reading is not None and reading > stop_cm + 10)
+            text = "Arrow %d: no vote, nudging %s %d cm" % (
+                number, "forward" if forward else "back", self._nudge_cm)
+            if false_stop:
+                text += " - possible false stop"
+            self._msg(text)
+            # [corrected during Task 2 generation] A plain FW/BW jog, not execute()/Straight -
+            # that would encode to FS/BS, Task 1's closed-loop planner straight, which is not
+            # what the spec's own "the BW (or FW) between attempts" means for a quick nudge.
+            nudge_line = "%s %d" % ("FW" if forward else "BW", self._nudge_cm)
+            ok, _ = self._call(lambda: self._stm.raw(nudge_line, abort=self.abort))
+            if not ok:
+                return None
+            ok, reading = self._call(lambda: self._stm.range_cm(abort=self.abort))   # the rule uses a fresh reading
+            if not ok:
+                return None
+            first = False

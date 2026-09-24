@@ -39,7 +39,10 @@ class StmUnavailable(StmError):
 _MANUAL_PLAIN = {"f": "F", "b": "B", "s": "S"}
 _MANUAL_ARCS = {"tl": "TL", "tr": "TR", "sl": "BL", "sr": "BR"}
 _ARC_VERBS = {"FORWARD_LEFT": "TL", "FORWARD_RIGHT": "TR", "BACKWARD_LEFT": "BL", "BACKWARD_RIGHT": "BR"}
-_MOTION_VERBS = ("FS", "BS", "FW", "BW", "TL", "TR", "BL", "BR", "PL", "PR")
+# [corrected during Task 2 generation] The Task 2 plan's own replacement of this line dropped
+# "BS" by omission - it would have broken is_motion("BS ...") and, with it, every Task 1
+# reverse straight (every segment after the first starts with one). Kept here.
+_MOTION_VERBS = ("FS", "BS", "FW", "BW", "TL", "TR", "BL", "BR", "PL", "PR", "SEEK", "ROUND", "HOME")
 
 
 def encode_instruction(instr: Instruction) -> str:
@@ -62,6 +65,54 @@ def encode_manual(token: str, turn_deg: int) -> str:
 def is_motion(line: str) -> bool:
     """True for commands whose completion the STM reports; F/B jogs are not."""
     return line.split(" ", 1)[0] in _MOTION_VERBS
+
+
+ROUND_SIDES = ("L", "R")
+
+
+def check_round_arguments(obstacle: int, side: str) -> None:
+    if obstacle not in (1, 2) or side not in ROUND_SIDES:
+        raise ValueError("round takes obstacle 1 or 2 and side L or R, got %r %r" % (obstacle, side))
+
+
+# Task 2 (Task 2 spec §3.1): proposed in docs/rpi-stm-handover.md §5.3. If the STM team
+# respells a verb, change it here, in _MOTION_VERBS and in SerialStmDriver._deadline.
+RANGE_LINE = "RANGE"
+
+
+def encode_seek(cm: int) -> str:
+    return "SEEK %d" % cm
+
+
+def encode_round(obstacle: int, side: str) -> str:
+    check_round_arguments(obstacle, side)
+    return "ROUND %d %s" % (obstacle, side)
+
+
+def encode_home() -> str:
+    return "HOME"
+
+
+def parse_seek_distance(reply: str) -> Optional[int]:
+    """DONE,SEEK,87 -> 87. Lenient: DONE,SEEK,87.0 -> 87; DONE,SEEK or DONE,SEEK,abc -> None."""
+    parts = reply.split(",")
+    if len(parts) < 3:
+        return None
+    try:
+        return int(float(parts[2]))
+    except ValueError:
+        return None
+
+
+def parse_range(reply: str) -> Optional[int]:
+    """RANGE,52 -> 52; anything else -> None."""
+    parts = reply.split(",")
+    if len(parts) < 2 or parts[0] != RANGE_LINE:
+        return None
+    try:
+        return int(float(parts[1]))
+    except ValueError:
+        return None
 
 
 # --- traffic mirror ----------------------------------------------------------------
@@ -103,6 +154,27 @@ class StmDriver(ABC):
         """A planner instruction. Returns when the STM says the motion is done.
         Raises StmAborted without sending anything if `abort` is already set."""
 
+    # -- Task 2 (Task 2 spec §3.1, §5.2) --
+
+    @abstractmethod
+    def seek(self, cm: int, abort: Optional[threading.Event] = None) -> Optional[int]:
+        """Forward until the range sensor reads <= cm, then stop. Returns the distance the
+        STM says it travelled (0 = it was already in range), or None when it gave no
+        number. Raises StmError on ERR/silence, StmAborted on stop."""
+
+    @abstractmethod
+    def round(self, obstacle: int, side: str, abort: Optional[threading.Event] = None) -> None:
+        """Round obstacle 1 or 2 on side "L" or "R"; returns when the STM says it is done."""
+
+    @abstractmethod
+    def home(self, abort: Optional[threading.Event] = None) -> None:
+        """The return leg into the carpark; returns when the STM says it is done."""
+
+    @abstractmethod
+    def range_cm(self, abort: Optional[threading.Event] = None) -> Optional[int]:
+        """One forward range reading, or None when the STM gives none. Never raises for a
+        missing or error reply - only StmAborted on stop and StmUnavailable on a dead link."""
+
     @abstractmethod
     def stop(self) -> None:
         """S now, from any thread; an in-flight execute() raises StmAborted."""
@@ -122,14 +194,28 @@ class StmDriver(ABC):
 class FakeStmDriver(StmDriver):
     """Completes moves on a timer. Records every line it would have sent."""
 
-    def __init__(self, straight_cm_per_s: float = 30.0, turn_s: float = 3.0, turn_deg: int = 45,
-                 on_line: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(
+        self,
+        straight_cm_per_s: float = 30.0,
+        turn_s: float = 3.0,
+        turn_deg: int = 45,
+        on_line: Optional[Callable[[str], None]] = None,
+        seek_distances: Optional[List[Optional[int]]] = None,
+        range_readings: Optional[List[Optional[int]]] = None,
+        manoeuvre_s: float = 0.0,
+    ) -> None:
         self._cm_per_s = straight_cm_per_s
         self._turn_s = turn_s
         self._turn_deg = turn_deg
         self._on_line = on_line
         self._abort = threading.Event()
         self.sent = []  # type: List[str]
+        # Task 2 scripts, popped one per call. An empty list or a None entry is "the STM gave
+        # no number". Manoeuvres take manoeuvre_s (0 so a laptop rehearsal runs straight through).
+        self.seek_distances = list(seek_distances or [])   # type: List[Optional[int]]
+        self.range_readings = list(range_readings or [])   # type: List[Optional[int]]
+        self._manoeuvre_s = manoeuvre_s
+        self.calls = []  # type: List[tuple]
 
     def _pretend(self, line: str, reply: str) -> None:
         """Record the line and mirror it with the reply the real board would give."""
@@ -180,6 +266,43 @@ class FakeStmDriver(StmDriver):
             raise StmAborted(line, "stopped")
         _mirror(self._on_line, "STM< DONE," + _verb(line))
 
+    # -- Task 2: the fake records intent in `calls`; StmAborted labels are the wire lines --
+
+    def _begin(self, call: tuple, label: str, abort: Optional[threading.Event]) -> None:
+        if abort is not None and abort.is_set():
+            raise StmAborted(label, "stopped")
+        self._abort.clear()      # as in execute(): only a stop() during this call aborts it
+        self.calls.append(call)  # after the clear, so a stop() that sees the call is never lost
+        if abort is not None and abort.is_set():
+            # A stop() that landed around the clear: RunController sets the run's flag
+            # before it calls stop(), so this catches what the clear may have erased.
+            raise StmAborted(label, "stopped")
+
+    def _elapse(self, label: str, duration: float) -> None:
+        if self._abort.wait(duration):
+            raise StmAborted(label, "stopped")
+
+    def seek(self, cm: int, abort: Optional[threading.Event] = None) -> Optional[int]:
+        label = encode_seek(cm)
+        self._begin(("seek", cm), label, abort)
+        travelled = self.seek_distances.pop(0) if self.seek_distances else None
+        duration = (travelled or 0) / self._cm_per_s if self._cm_per_s > 0 else 0.0
+        self._elapse(label, duration)
+        return travelled
+
+    def round(self, obstacle: int, side: str, abort: Optional[threading.Event] = None) -> None:
+        label = encode_round(obstacle, side)          # validates the arguments too
+        self._begin(("round", obstacle, side), label, abort)
+        self._elapse(label, self._manoeuvre_s)
+
+    def home(self, abort: Optional[threading.Event] = None) -> None:
+        self._begin(("home",), encode_home(), abort)
+        self._elapse(encode_home(), self._manoeuvre_s)
+
+    def range_cm(self, abort: Optional[threading.Event] = None) -> Optional[int]:
+        self._begin(("range",), RANGE_LINE, abort)
+        return self.range_readings.pop(0) if self.range_readings else None
+
     def stop(self) -> None:
         self._pretend("S", "ACK,S")
         self._abort.set()
@@ -223,6 +346,9 @@ class SerialStmDriver(StmDriver):
         completion: str = "ACK",
         ack_deadline_s: float = 1.0,
         turn_deadline_s: float = 10.0,
+        seek_deadline_s: float = 20.0,
+        route_deadline_s: float = 25.0,
+        home_deadline_s: float = 40.0,
         straight_deadline: Optional[Callable[[int], float]] = None,
         ping_deadline_s: float = 2.0,
         stop_drain_s: float = 0.5,
@@ -240,6 +366,9 @@ class SerialStmDriver(StmDriver):
         self._completion = completion.upper()
         self._ack_deadline_s = ack_deadline_s
         self._turn_deadline_s = turn_deadline_s
+        self._seek_deadline_s = seek_deadline_s
+        self._route_deadline_s = route_deadline_s
+        self._home_deadline_s = home_deadline_s
         self._straight_deadline = straight_deadline or (lambda cm: cm / 10.0 + 5.0)
         self._ping_deadline_s = ping_deadline_s
         self._stop_drain_s = stop_drain_s
@@ -407,6 +536,12 @@ class SerialStmDriver(StmDriver):
             return self._straight_deadline(amount)
         if verb in ("TL", "TR", "BL", "BR", "PL", "PR"):
             return self._turn_deadline_s
+        if verb == "SEEK":                     # Task 2 (spec §5.2): by verb, never by the number
+            return self._seek_deadline_s
+        if verb == "ROUND":
+            return self._route_deadline_s
+        if verb == "HOME":
+            return self._home_deadline_s
         return self._ack_deadline_s
 
     def _command(
@@ -425,10 +560,12 @@ class SerialStmDriver(StmDriver):
             self._write(line)
             try:
                 if motion and self._completion == "DONE":
-                    first = self._await(("ACK," + _verb(line), "ERR,"), self._ack_deadline_s, line)
+                    verb = _verb(line)
+                    # A DONE that arrives without its ACK (e.g. DONE,SEEK,0 "at once") is accepted.
+                    first = self._await(("ACK," + verb, "DONE," + verb, "ERR,"), self._ack_deadline_s, line)
                     if first.startswith("ERR,"):
                         raise StmError(line, first)
-                    final = self._await(("DONE," + _verb(line), "ERR,"), deadline_s, line)
+                    final = first if first.startswith("DONE,") else self._await(("DONE," + verb, "ERR,"), deadline_s, line)
                 else:
                     final = self._await(expect, deadline_s, line)
             except _NoReply:
@@ -476,6 +613,41 @@ class SerialStmDriver(StmDriver):
     def execute(self, instr: Instruction, abort: Optional[threading.Event] = None) -> None:
         line = encode_instruction(instr)
         self._command(line, self._deadline(line), motion=True, abort=abort)
+
+    # -- Task 2 (Task 2 spec §3.1, §5.2) --
+
+    def seek(self, cm: int, abort: Optional[threading.Event] = None) -> Optional[int]:
+        line = encode_seek(cm)
+        final = self._command(line, self._deadline(line), motion=True, abort=abort)
+        travelled = parse_seek_distance(final)
+        if travelled is None:
+            LOG.warning("STM: %s reply carries no distance: %s", line, final)
+        return travelled
+
+    def round(self, obstacle: int, side: str, abort: Optional[threading.Event] = None) -> None:
+        line = encode_round(obstacle, side)
+        self._command(line, self._deadline(line), motion=True, abort=abort)
+
+    def home(self, abort: Optional[threading.Event] = None) -> None:
+        line = encode_home()
+        self._command(line, self._deadline(line), motion=True, abort=abort)
+
+    def range_cm(self, abort: Optional[threading.Event] = None) -> Optional[int]:
+        """A data line, not a motion: awaited by its own prefix, and a missing or error
+        reply is None with a log line - no stop, no resync."""
+        with self._lock:
+            if (abort is not None and abort.is_set()) or self._aborted.is_set():
+                raise StmAborted(RANGE_LINE, "stopped")
+            self._write(RANGE_LINE)
+            try:
+                reply = self._await((RANGE_LINE + ",", "ERR,"), self._ack_deadline_s, RANGE_LINE)
+            except _NoReply:
+                LOG.warning("STM: no reply to %s", RANGE_LINE)
+                return None
+        if reply.startswith("ERR,"):
+            LOG.warning("STM: %s -> %s", RANGE_LINE, reply)
+            return None
+        return parse_range(reply)
 
     def stop(self) -> None:
         self._aborted.set()

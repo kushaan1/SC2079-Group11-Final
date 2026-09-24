@@ -353,3 +353,128 @@ def test_raw_silence_is_reported_after_a_stop_and_resync():
         assert fake.written == ["PING", "RANGE", "S", "PING"]
     finally:
         driver.close()
+
+
+# --- Task 2 (Task 2 spec §3.1, §5.2) --------------------------------------------------------
+
+def task2_stm(line):
+    """The handover's proposed firmware: PONG; ACK then DONE for the Task 2 verbs; RANGE data."""
+    if line == "PING":
+        return ["PONG"]
+    if line.startswith("SEEK"):
+        return ["ACK,SEEK", "ENC,A,300,B,298", "DONE,SEEK,87"]
+    if line.startswith("ROUND") or line == "HOME":
+        verb = line.split(" ")[0]
+        return ["ACK," + verb, "DONE," + verb]
+    if line == "RANGE":
+        return ["RANGE,52"]
+    return ["ACK," + line.split(" ")[0]]
+
+
+def test_seek_waits_for_done_and_parses_the_distance():
+    driver, fake = make(task2_stm, completion="DONE")
+    driver.start()
+    try:
+        assert driver.seek(30) == 87
+        assert fake.written == ["PING", "SEEK 30"]
+    finally:
+        driver.close()
+
+
+def test_seek_already_in_range_is_zero_and_a_missing_number_is_none():
+    replies = iter([["ACK,SEEK", "DONE,SEEK,0"], ["ACK,SEEK", "DONE,SEEK"]])
+
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        return next(replies)
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.seek(30) == 0
+        assert driver.seek(30) is None
+    finally:
+        driver.close()
+
+
+def test_seek_done_without_an_ack_is_accepted():
+    def responder(line):
+        return ["PONG"] if line == "PING" else ["DONE,SEEK,0"]     # "at once", no ACK first
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.seek(30) == 0
+        assert fake.written == ["PING", "SEEK 30"]                 # no S, no resync
+    finally:
+        driver.close()
+
+
+def test_seek_error_raises_with_the_line_and_reply():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        return ["ACK,SEEK", "ERR,TIMEOUT"]
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        with pytest.raises(StmError) as info:
+            driver.seek(30)
+        assert (info.value.command, info.value.reply) == ("SEEK 30", "ERR,TIMEOUT")
+    finally:
+        driver.close()
+
+
+def test_round_and_home_are_acknowledged_by_verb():
+    driver, fake = make(task2_stm, completion="DONE")
+    driver.start()
+    try:
+        driver.round(2, "R")
+        driver.home()
+        assert fake.written == ["PING", "ROUND 2 R", "HOME"]
+    finally:
+        driver.close()
+
+
+def test_range_returns_the_reading_without_an_ack():
+    driver, fake = make(task2_stm, completion="DONE")
+    driver.start()
+    try:
+        assert driver.range_cm() == 52
+        assert fake.written == ["PING", "RANGE"]
+    finally:
+        driver.close()
+
+
+def test_range_without_a_reply_is_none_and_does_not_resync():
+    def responder(line):
+        return ["PONG"] if line == "PING" else []
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.range_cm() is None
+        assert fake.written == ["PING", "RANGE"]          # no S, no second PING
+    finally:
+        driver.close()
+
+
+def test_range_error_reply_is_none():
+    def responder(line):
+        return ["PONG"] if line == "PING" else ["ERR,UNKNOWN"]
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.range_cm() is None
+    finally:
+        driver.close()
+
+
+def test_task2_deadlines_are_by_verb():
+    driver, _ = make(seek_deadline_s=20.0, route_deadline_s=25.0, home_deadline_s=40.0)
+    assert driver._deadline("SEEK 30") == 20.0
+    assert driver._deadline("ROUND 2 R") == 25.0        # by verb, so the digit never means a straight
+    assert driver._deadline("HOME") == 40.0

@@ -8,12 +8,13 @@ from types import SimpleNamespace
 from typing import List, Optional
 
 from rpi import config, protocol
+from rpi.arrow import DIRECTIONS, ArrowSource, Consensus, FakeArrowSource, HttpArrowSource, TfliteArrowSource
 from rpi.bt_link import BluetoothLink
 from rpi.camera import Camera, CameraError, FakeCamera, PiCameraLegacy
 from rpi.dispatcher import Dispatcher
 from rpi.planner_client import PlannerClient
 from rpi.protocol import ImageRec
-from rpi.run import FaceSearchRun, RunController, RunState, Task1Run
+from rpi.run import FaceSearchRun, FastestRun, RunController, RunState, Task1Run
 from rpi.stm_driver import FakeStmDriver, SerialStmDriver, StmDriver, StmUnavailable
 from rpi.vision_client import VisionClient
 from rpi.vision_worker import VisionWorker
@@ -47,6 +48,9 @@ def make_stm(fake: bool, on_link_change=None, on_line=None) -> StmDriver:
         completion=config.STM_COMPLETION,
         ack_deadline_s=config.STM_ACK_DEADLINE_S,
         turn_deadline_s=config.STM_TURN_DEADLINE_S,
+        seek_deadline_s=config.STM_SEEK_DEADLINE_S,
+        route_deadline_s=config.STM_ROUTE_DEADLINE_S,
+        home_deadline_s=config.STM_HOME_DEADLINE_S,
         straight_deadline=config.stm_straight_deadline_s,
         ping_deadline_s=config.STM_PING_DEADLINE_S,
         stop_drain_s=config.STM_STOP_DRAIN_S,
@@ -64,6 +68,22 @@ def make_camera(fake: bool) -> Camera:
     return PiCameraLegacy(config.CAMERA_WIDTH, config.CAMERA_HEIGHT, config.CAMERA_ROTATION)
 
 
+def make_arrow_source(fake_arrows: Optional[List[str]]) -> ArrowSource:
+    """--fake-arrows wins; otherwise RPI_ARROW_SOURCE picks the laptop's server or the on-Pi model."""
+    if fake_arrows is not None:
+        return FakeArrowSource.for_reads(fake_arrows, config.ARROW_REQUIRED, cycle=True)
+    if config.ARROW_SOURCE == "tflite":
+        # [RULE DELTA Task 2 spec §0 #3] record_url: every frame this source decides on is
+        # also POSTed to the PC server for storage, independent of the decision, so Task 2's
+        # RAW-image-with-bounding-box requirement is met even though this source never
+        # otherwise talks to the laptop.
+        return TfliteArrowSource(config.ARROW_MODEL_PATH, config.ARROW_LABELS_PATH,
+                                 record_url=config.VISION_URL)
+    if config.ARROW_SOURCE != "http":
+        LOG.warning("unknown RPI_ARROW_SOURCE %r; using http", config.ARROW_SOURCE)
+    return HttpArrowSource(config.VISION_URL, config.ARROW_HTTP_TIMEOUT_S)
+
+
 def replay(send, vision: VisionWorker, state: RunState, controller: RunController) -> None:
     """After a Bluetooth reconnect: every target so far, the latest pose, then a note (spec §6.1 step 8)."""
     for result in vision.results():
@@ -74,7 +94,7 @@ def replay(send, vision: VisionWorker, state: RunState, controller: RunControlle
     send(protocol.msg("Reconnected - run in progress" if controller.active() else "Reconnected"))
 
 
-def build(fake_stm: bool, fake_camera: bool) -> SimpleNamespace:
+def build(fake_stm: bool, fake_camera: bool, fake_arrows: Optional[List[str]] = None) -> SimpleNamespace:
     """Construct everything. Opens nothing: links open in start()/run_forever()."""
     state = RunState()
     wiring = SimpleNamespace(state=state)
@@ -94,6 +114,9 @@ def build(fake_stm: bool, fake_camera: bool) -> SimpleNamespace:
     planner = PlannerClient(config.PLANNER_URL, config.PLANNER_TIMEOUT_S, allow_stub=config.ALLOW_STUB_PLANNER)
     wiring.stm, wiring.camera, wiring.planner = stm, camera, planner
 
+    arrow_source = make_arrow_source(fake_arrows)
+    wiring.arrow_source = arrow_source
+
     vision = VisionWorker(VisionClient(config.VISION_URL, config.VISION_TIMEOUT_S), link.send, config.CAPTURE_FRAMES)
     controller = RunController(stm, link.send)
 
@@ -108,8 +131,20 @@ def build(fake_stm: bool, fake_camera: bool) -> SimpleNamespace:
         verdict_timeout_s = config.VISION_TIMEOUT_S * config.CAPTURE_FRAMES + 2.0
         return FaceSearchRun(message, planner, verdict_timeout_s, **driving())
 
-    dispatcher = Dispatcher(link.send, stm, controller,
-                            task1_factory=task1_factory, face_search_factory=face_search_factory)
+    def fastest_factory(message):
+        # A scripted source is consumed per frame, so a run stopped mid-read would leave the
+        # next run's script phase-shifted (and its sides swapped): the fake is rebuilt per run.
+        # The real sources are shared - the TFLite one keeps its loaded model.
+        source = arrow_source if fake_arrows is None else make_arrow_source(fake_arrows)
+        return FastestRun(
+            message, stm, camera, link.send, source,
+            Consensus(config.ARROW_REQUIRED, config.ARROW_WINDOW, config.ARROW_MIN_CONFIDENCE),
+            (config.T2_STOP1_CM, config.T2_STOP2_CM),
+            config.ARROW_ATTEMPT_S, config.ARROW_BUDGET_S, config.ARROW_NUDGE_CM, config.CAPTURE_SETTLE_S,
+        )
+
+    dispatcher = Dispatcher(link.send, stm, controller, task1_factory=task1_factory,
+                            face_search_factory=face_search_factory, fastest_factory=fastest_factory)
 
     wiring.link = link
     wiring.vision = vision
@@ -119,19 +154,31 @@ def build(fake_stm: bool, fake_camera: bool) -> SimpleNamespace:
     return wiring
 
 
+def fake_arrows_argument(text: str) -> List[str]:
+    """'left,right' -> ['left', 'right']: one direction per arrow read, case-insensitive."""
+    directions = [item.strip().lower() for item in text.split(",") if item.strip()]
+    if not directions or any(direction not in DIRECTIONS for direction in directions):
+        raise argparse.ArgumentTypeError("expected a comma-separated list of left/right, got %r" % text)
+    return directions
+
+
 def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="rpi", description="Group 11 Raspberry Pi program")
     parser.add_argument("--fake-stm", action="store_true", help="time moves instead of driving the STM")
     parser.add_argument("--fake-camera", action="store_true", help="return a fixture JPEG instead of the camera")
+    parser.add_argument("--fake-arrows", type=fake_arrows_argument, default=None, metavar="LEFT,RIGHT",
+                        help="script the Task 2 arrow reads (one per obstacle, repeating every run) "
+                             "instead of recognising them")
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     configure_logging()
-    wiring = build(args.fake_stm, args.fake_camera)
-    LOG.info("starting; fake_stm=%s fake_camera=%s bt=%s stm=%s",
-             args.fake_stm, args.fake_camera, config.BT_PORT, config.STM_PORT)
+    wiring = build(args.fake_stm, args.fake_camera, args.fake_arrows)
+    LOG.info("starting; fake_stm=%s fake_camera=%s fake_arrows=%s bt=%s stm=%s arrows=%s",
+             args.fake_stm, args.fake_camera, args.fake_arrows, config.BT_PORT, config.STM_PORT,
+             wiring.arrow_source.describe)
     try:
         wiring.stm.start()
     except StmUnavailable as error:

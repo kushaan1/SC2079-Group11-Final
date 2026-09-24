@@ -20,9 +20,16 @@ class FakeSession:
         self.response = response
         self.error = error
         self.calls = []
+        self.gets = []
 
     def post(self, url, files=None, data=None, timeout=None):
         self.calls.append((url, files, data, timeout))
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+    def get(self, url, timeout=None):
+        self.gets.append((url, timeout))
         if self.error is not None:
             raise self.error
         return self.response
@@ -74,3 +81,29 @@ def test_unconfigured_client_is_an_error_without_a_request():
     assert client.configured is False
     assert client.detect(b"", "B1") == Verdict("error")
     assert session.calls == []
+
+
+# --- health (Task 2 spec §3.2) ---------------------------------------------------------
+
+def test_health_ok_is_none():
+    session = FakeSession(FakeResponse(200, {"status": "ok"}))
+    client = VisionClient("http://laptop:4000/", 10.0, session=session)
+    assert client.health(1.0) is None
+    assert session.gets == [("http://laptop:4000/health", 1.0)]
+
+
+def test_health_unreachable():
+    import requests
+    session = FakeSession(error=requests.ConnectionError("refused"))
+    assert VisionClient("http://laptop:4000", 10.0, session=session).health(1.0) == "Vision server unreachable"
+
+
+def test_health_bad_status():
+    session = FakeSession(FakeResponse(503, None))
+    assert VisionClient("http://laptop:4000", 10.0, session=session).health(1.0) == "Vision server unhealthy (HTTP 503)"
+
+
+def test_health_unconfigured_makes_no_request():
+    session = FakeSession(FakeResponse(200, {"status": "ok"}))
+    assert VisionClient("", 10.0, session=session).health(1.0) == "Vision URL not configured"
+    assert session.gets == []

@@ -63,6 +63,9 @@ STRATEGY_FALLBACK = _text("STRATEGY_FALLBACK", "optimal")   # what turnInPlace m
 STM_COMPLETION = _text("STM_COMPLETION", "DONE").upper()
 STM_ACK_DEADLINE_S = _number("STM_ACK_DEADLINE_S", 1.0)
 STM_TURN_DEADLINE_S = _number("STM_TURN_DEADLINE_S", 10.0)
+STM_SEEK_DEADLINE_S = _number("STM_SEEK_DEADLINE_S", 20.0)     # Task 2 spec §3.1
+STM_ROUTE_DEADLINE_S = _number("STM_ROUTE_DEADLINE_S", 25.0)
+STM_HOME_DEADLINE_S = _number("STM_HOME_DEADLINE_S", 40.0)
 STM_PING_DEADLINE_S = _number("STM_PING_DEADLINE_S", 2.0)
 STM_STOP_DRAIN_S = _number("STM_STOP_DRAIN_S", 0.5)
 # Slowest straight speed the STM is expected to manage, for the DONE deadline below. Time an
@@ -91,6 +94,29 @@ CAPTURE_FRAMES = int(_number("CAPTURE_FRAMES", 3))
 CAMERA_WIDTH = int(_number("CAMERA_WIDTH", 640))
 CAMERA_HEIGHT = int(_number("CAMERA_HEIGHT", 480))
 CAMERA_ROTATION = int(_number("CAMERA_ROTATION", 0))
+
+# --- Task 2 arrows (Task 2 spec §5.3) -------------------------------------------
+_MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+# Defaults to the on-Pi model: Jerick's image-rec architecture (README's diagram,
+# training/README's deployment table) builds no PC-server path for Task 2 arrows at all -
+# the PC server only ever loads the Task 1 classifier. Confirm this with him alongside
+# asking for best_arrows.tflite + arrow-labels.json; "http" remains available as a fallback.
+ARROW_SOURCE = _text("ARROW_SOURCE", "tflite").strip().lower()    # http | tflite
+ARROW_HTTP_TIMEOUT_S = _number("ARROW_HTTP_TIMEOUT_S", 2.0)     # per frame; the arrow source's own client
+ARROW_MODEL_PATH = _text("ARROW_MODEL_PATH", os.path.join(_MODELS_DIR, "best_arrows.tflite"))
+ARROW_LABELS_PATH = _text("ARROW_LABELS_PATH", os.path.join(_MODELS_DIR, "arrow-labels.json"))
+ARROW_MIN_CONFIDENCE = _number("ARROW_MIN_CONFIDENCE", 0.75)
+ARROW_REQUIRED = int(_number("ARROW_REQUIRED", 3))               # the vote: agreeing frames...
+ARROW_WINDOW = int(_number("ARROW_WINDOW", 5))                   # ...out of the last N
+ARROW_ATTEMPT_S = _number("ARROW_ATTEMPT_S", 8.0)                # one read attempt before a nudge
+ARROW_BUDGET_S = _number("ARROW_BUDGET_S", 45.0)                 # all attempts for one arrow
+ARROW_NUDGE_CM = int(_number("ARROW_NUDGE_CM", 10))              # the BW (or FW) between attempts
+T2_STOP1_CM = int(_number("T2_STOP1_CM", 30))                    # the seek thresholds: where the
+T2_STOP2_CM = int(_number("T2_STOP2_CM", 30))                    # arrow is read from
+# [RULE DELTA Task 2 spec §0 #1] Obstacle 2's length is disclosed only after the 2-minute prep,
+# right before the run - never a value chosen before competition day. Only read if/when the
+# STM team's ROUND 2 takes a length argument (spec §3.1, §5.2 open item); unset by default.
+T2_OBSTACLE2_LENGTH_CM = _optional_int("T2_OBSTACLE2_LENGTH_CM", None)
 
 # --- logging ------------------------------------------------------------------
 LOG_FILE = _text("LOG_FILE", "/home/pi/rpi.log")

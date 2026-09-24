@@ -45,6 +45,19 @@ class VisionClient:
     def configured(self) -> bool:
         return bool(self._base)
 
+    def health(self, timeout_s: float) -> Optional[str]:
+        """None if GET /health answers 200; else why not, worded for the tablet. Never raises."""
+        if not self.configured:
+            return "Vision URL not configured"
+        try:
+            response = self._session.get(self._base + "/health", timeout=timeout_s)
+        except requests.RequestException as error:
+            LOG.warning("vision server health check failed: %s", error)
+            return "Vision server unreachable"
+        if response.status_code != 200:
+            return "Vision server unhealthy (HTTP %d)" % response.status_code
+        return None
+
     def detect(self, jpeg: bytes, object_id: str) -> Verdict:
         if not self.configured:
             return Verdict("error")

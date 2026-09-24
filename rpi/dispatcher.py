@@ -24,12 +24,14 @@ class Dispatcher:
         controller: RunController,
         task1_factory: Optional[RunFactory] = None,
         face_search_factory: Optional[RunFactory] = None,
+        fastest_factory: Optional[RunFactory] = None,
     ) -> None:
         self._send = send
         self._stm = stm
         self._controller = controller
         self._task1_factory = task1_factory
         self._face_search_factory = face_search_factory
+        self._fastest_factory = fastest_factory
 
     def handle(self, line: str) -> None:
         message = protocol.parse(line)
@@ -59,6 +61,10 @@ class Dispatcher:
             return
 
         if isinstance(message, BeginFastest):
+            if self._fastest_factory is not None:
+                self._start("beginFastest", self._fastest_factory, message)
+                return
+            # No Task 2 in this build: the bare token goes to the STM, as in the manual-drive milestone.
             if self._controller.active():
                 self._send(protocol.msg(BUSY))
                 return

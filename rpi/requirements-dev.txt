@@ -1,3 +1,7 @@
 -r requirements.txt
 pytest>=6.0
 Pillow>=8.0
+# Exercises the TFLite arrow source's numeric tests instead of skipping them (Task 2). Not
+# needed on the Pi itself - there, python3-opencv (apt) brings NumPy alongside cv2 and
+# tflite-runtime, per rpi/README.md's "Task 2 on the Pi" section.
+numpy>=1.20

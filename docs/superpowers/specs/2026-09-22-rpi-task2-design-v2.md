@@ -193,7 +193,7 @@ Two sources, one interface (§5.1):
   rather than imported, because his package is also named `rpi` and two
   top-level `rpi` packages cannot coexist in one interpreter. Strictly
   optional behind `configured` (model file present, `tflite_runtime`
-  importable).
+  importable); `check()` additionally needs `cv2` and a model that loads.
 
 **[RULE DELTA §0 #3] Every read frame reaches the PC server, whichever
 source decides.** `docs/rules/rules.md` Task 2 rule 8 and FAQ 16 require the RAW
@@ -311,13 +311,19 @@ def read_arrow(camera, source, consensus, timeout_s, abort) -> Optional[str]
   the straight formula.)
 - `FakeStmDriver` gains `seek_distances: List[int]` (scripted, popped per
   seek; `0` models "already in range") and `range_readings: List[int]`;
-  records lines as today; timed like the rest.
+  records the calls as tuples in `calls` (`("seek", 30)`, `("range",)`,
+  `("round", 1, "L")`, `("home",)`) rather than wire lines, so the run's tests
+  survive a respelt verb; timed like the rest.
+- **[corrected during implementation]** The nudge in §6/§5.4 is sent as a raw
+  `FW`/`BW` line via `StmDriver.raw()`, not `execute()` with a `Straight` —
+  `execute()` always encodes a `Straight` to `FS`/`BS` (Task 1's closed-loop
+  planner verb), which is not what a quick positioning nudge means here.
 
 ### 5.3 `rpi/config.py` additions
 
 | Key | Default | |
 |---|---|---|
-| `ARROW_SOURCE` | `http` **— ⚠ unresolved, see §0** | `http` or `tflite`. **This default is unconfirmed against Jerick's actual `image-rec` architecture**, which builds no PC-server path for Task 2 arrows at all (only a dedicated on-Pi TFLite model). Do not treat `http` as settled until this is raised with Jerick — either the PC server gains an arrow-serving route, or this default should be `tflite` |
+| `ARROW_SOURCE` | `tflite` **[changed 2026-09-25]** | `http` or `tflite`. Defaults to the on-Pi model, matching Jerick's `image-rec` architecture (no PC-server path exists for Task 2 arrows). Still worth a quick confirmation with him alongside asking for `best_arrows.tflite` + `arrow-labels.json` — `http` stays available as a fallback (`RPI_ARROW_SOURCE=http`) if that changes |
 | `ARROW_HTTP_TIMEOUT_S` | `2` | per frame; the arrow source's own client |
 | `ARROW_MODEL_PATH` / `ARROW_LABELS_PATH` | `rpi/models/best_arrows.tflite` / `rpi/models/arrow-labels.json` | tflite only |
 | `ARROW_MIN_CONFIDENCE` | `0.75` | Jerick's default |
@@ -375,17 +381,23 @@ Rules applied at each step:
 - **Abort check** before every STM command and between frames; on STOP the
   run sends `MSG,Stopped` and ends (the controller has already sent `S`).
 - **Arrow not decided within `ARROW_ATTEMPT_S`:** nudge and try again —
-  `BW 10` normally, `FW 5` if `RANGE` reads more than `stop_cm + 10` — then
-  reset the vote and read again, until `ARROW_BUDGET_S` is spent; then
-  `MSG,Arrow 1 not readable - stopped` and the run ends. Waiting is cheaper
-  than guessing; a guess voids the run and the retry is shared with Task 1.
+  `BW 10` normally, `FW 10` if `RANGE` reads more than `stop_cm + 10` (both
+  nudges are `ARROW_NUDGE_CM`; `RANGE` is read again after each nudge so the
+  rule uses a fresh reading) — then reset the vote and read again, until
+  `ARROW_BUDGET_S` is spent; then `MSG,Arrow 1 not readable - stopped` and the
+  run ends. Waiting is cheaper than guessing; a guess voids the run and the
+  retry is shared with Task 1.
   **[RULE DELTA] A wrong turn is an automatic disqualification here
   (`docs/rules/rules.md` FAQ 10), not just an invalid run as the original phrased
   it — the same conclusion, stated with the rules' own severity.**
   Each nudge is narrated: `MSG,Arrow 1: no vote, nudging back 10 cm`.
 - **`DONE,SEEK,0`:** narrated as "already in range", not "at 0 cm".
-- **A short seek followed by no arrow** (`travelled < 50`): the first nudge
-  is forward, and the message adds "possible false stop".
+- **`DONE,SEEK` without a number:** narrated as `Obstacle 1 reached`; the
+  missing number is logged, not reported.
+- **A short seek followed by no arrow** (`0 < travelled < 50`, and the sensor
+  does not read `stop_cm` or less — obstacle 1 at its nearest is a genuine
+  ~35 cm seek): the first nudge is forward, and the message adds "possible
+  false stop".
 - **`RANGE` disagrees with the stop distance** (reading > `stop_cm + 15`, or
   no reading): `MSG,Warning: sensor reads 52 cm`; the run continues — the
   arrow read decides whether it was really in front of the obstacle.
@@ -400,7 +412,7 @@ Rules applied at each step:
 | vision server down at start | run pre-flight | none | `Vision server unreachable` |
 | arrow source not configured | run pre-flight | none | `Arrow source not configured` |
 | STM link down at start | run pre-flight | none | `STM unavailable` |
-| no vote in one attempt | run | `BW 10` / `FW 5` | `Arrow n: no vote, nudging back 10 cm` |
+| no vote in one attempt | run | `BW 10` / `FW 10` | `Arrow n: no vote, nudging back 10 cm` |
 | no vote within the budget | run | none | `Arrow n not readable - stopped` |
 | `DONE,SEEK` lacks a distance | driver | none | nothing (logged) |
 | `RANGE` far from `stop_cm` | run | none | `Warning: sensor reads N cm`, continues |
