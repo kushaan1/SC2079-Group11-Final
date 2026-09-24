@@ -301,7 +301,7 @@ import. No other module reads the environment.
 | `MOTOR_A_PCT` / `MOTOR_B_PCT` / `STEER_STEPS` | unset | pushed to the STM at startup when set; unset = keep the firmware's defaults |
 | `STM_COMPLETION` | `DONE` | `DONE`: ACK on receipt, a `DONE,<verb>` line on completion, `ERR,BUSY` / `ERR,STOPPED` as errors — what the firmware does (S3). `ACK`: the ACK line itself arrives when the motion ends; kept for an older firmware |
 | `STM_ACK_DEADLINE_S` / `STM_PING_DEADLINE_S` | `1` / `2` | reply deadlines for non-motion commands and for `PING` |
-| `TURN_RADIUS_CM` | `{FL: 39, FR: 40, BL: 37, BR: 39}` | dead-reckoning arc displacement per direction; mirrors the planner's `config.TURN_RADIUS_CM` and must change with it |
+| `TURN_RADIUS_CM` | `{FL: 42, FR: 56, BL: 41, BR: 55}` **[corrected 2026-09-25]** | dead-reckoning arc displacement per direction; mirrors the planner's `config.TURN_RADIUS_CM`, measured on this chassis 2026-09-18. Was `{FL: 39, FR: 40, BL: 37, BR: 39}` (prior-year placeholders) until this fix — both `rpi/config.py`'s actual default and this table were stale together |
 | `CAPTURE_SETTLE_S` | `0.3` | pause before the first frame |
 | `CAPTURE_FRAMES` | `3` | frames per obstacle |
 | `CAMERA_WIDTH/HEIGHT/ROTATION` | `640` / `480` / `0` | |
