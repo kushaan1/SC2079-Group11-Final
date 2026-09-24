@@ -12,18 +12,25 @@ conversation that produced it, this document wins.
 
 ---
 
-## 0. Rule deltas vs. the 2026-09-17 original (added 2026-09-22)
+## 0. Rule deltas vs. the 2026-09-17 original (added 2026-09-22; extended 2026-09-25)
 
-Two gaps, found by checking the original design against `docs/rules/rules.md`:
+Two gaps, found by checking the original design against `docs/rules/rules.md`, plus a third found on
+a second pass on 2026-09-25 after cross-checking the transcription against the professor's own PDF
+upload (`Rules for the Task 1 and Task 2.pdf`) and against the actual current state of the STM
+(`carl-stm`) and algorithms (`kejun-experimental-algo`) branches:
 
 | # | Rules say | Original design | What changes |
 |---|---|---|---|
 | 1 | Task 1 scores **+10 per correct image ID, −10 per wrong ID** (`docs/rules/rules.md` FAQ 3–4) | `vision_worker.decide()` reports the highest-confidence target seen, with no minimum confidence | Needs a confidence floor. Below it, report `no_detection` (0 points) rather than a guess (risking −10). See §5.8 below |
 | 2 | The robot **must stop by itself within 6 minutes** to qualify; a manual stop makes the run "incomplete" even if recognition succeeded (`docs/rules/rules.md` rule 10, FAQ 15) | `Task1Run` drives the whole plan, then waits up to `VISION_DRAIN_TIMEOUT_S` for outstanding verdicts, with no ceiling tied to the competition's 6-minute cap | Needs an explicit run-level deadline, from the moment the run starts, that force-stops the robot and reports `Done` (even if incomplete) at or before 6 minutes. See §6.1 step 6a below |
+| 3 | **[found 2026-09-25]** Task 1 shares Task 2's "stay inside the yellow-box CARPARK zone for the whole 2-minute prep" rule — moving out during calibration is an automatic disqualification (official PDF rule 3, FAQ 9: *"the CARPARK zone (Yellow box for task 1)"*) | Not mentioned anywhere in the original design | No code change: nothing in `rpi/` drives the wheels before the tablet's `imageRec` start is received, so this is already satisfied. It's a **procedural caution for whoever operates the tablet** during setup — the manual-drive tokens (§4.3) must not be used to test the robot outside the yellow box during prep |
 
-Neither is a redesign — both are additions to `Task1Run` and `vision_worker`. The rest of this
-document is shuenwei's original, with these two points folded into the relevant sections below
-(§5.8 and §6.1) rather than left as a separate patch.
+Neither #1 nor #2 is a redesign — both are additions to `Task1Run` and `vision_worker`. #3 needs no
+code change. The rest of this document is shuenwei's original, with #1 and #2 folded into the
+relevant sections below (§5.8 and §6.1) rather than left as a separate patch. Two further
+corrections from the 2026-09-25 cross-branch pass are folded into §3.2 and §3.3 below — not rule
+deltas, since they're not about the competition rules, but about `carl-stm` and
+`kejun-experimental-algo` having moved past what this document assumed when shuenwei wrote it.
 
 ---
 
@@ -103,7 +110,7 @@ command. Max 31 bytes per line.
 | `F` / `B` | `ACK,F` / `ACK,B` | 500 ms jog; replies on receipt; queues if busy |
 | `S` | `ACK,S` | stops anything in progress; accepted any time |
 | `FW <cm>` | `ACK,FW` or `ERR,…` | encoder closed-loop straight |
-| `BW <cm>` | `ACK,BW` or `ERR,…` | **not in the handover doc — requested** |
+| `BW <cm>` | `ACK,BW` or `ERR,…` | **confirmed built — see note below** |
 | `TL <deg>` `TR <deg>` `BL <deg>` `BR <deg>` | `ACK,TL` … or `ERR,…` | gyro-timed arcs, 45–360 |
 | `MA <pct>` `MB <pct>` `AS <n>` | `ACK,…` | motor trim and steering lock, not persisted across reboot |
 
@@ -111,15 +118,16 @@ Errors: `ERR,RANGE`, `ERR,GYRO`, `ERR,TIMEOUT`, `ERR,UNKNOWN`. Measured
 commands sent while the STM is busy are **silently dropped** (their known
 issue), so the driver never sends one until the previous has replied.
 
-**Open with the STM team** — the program is written assuming the answers in
-bold, and `stm_driver.py` is the only file that changes if they differ:
+**Confirmed with the STM team as of 2026-09-25, by reading `carl-stm`'s `main.c` directly** — this
+table originally listed these as open assumptions, written before `carl-stm` had built and calibrated
+them. All three are real, tested, and in the firmware today, not just assumed:
 
-| # | Question | Assumed |
+| # | Question | Confirmed |
 |---|---|---|
-| S1 | `BW <cm>` exists | **yes** — Task 1 cannot run without it: every segment after the first starts with a reverse |
-| S2 | `FW` range | **1–200** (handover says 80–120, which is the A.3 test range) |
-| S3 | `ACK,FW` / `ACK,TL` timing | **Confirmed 2026-09-17: on receipt**, with `DONE,<verb>` on completion — the DONE model below. `STM_COMPLETION` defaults to `DONE`. |
-| S4 | After `S` interrupts a move, does the interrupted move also reply? | **unknown** — the driver drains and resyncs after every stop, so either answer works |
+| S1 | `BW <cm>` exists | **Yes.** `Drive_BackwardCm` is implemented with its own calibration, separate from `FW`'s: `BW_COUNTS_PER_100CM = 7418`, derived from a 12-run tape-measure calibration dated 2026-09-20 (`FW 80/100/110/120` and `BW` run separately after `BW` was found to undershoot more than `FW`) |
+| S2 | `FW`/`BW` range | **Confirmed exactly 5–200**: `FW_CM_MIN = 5`, `FW_CM_MAX = 200` in `main.c`, enforced with `ERR,RANGE` outside it |
+| S3 | `ACK,FW` / `ACK,TL` timing | **Confirmed**: the firmware sends `ACK,<verb>` immediately on parsing the command, runs the motion, then sends `DONE,<verb>` (or the jog-specific `DONE,F`/`DONE,B`) when it physically finishes — exactly the `STM_COMPLETION=DONE` model this document assumes |
+| S4 | After `S` interrupts a move, does the interrupted move also reply? | **Confirmed 2026-09-25: no.** `main.c`'s `Drive_CmAt`, `Motors_Forward`/`Backward`, `Arc_Run` and `Pivot_Run` all gate their completion reply on `if (!drive_abort)` — an `S`-interrupted move sends no `DONE` and no second `ACK`. The driver's drain-and-resync after every stop still applies and still works either way, so this changes nothing in `stm_driver.py`, but it's no longer an open question |
 
 ### 3.3 Planner contract — the parts used
 
@@ -144,15 +152,15 @@ still works.
 | # | Fact | Where |
 |---|---|---|
 | P1 | Any `robot` pose inside the grid, with any subset of obstacles (≥ 1), is a valid request. Nothing assumes the start zone or the full layout. | `pathfinding_controller.py` `_construct_world` |
-| P2 | `segments[].end` (= `path[-1]`) is the robot's **centre** in cm, facing the obstacle, 25–30 cm from its face. Straights include their endpoint; turns append the post-turn centre pose last. | `search/search.py` `Segment.compress`, `search/straight.py`, `search/turn.py`, `config.STANDOFF_*_CM`; `PathfindingResponseSegment.from_segment` |
+| P2 | `segments[].end` (= `path[-1]`) is the robot's **centre** in cm, facing the obstacle. **[corrected 2026-09-25]** Not 25–30 cm from its face — that was the *prior-year reference team's* number. The planner's `config.py` was updated 2026-09-18 with a measured band: the robot's leading face sits 13–18 cm from the obstacle face, which is **~28–32 cm centre-to-face** (adding the 15 cm robot half-extent). The code comment literally reads *"Was 25-30 (reference)."* | `search/search.py` `Segment.compress`, `search/straight.py`, `search/turn.py`, `config.STANDOFF_MIN_CM`/`STANDOFF_MAX_CM` (measured 2026-09-18); `PathfindingResponseSegment.from_segment` |
 | — | The grid is 200 × 200 with a 1 cm cell; every corner must satisfy `0 ≤ v < 200`. A 30 cm robot is planned as a 31-cell footprint, so a centre above 184 cm on either axis is a 422. | `config.GRID_SIZE`, `world/world.py` `Robot.planned`, `World.__inside` |
-| — | Straights are multiples of 5 cm. Turn radii are per direction and currently the prior year's: FL 39, FR 40, BL 37, BR 39. | `config.STRAIGHT_CHUNK_CELLS`, `config.TURN_RADIUS_CM` |
+| — | Straights are multiples of 5 cm. **[corrected 2026-09-25]** Turn radii are per direction, and are **no longer** the prior year's placeholders — `config.TURN_RADIUS_CM` was measured on this chassis on 2026-09-18: **FL 42, FR 56, BL 41, BR 55**. (`rpi/config.py`'s own `TURN_RADIUS_CM` default still shows the old 39/40/37/39 — that's a separate, real staleness in the RPi's own shipped code; see the note below.) | `config.STRAIGHT_CHUNK_CELLS`, `config.TURN_RADIUS_CM` |
 
-**Open with the algorithm owner:**
+**With the algorithm owner — resolved, not open:**
 
-| # | Ask |
-|---|---|
-| P3 | Replace `TURN_RADIUS_CM` with values measured on this car at the STM's actual `AS` steering lock. Joint with the STM team. Needed for accuracy, not for this code. |
+| # | Was asked | Resolution |
+|---|---|---|
+| P3 | Replace `TURN_RADIUS_CM` with values measured on this car at the STM's actual steering lock | **Done, 2026-09-18** — see the corrected row above. What's still outstanding is a *consumer-side* bug, not an algorithm-side gap: `rpi/config.py`'s own `TURN_RADIUS_CM` default (used only for the tablet's dead-reckoned marker between segments, per §5.10) was never updated to match. It should be changed from `{FL: 39, FR: 40, BL: 37, BR: 39}` to `{FL: 42, FR: 56, BL: 41, BR: 55}`, with a comment noting the 2026-09-18 measurement date, the same way the planner's own config documents it |
 
 ### 3.4 Image-recognition contract — the parts used
 

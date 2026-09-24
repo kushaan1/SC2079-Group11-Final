@@ -34,7 +34,10 @@ def _flag(name: str, default: bool) -> bool:
 
 def _radii() -> Dict[str, int]:
     # The planner's config.TURN_RADIUS_CM, which these must track (spec §3.3).
-    defaults = {"FORWARD_LEFT": 39, "FORWARD_RIGHT": 40, "BACKWARD_LEFT": 37, "BACKWARD_RIGHT": 39}
+    # Measured on this chassis 2026-09-18 (algorithm/config.py, same date); only affects the
+    # tablet's dead-reckoned ROBOT marker between segments (spec §5.10), since each segment snaps
+    # to the planner's real end pose. Was 39/40/37/39 (prior-year placeholders) until 2026-09-25.
+    defaults = {"FORWARD_LEFT": 42, "FORWARD_RIGHT": 56, "BACKWARD_LEFT": 41, "BACKWARD_RIGHT": 55}
     return {kind: int(_number("TURN_RADIUS_" + kind, value)) for kind, value in defaults.items()}
 
 

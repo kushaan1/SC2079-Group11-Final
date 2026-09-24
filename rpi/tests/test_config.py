@@ -23,7 +23,7 @@ def test_defaults():
     assert cfg.MANUAL_TURN_DEG == 45
     assert cfg.CAPTURE_FRAMES == 3
     assert cfg.TURN_RADIUS_CM == {
-        "FORWARD_LEFT": 39, "FORWARD_RIGHT": 40, "BACKWARD_LEFT": 37, "BACKWARD_RIGHT": 39,
+        "FORWARD_LEFT": 42, "FORWARD_RIGHT": 56, "BACKWARD_LEFT": 41, "BACKWARD_RIGHT": 55,
     }
 
 
@@ -41,7 +41,7 @@ def test_environment_overrides(monkeypatch):
     assert cfg.STM_COMPLETION == "ACK"                     # upper-cased
     assert cfg.MOTOR_A_PCT == 55
     assert cfg.TURN_RADIUS_CM["FORWARD_LEFT"] == 31
-    assert cfg.TURN_RADIUS_CM["FORWARD_RIGHT"] == 40
+    assert cfg.TURN_RADIUS_CM["FORWARD_RIGHT"] == 56
     assert cfg.ALLOW_STUB_PLANNER is True
     assert cfg.STM_TO_TABLET is False
 

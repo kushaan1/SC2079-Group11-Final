@@ -1,29 +1,49 @@
 # RPi program — Task 2 (fastest car) design (v2, rules-checked)
 
 **Date:** 2026-09-22 (revision of shuenwei's 2026-09-18 original, itself revised the same day
-after review)
+after review); extended 2026-09-25 after cross-checking against the professor's own rules PDF and
+the actual current state of `carl-stm` and `jerick-cv`.
 **Status:** revised against the official MDP rules (`docs/rules/rules.md`, `docs/rules/`), which did not
 exist when the original was written. Sections marked **[RULE DELTA]** are new or changed from the
-original; everything else carries the original's content forward unchanged. The STM command names
-in §3.1 remain a proposal awaiting the STM team's reply to `docs/rpi-stm-handover.md` §5.
+official rules; sections marked **[corrected 2026-09-25]** fix a factual error about a teammate's
+actual code, not a rules gap. Everything else carries the original's content forward unchanged. The
+STM command names in §3.1 remain a proposal awaiting the STM team's reply to
+`docs/rpi-stm-handover.md` §5, and `ARROW_SOURCE`'s default (§5.3) remains unresolved pending
+Jerick's answer — see §0.
 **Extends:** `2026-09-22-rpi-task1-design-v2.md` — everything there stands; this document only adds.
 
 ---
 
-## 0. Rule deltas vs. the 2026-09-18 original (added 2026-09-22)
+## 0. Rule deltas vs. the 2026-09-18 original (added 2026-09-22; extended 2026-09-25)
 
-Three gaps, found by checking the original design against `docs/rules/rules.md`:
+Five gaps in total. Three were found checking the original design against `docs/rules/rules.md`.
+Two more were found on 2026-09-25 — one by cross-checking `rules.md`'s transcription against the
+professor's own PDF upload directly, one by cross-checking §3.2's premise against Jerick's actual
+`image-rec` branch instead of trusting the original's description of it:
 
 | # | Rules say | Original design | What changes |
 |---|---|---|---|
 | 1 | Obstacle 2's dimension (10cm wide, 30cm+ long) is **revealed only after the 2-minute prep, just before the run** (`docs/rules/rules.md` Task 2 layout figure) | §3.1's `ROUND 2` v1 is "a fixed loop with obstacle 2's width as an **STM constant (measured on the day)**"; the build order (§9) puts this fixed loop before the IR-terminated v2 | A number handed to the team minutes before their run cannot be a firmware constant "measured on the day" in the sense the original meant (measured once, in advance, and flashed). It must be a fast runtime/config value the team can set during the 2-minute prep or between the STM handshake and `beginFastest`, and the IR-terminated loop (v2) — which needs no measured width at all — becomes the safer default to prioritise, not a v2 refinement. See §3.1 and §9 below |
 | 2 | Hitting the **carpark wall is an outright disqualification**; hitting a **goal obstacle is a +10s penalty** (`docs/rules/rules.md` Task 2 rule 6, FAQ 6–7) | §7's error table (additions to Task 1 §7) doesn't distinguish carpark-wall contact from obstacle contact | `HOME`'s design intent must explicitly favour a safe, centred approach into the carpark over a fast one — see §3.1's `HOME` row and the new §7 row below |
 | 3 | Task 2 also requires the **RAW captured images with bounding boxes**, for images on goal obstacles, shown at the end of the run (`docs/rules/rules.md` Task 2 rule 8, FAQ 16) | §3.2's on-Pi TFLite arrow source makes the left/right decision locally and never hands a frame to the PC server; only the HTTP source's frames reach it | Every arrow-read frame — regardless of which source decided the direction — must still be persisted where it can be shown, the same way Task 1's captures are. See §3.2 below |
+| 4 | **[found 2026-09-25]** The carpark's **inside** dimension is **60cm × 50cm**, not 60×60 — the official PDF states this explicitly (*"the size of the carpark zone (60 cm X 50 cm: - inside dimensions)"*); the diagram's three "60 cm" labels describe the outer block | §1 and elsewhere describe "a 60 × 60 cm U" | Every mention of the carpark's size below is corrected to 60×50 inside, with a note that which axis is which isn't stated outright — see §1 below. This narrows the real margin `HOME` has to work with, on top of #2's disqualification risk |
+| 5 | **[found 2026-09-25]** N/A — not a rules gap, a **factual error about Jerick's actual code** | §3.2's "Model gate" paragraph claims `image-rec/training/train.py` "passes no `fliplr`", so Ultralytics' 0.5 default would mirror left/right arrows during training | **False as of `jerick-cv`'s current `train.py`** — it explicitly sets `"fliplr": 0.0` and `"flipud": 0.0`, with a comment: *"Flipping changes arrow direction and can invalidate other glyph labels."* The mitigation is already built. What's still genuinely needed — a confusion-run validation gate proving the *trained model* doesn't confuse arrows in practice — remains valid regardless; only the stated cause was wrong. See §3.2 below |
 
-None of these change the run's state machine (§6) or the STM command shapes (§3.1) themselves —
+None of #1–#3 change the run's state machine (§6) or the STM command shapes (§3.1) themselves —
 they change what value feeds `ROUND 2`, how cautious `HOME` is designed to be, and where arrow-read
-frames go. The rest of this document is shuenwei's original, with these points folded into the
-relevant sections (§3.1, §3.2, §7, §9) rather than left as a separate patch.
+frames go. #4 tightens a physical constraint already acknowledged in principle. #5 corrects a claim
+about another team's code rather than changing any RPi-side design. The rest of this document is
+shuenwei's original, with these points folded into the relevant sections (§1, §3.1, §3.2, §7, §9)
+rather than left as a separate patch.
+
+**Also unresolved, found 2026-09-25, not yet a rule delta because it needs Jerick's answer, not just
+a document fix:** §5.3's `ARROW_SOURCE` defaults to `http` (asking the laptop's PC server), but
+Jerick's own `image-rec/README.md` architecture diagram and `image-rec/training/README.md`'s
+deployment table both describe Task 2's arrow model as Pi-only — no PC/HTTP path was built for it at
+all; the PC server only ever loads `best.pt`, the Task 1 classifier. Using the HTTP default as
+written would ask the wrong, un-purpose-built model. This needs settling with Jerick directly —
+either he extends the PC server to also serve the dedicated arrow model, or `ARROW_SOURCE` should
+default to `tflite`. Flagged in §5.3 below; not resolved by this document alone.
 
 ---
 
@@ -36,10 +56,17 @@ tablet and stopping on STOP, exactly as the Task 1 run does.
 
 **The course** (`docs/rules/rules.md` Task 2 section, and its layout figure):
 
-- The carpark is a **60 × 60 cm U** with walls on three sides, open toward
-  the course. The car starts inside it and must finish inside it, which
-  means it must come home **centred** — the opening is 60 cm and the car is
-  19 cm wide.
+- The carpark is a U with walls on three sides, open toward the course.
+  **[RULE DELTA §0 #4]** Its **inside** dimension — what actually matters for
+  "is the robot fully in without touching a wall" — is **60cm × 50cm**, not
+  60×60: the diagram's outer footprint is 60×60, but the official PDF's text
+  explicitly states the inside dimensions differ, and a wall has thickness.
+  Which axis is which isn't stated outright; the opening (front) is very
+  likely the 60cm side, since nothing narrows it, leaving the closed-end
+  depth as the tighter 50cm. The car starts inside it and must finish inside
+  it, which means it must come home **centred** — even at the more generous
+  60cm opening, the car is 19cm wide, and the depth margin is now known to be
+  tighter than the diagram alone suggested.
 - Obstacle 1 is 60–150 cm from the carpark and obstacle 2 another 60–150 cm on,
   both on the carpark's centre line. Obstacle 2 is the bigger block: 10cm
   wide, length from a minimum of 30cm up to some maximum, **and its exact
@@ -188,19 +215,20 @@ follows the existing pattern of `pc_server/storage.py` already writing
 `raw/` and `annotated/` per accepted frame — no change needed there, only in
 what calls it.
 
-**Model gate, both sources.** `image-rec/training/train.py` passes no
-`fliplr`, so Ultralytics' default of 0.5 mirrors half the left arrows into
-right arrows (and vice versa) during training, for the Task 1 model and the
-arrow model alike; validation does not catch it because the validation set
-is not flipped. Both models must be trained with `fliplr: 0`, and released
-only after a left/right confusion run at `T2_STOP_CM` (≥100 frames per
-direction, ±15° yaw, lab and outdoor backgrounds) shows zero cross-errors at
-the confidence floor. §9 items 4 and 5. **[RULE DELTA]** A misread arrow is
+**Model gate, both sources.** **[corrected 2026-09-25, §0 #5]** `image-rec/training/train.py`
+already sets `"fliplr": 0.0` and `"flipud": 0.0` explicitly, with the comment *"Flipping changes
+arrow direction and can invalidate other glyph labels"* — the training-config mitigation this
+section used to call for is already built into Jerick's code, for both the Task 1 model and the
+arrow model. What's still genuinely needed is the **validation gate**, unaffected by the correction
+above: both models must be released only after a left/right confusion run against the confidence
+floor (≥100 frames per direction, ±15° yaw, lab and outdoor backgrounds) shows zero cross-errors —
+`fliplr: 0` prevents the training data from teaching the wrong thing, it doesn't by itself prove the
+trained model got it right. §9 items 4 and 5. **[RULE DELTA]** A misread arrow is
 not merely a scoring loss here — `docs/rules/rules.md` FAQ 10 makes a wrong image
 or wrong turn an **automatic disqualification** for Task 2, the same
-severity as bulldozing. This raises the cost of the fliplr bug specifically
-for Task 2 above what it already was for Task 1 (where a wrong ID is only
-−10, not disqualification).
+severity as bulldozing — which is exactly why the confusion-run gate matters here more than it does
+for Task 1 (where a wrong ID is only −10, not disqualification), even with the training-side risk
+already closed.
 
 ### 3.3 Tablet
 
@@ -289,7 +317,7 @@ def read_arrow(camera, source, consensus, timeout_s, abort) -> Optional[str]
 
 | Key | Default | |
 |---|---|---|
-| `ARROW_SOURCE` | `http` | `http` or `tflite` |
+| `ARROW_SOURCE` | `http` **— ⚠ unresolved, see §0** | `http` or `tflite`. **This default is unconfirmed against Jerick's actual `image-rec` architecture**, which builds no PC-server path for Task 2 arrows at all (only a dedicated on-Pi TFLite model). Do not treat `http` as settled until this is raised with Jerick — either the PC server gains an arrow-serving route, or this default should be `tflite` |
 | `ARROW_HTTP_TIMEOUT_S` | `2` | per frame; the arrow source's own client |
 | `ARROW_MODEL_PATH` / `ARROW_LABELS_PATH` | `rpi/models/best_arrows.tflite` / `rpi/models/arrow-labels.json` | tflite only |
 | `ARROW_MIN_CONFIDENCE` | `0.75` | Jerick's default |
@@ -425,9 +453,9 @@ model passes its gate. Record the confusion run in `image-rec/docs/calibration.m
 | # | Item | Owner | Blocks |
 |---|---|---|---|
 | 1 | Confirm `RANGE / SEEK / ROUND / HOME`, the `SEEK` semantics (3-reading debounce, `DONE,SEEK,0`, ~200 cm cap) and bare `HOME` on the STM odometer. **[RULE DELTA] Also confirm how `ROUND 2`'s obstacle-2 length is set at runtime if the fixed-loop option is used (§3.1, §5.2) — a new question, since the original assumed a pre-measured constant** | STM | driver encodings |
-| 2 | `BW <cm>` — also a Task 2 blocker (`ROUND 1` from a 30 cm standoff, the nudge) | STM | everything after the first read |
+| 2 | ~~`BW <cm>` — also a Task 2 blocker~~ **[confirmed 2026-09-25]** already built and calibrated on `carl-stm` (`Drive_BackwardCm`, dated 2026-09-20) — see the Task 1 doc §3.2. No longer blocks anything | — | resolved |
 | 3 | Sensor mounting: ultrasonic forward, below 15 cm, offset reported; IRs sideways **[RULE DELTA] elevated from "v2" to first-priority, since the IR-terminated loop needs no obstacle-2 length input at all (§0 #1, §3.1)** | STM | nothing on the Pi |
-| 4 | `best.pt` for the PC server, trained with `fliplr: 0`, past the confusion gate | CV | any real arrow read |
+| 4 | `best.pt` for the PC server, past the confusion gate. **[corrected 2026-09-25]** Training with `fliplr: 0` is no longer the open part — `train.py` already does it (§0 #5, §3.2) — what's open is actually running the confusion validation | CV | any real arrow read |
 | 5 | `best_arrows.tflite` + labels under the same gate, or the decision to skip the separate model | CV | the on-Pi source |
-| 6 | Obstacle 2's width (measure the prop at setup); the return-lane offset that clears obstacle 1 and still lets `HOME` re-centre into the 60 cm opening. **[RULE DELTA] "measure the prop at setup" now reads as "read the dimension the supervisor discloses after prep" — see §0 #1** | STM + course staff | `ROUND 2`, `HOME` |
+| 6 | Obstacle 2's width (measure the prop at setup); the return-lane offset that clears obstacle 1 and still lets `HOME` re-centre into the carpark opening — **[RULE DELTA §0 #4] likely 60cm, but the tighter, less obvious constraint is the 50cm inside depth**, which bounds how much of a re-centre manoeuvre `HOME` has room for. **[RULE DELTA] "measure the prop at setup" now reads as "read the dimension the supervisor discloses after prep" — see §0 #1** | STM + course staff | `ROUND 2`, `HOME` |
 | 7 | Decision date for the contingency (§2): if the STM manoeuvres are not driveable by then, the Pi composes them from primitives. **[RULE DELTA] Given #1 and #3 above, this decision should also settle whether `ROUND 2` ships as IR-terminated (needs no length) or fixed-loop-with-runtime-parameter (needs the STM's answer to open item 1) before the competition, not after** | all | which implementation of the four manoeuvre calls ships |
