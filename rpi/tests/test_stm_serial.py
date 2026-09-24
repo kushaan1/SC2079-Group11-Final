@@ -1,0 +1,480 @@
+import queue
+import threading
+import time
+
+import pytest
+
+from rpi.model import Arc, Straight
+from rpi.stm_driver import SerialStmDriver, StmAborted, StmError, StmUnavailable
+
+
+class FakeSerial:
+    """In-memory stand-in for serial.Serial. `responder(line) -> list of reply lines`."""
+
+    def __init__(self, responder=None):
+        self.written = []
+        self.responder = responder
+        self.closed = False
+        self.fail_reads = False
+        self._incoming = queue.Queue()
+
+    def write(self, data):
+        line = data.decode("ascii").strip()
+        self.written.append(line)
+        if self.responder is not None:
+            for reply in self.responder(line):
+                self.push(reply)
+
+    def flush(self):
+        pass
+
+    def readline(self):
+        if self.fail_reads:
+            raise OSError("device gone")
+        try:
+            return self._incoming.get(timeout=0.02)
+        except queue.Empty:
+            return b""
+
+    def push(self, line):
+        self._incoming.put((line + "\r\n").encode("ascii"))
+
+    def reset_input_buffer(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+def echo_ack(line):
+    """The handover doc's STM: PONG for PING, ACK,<verb> for everything else."""
+    if line == "PING":
+        return ["PONG"]
+    return ["ACK," + line.split(" ")[0]]
+
+
+def make(responder=echo_ack, **kwargs):
+    fake = FakeSerial(responder)
+    settings = dict(
+        completion="ACK", ack_deadline_s=0.3, turn_deadline_s=0.5,
+        straight_deadline=lambda cm: 0.5, ping_deadline_s=0.3, stop_drain_s=0.05,
+        retry_delay_s=0.05,
+    )
+    settings.update(kwargs)
+    driver = SerialStmDriver("/dev/fake", 115200, open_serial=lambda: fake, **settings)
+    return driver, fake
+
+
+def wait_until(predicate, timeout=2.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+# --- startup ------------------------------------------------------------------------
+
+def test_start_pings_and_pushes_configured_trims():
+    driver, fake = make(motor_a=55, motor_b=48, steer_steps=None)
+    driver.start()
+    try:
+        assert fake.written == ["PING", "MA 55", "MB 48"]
+        assert driver.available is True
+    finally:
+        driver.close()
+
+
+def test_start_without_pong_raises_unavailable():
+    driver, fake = make(responder=lambda line: [])
+    with pytest.raises(StmUnavailable):
+        driver.start()
+    driver.close()
+
+
+# --- execute -------------------------------------------------------------------------
+
+def test_execute_waits_for_the_ack_and_ignores_data_lines():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        if line.startswith("FS"):
+            return ["ENC,A,120,B,118", "ACK,FS"]
+        return ["ACK," + line.split(" ")[0]]
+
+    driver, fake = make(responder)
+    driver.start()
+    try:
+        driver.execute(Straight("FORWARD", 30))
+        driver.execute(Arc("FORWARD_LEFT", 90))
+        assert fake.written == ["PING", "FS 30", "TL 90"]
+    finally:
+        driver.close()
+
+
+def test_err_reply_raises_with_the_reply_text():
+    def responder(line):
+        return ["PONG"] if line == "PING" else ["ERR,GYRO"]
+
+    driver, fake = make(responder)
+    driver.start()
+    try:
+        with pytest.raises(StmError) as info:
+            driver.execute(Arc("FORWARD_RIGHT", 90))
+        assert info.value.command == "TR 90"
+        assert info.value.reply == "ERR,GYRO"
+    finally:
+        driver.close()
+
+
+def test_no_reply_sends_stop_and_resyncs():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        return []   # every motion command is silently dropped
+
+    driver, fake = make(responder)
+    driver.start()
+    try:
+        with pytest.raises(StmError) as info:
+            driver.execute(Straight("BACKWARD", 10))
+        assert info.value.reply == "no reply"
+        assert fake.written == ["PING", "BS 10", "S", "PING"]
+    finally:
+        driver.close()
+
+
+def test_done_completion_model_waits_for_ack_then_done():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        if line.startswith("TL"):
+            return ["ACK,TL", "DONE,TL"]
+        if line.startswith("BR"):
+            return ["ACK,BR", "ERR,TIMEOUT"]
+        return ["ACK," + line.split(" ")[0]]
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        driver.execute(Arc("FORWARD_LEFT", 90))
+        with pytest.raises(StmError) as info:
+            driver.execute(Arc("BACKWARD_RIGHT", 90))
+        assert info.value.reply == "ERR,TIMEOUT"
+    finally:
+        driver.close()
+
+
+def test_done_model_busy_error_on_receipt_is_an_error():
+    def responder(line):
+        return ["PONG"] if line == "PING" else ["ERR,BUSY"]
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        with pytest.raises(StmError) as info:
+            driver.execute(Straight("FORWARD", 5))
+        assert info.value.reply == "ERR,BUSY"
+    finally:
+        driver.close()
+
+
+# --- manual ----------------------------------------------------------------------------
+
+def test_manual_encodes_and_waits():
+    driver, fake = make(manual_turn_deg=45)
+    driver.start()
+    try:
+        driver.manual("f")
+        driver.manual("sl")
+        driver.manual_raw("beginFastest")
+        assert fake.written == ["PING", "F", "BL 45", "beginFastest"]
+    finally:
+        driver.close()
+
+
+# --- stop ------------------------------------------------------------------------------
+
+def test_stop_aborts_an_in_flight_execute_then_resyncs():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        if line == "S":
+            return ["ACK,S"]
+        return []   # FS never completes
+
+    driver, fake = make(responder)
+    driver.start()
+    outcome = []
+
+    def drive():
+        try:
+            driver.execute(Straight("FORWARD", 100))
+            outcome.append("finished")
+        except StmAborted:
+            outcome.append("aborted")
+        except StmError as error:
+            outcome.append(error.reply)
+
+    thread = threading.Thread(target=drive)
+    thread.start()
+    assert wait_until(lambda: "FS 100" in fake.written)
+    driver.stop()
+    thread.join(timeout=2.0)
+    try:
+        assert outcome == ["aborted"]
+        assert fake.written == ["PING", "FS 100", "S", "PING"]
+    finally:
+        driver.close()
+
+
+def test_stop_with_nothing_in_flight_is_harmless():
+    driver, fake = make()
+    driver.start()
+    try:
+        driver.stop()
+        driver.execute(Straight("FORWARD", 5))
+        assert fake.written == ["PING", "S", "PING", "FS 5"]
+    finally:
+        driver.close()
+
+
+# --- serial loss ---------------------------------------------------------------------------
+
+def test_serial_loss_marks_unavailable_reconnects_and_reports_both():
+    fakes = []
+    changes = []
+
+    def open_serial():
+        fake = FakeSerial(echo_ack)
+        fakes.append(fake)
+        return fake
+
+    driver = SerialStmDriver(
+        "/dev/fake", 115200, open_serial=open_serial, completion="ACK",
+        ack_deadline_s=0.3, turn_deadline_s=0.5, straight_deadline=lambda cm: 0.5,
+        ping_deadline_s=0.3, stop_drain_s=0.05, retry_delay_s=0.05,
+        on_link_change=changes.append,
+    )
+    driver.start()
+    try:
+        assert changes == [True]
+        fakes[0].fail_reads = True
+        assert wait_until(lambda: not driver.available)
+        with pytest.raises(StmUnavailable):
+            driver.manual("f")
+        assert wait_until(lambda: changes == [True, False, True])   # the second handshake succeeded
+        driver.manual("f")
+        assert fakes[-1].written == ["PING", "F"]
+    finally:
+        driver.close()
+    assert changes == [True, False, True]   # close() is not a link loss
+
+
+# --- traffic mirror: every line both ways, for the tablet's raw log ---------------------
+
+def test_traffic_is_mirrored_to_the_hook_in_order():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        if line.startswith("FS"):
+            return ["ACK,FS", "DONE,FS"]
+        return ["ACK," + line.split(" ")[0]]
+
+    mirrored = []
+    driver, fake = make(responder, completion="DONE", on_line=mirrored.append)
+    driver.start()
+    try:
+        driver.manual("f")
+        driver.execute(Straight("FORWARD", 30))
+        assert wait_until(lambda: len(mirrored) >= 7)
+        assert mirrored == [
+            "STM> PING", "STM< PONG",
+            "STM> F", "STM< ACK,F",
+            "STM> FS 30", "STM< ACK,FS", "STM< DONE,FS",
+        ]
+    finally:
+        driver.close()
+
+
+def test_a_failing_mirror_hook_never_breaks_the_driver():
+    def hook(text):
+        raise RuntimeError("tablet gone")
+
+    driver, fake = make(on_line=hook)
+    driver.start()
+    try:
+        driver.manual("f")
+        assert fake.written == ["PING", "F"]
+    finally:
+        driver.close()
+
+
+# --- raw(): a line typed by a human (the STM console) -----------------------------------
+
+def test_raw_motion_waits_for_done_and_queries_take_the_first_reply():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        if line == "RANGE":
+            return ["RANGE,52"]
+        if line.startswith("FW"):
+            return ["ACK,FW", "DONE,FW"]
+        if line == "XYZ":
+            return ["ERR,UNKNOWN"]
+        return ["ACK," + line.split(" ")[0]]
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.raw("FW 50") == "DONE,FW"
+        assert driver.raw("PING") == "PONG"
+        assert driver.raw("RANGE") == "RANGE,52"
+        assert driver.raw("MA 50") == "ACK,MA"
+        with pytest.raises(StmError) as info:
+            driver.raw("XYZ")
+        assert info.value.reply == "ERR,UNKNOWN"
+        assert fake.written == ["PING", "FW 50", "PING", "RANGE", "MA 50", "XYZ"]
+    finally:
+        driver.close()
+
+
+def test_raw_silence_is_reported_after_a_stop_and_resync():
+    def responder(line):
+        return ["PONG"] if line == "PING" else []
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        with pytest.raises(StmError) as info:
+            driver.raw("RANGE")
+        assert info.value.reply == "no reply"
+        assert fake.written == ["PING", "RANGE", "S", "PING"]
+    finally:
+        driver.close()
+
+
+# --- Task 2 (Task 2 spec §3.1, §5.2) --------------------------------------------------------
+
+def task2_stm(line):
+    """The handover's proposed firmware: PONG; ACK then DONE for the Task 2 verbs; RANGE data."""
+    if line == "PING":
+        return ["PONG"]
+    if line.startswith("SEEK"):
+        return ["ACK,SEEK", "ENC,A,300,B,298", "DONE,SEEK,87"]
+    if line.startswith("ROUND") or line == "HOME":
+        verb = line.split(" ")[0]
+        return ["ACK," + verb, "DONE," + verb]
+    if line == "RANGE":
+        return ["RANGE,52"]
+    return ["ACK," + line.split(" ")[0]]
+
+
+def test_seek_waits_for_done_and_parses_the_distance():
+    driver, fake = make(task2_stm, completion="DONE")
+    driver.start()
+    try:
+        assert driver.seek(30) == 87
+        assert fake.written == ["PING", "SEEK 30"]
+    finally:
+        driver.close()
+
+
+def test_seek_already_in_range_is_zero_and_a_missing_number_is_none():
+    replies = iter([["ACK,SEEK", "DONE,SEEK,0"], ["ACK,SEEK", "DONE,SEEK"]])
+
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        return next(replies)
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.seek(30) == 0
+        assert driver.seek(30) is None
+    finally:
+        driver.close()
+
+
+def test_seek_done_without_an_ack_is_accepted():
+    def responder(line):
+        return ["PONG"] if line == "PING" else ["DONE,SEEK,0"]     # "at once", no ACK first
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.seek(30) == 0
+        assert fake.written == ["PING", "SEEK 30"]                 # no S, no resync
+    finally:
+        driver.close()
+
+
+def test_seek_error_raises_with_the_line_and_reply():
+    def responder(line):
+        if line == "PING":
+            return ["PONG"]
+        return ["ACK,SEEK", "ERR,TIMEOUT"]
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        with pytest.raises(StmError) as info:
+            driver.seek(30)
+        assert (info.value.command, info.value.reply) == ("SEEK 30", "ERR,TIMEOUT")
+    finally:
+        driver.close()
+
+
+def test_round_and_home_are_acknowledged_by_verb():
+    driver, fake = make(task2_stm, completion="DONE")
+    driver.start()
+    try:
+        driver.round(2, "R")
+        driver.home()
+        assert fake.written == ["PING", "ROUND 2 R", "HOME"]
+    finally:
+        driver.close()
+
+
+def test_range_returns_the_reading_without_an_ack():
+    driver, fake = make(task2_stm, completion="DONE")
+    driver.start()
+    try:
+        assert driver.range_cm() == 52
+        assert fake.written == ["PING", "RANGE"]
+    finally:
+        driver.close()
+
+
+def test_range_without_a_reply_is_none_and_does_not_resync():
+    def responder(line):
+        return ["PONG"] if line == "PING" else []
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.range_cm() is None
+        assert fake.written == ["PING", "RANGE"]          # no S, no second PING
+    finally:
+        driver.close()
+
+
+def test_range_error_reply_is_none():
+    def responder(line):
+        return ["PONG"] if line == "PING" else ["ERR,UNKNOWN"]
+
+    driver, fake = make(responder, completion="DONE")
+    driver.start()
+    try:
+        assert driver.range_cm() is None
+    finally:
+        driver.close()
+
+
+def test_task2_deadlines_are_by_verb():
+    driver, _ = make(seek_deadline_s=20.0, route_deadline_s=25.0, home_deadline_s=40.0)
+    assert driver._deadline("SEEK 30") == 20.0
+    assert driver._deadline("ROUND 2 R") == 25.0        # by verb, so the digit never means a straight
+    assert driver._deadline("HOME") == 40.0
