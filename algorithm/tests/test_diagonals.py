@@ -4,6 +4,9 @@ The experimental eight-heading planner: `config.DIAGONAL_HEADINGS`.
 Everything else in the suite pins the four-heading planner (see `conftest.py`); these are the
 only tests that switch the diagonals on. They cover what the extra headings add, not the
 planner as a whole.
+
+The 45s are calibrated on their own from the tape, so two of them do not land where one 90
+does; their end poses are pinned in test_turn_calibration.py.
 """
 import math
 import os
@@ -52,27 +55,6 @@ def test_a_turn_swings_the_heading_by_its_own_size():
             path = turn(world, Vector(direction, 100, 100), instruction)
             swing = -instruction.degrees if instruction.lock in anticlockwise else instruction.degrees
             assert path[-1].direction == Direction.of_degrees(direction.degrees + swing), (direction, instruction)
-
-
-@pytest.mark.parametrize("lock", ("FORWARD_LEFT", "FORWARD_RIGHT", "BACKWARD_LEFT", "BACKWARD_RIGHT"))
-def test_two_45_degree_turns_land_where_one_90_does(lock):
-    """
-    The claim the whole experiment rests on: a 45 is the same steering lock held for half as
-    long. If that is true then driving two of them must put the robot where one quarter turn
-    would have, and this is the test that would fail if the 45 traced the wrong radius, curved
-    the wrong way, or stopped at the wrong point along its arc - none of which the connectivity
-    and heading tests above can see.
-
-    One cell of tolerance because both sides are rasterised onto the integer grid.
-    """
-    world = empty_world()
-    for direction in Direction:
-        whole = turn(world, Vector(direction, 100, 100), TurnInstruction(lock))[-1]
-        first = turn(world, Vector(direction, 100, 100), TurnInstruction(lock + "_45"))[-1]
-        second = turn(world, first, TurnInstruction(lock + "_45"))[-1]
-
-        assert second.direction == whole.direction, (direction, lock)
-        assert max(abs(second.x - whole.x), abs(second.y - whole.y)) <= 1, (direction, lock)
 
 
 def test_a_45_degree_turn_costs_half_a_90():

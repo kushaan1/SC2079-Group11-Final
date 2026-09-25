@@ -181,7 +181,7 @@ def main() -> None:
 
     print(f"config: standoff {config.STANDOFF_MIN_CM}-{config.STANDOFF_MAX_CM} cm, "
           f"lateral +/-{config.LATERAL_TOLERANCE_CM} cm, footprint {config.ROBOT_FOOTPRINT_CM} cm, "
-          f"turn radii {config.TURN_RADIUS_CM}")
+          f"turn displacements {config.TURN_DISPLACEMENT_CM}")
 
     # Regression baseline. The 2 below is NOT an independent oracle and is NOT a reference-planner
     # result: the reference planner cannot produce a segment count at all, because the very first
@@ -203,8 +203,9 @@ def main() -> None:
     ))
 
     # Four obstacles, all clear of the walls. Obstacles adjacent to the wall they face have no
-    # legal goal pose at a 25-30 cm standoff; that is a real property of the standoff band, not a
-    # defect, and A coverage tool would quantify it.
+    # legal goal pose in the 12-36 cm standoff band - a face needs 41 cm of arena in front of it,
+    # re-derived 2026-09-25 - which is a real property of the standoff band, not a defect, and a
+    # coverage tool would quantify it.
     results.append(run(
         "nominal arena: 4 obstacles",
         default_robot(),
@@ -222,21 +223,27 @@ def main() -> None:
     ))
 
     # The pathological arena from the audit (algorithm/PROVENANCE.md 4). Zero segments is
-    # CORRECT here, and the point of the arena is that the planner must now SAY SO - with
-    # NO_OBJECTIVES, the reason that names the actual cause (goal-pose geometry), not NO_PATH
-    # (which would blame the search). Previously the only evidence was two lines on stdout.
+    # CORRECT here, and the point of the arena is that the planner must now SAY SO, with the
+    # reason that names each obstacle's actual cause: NO_OBJECTIVES for goal-pose geometry,
+    # NO_PATH when the poses exist and the search cannot drive to them. Previously the only
+    # evidence was two lines on stdout.
     #
     # The two obstacles fail for DIFFERENT underlying reasons, which is worth knowing before
-    # anyone tries to "fix" the arena by widening the standoff band:
-    #   - 13 faces NORTH at y<=159, so its poses land at y = 159 + 15 + (25..30) = 199..204,
-    #     past the 14..185 free band world.py leaves after the boundary keep-out. It fails
-    #     alone, and a wider band only pushes it further out.
-    #   - 14 faces EAST and is nowhere near a wall. Planned on its own it has 180 valid poses;
-    #     all of them sit inside obstacle 13's inflated keep-out (x 69..120, y 129..180), so it
-    #     fails only because of its neighbour.
-    # Both were checked by planning each obstacle alone on 2026-08-25. A test fixture should
-    # capture this arena
-    # and a coverage tool would measure the first failure mode across the arena.
+    # anyone tries to "fix" the arena by moving the standoff band. Re-checked 2026-09-25 by
+    # planning each obstacle alone, with the diagonals on and off:
+    #   - 13 faces NORTH at y<=159, so its poses land at y = 159 + 15 + (12..36) = 186..210,
+    #     past the 14..185 free band world.py leaves after the boundary keep-out - by one
+    #     centimetre even at the band's 12 cm end. It fails alone: NO_OBJECTIVES.
+    #   - 14 faces EAST and is nowhere near a wall. Planned on its own it has 500 valid poses and
+    #     plans. Beside 13, all but 60 sit inside 13's inflated keep-out (x 69..120, y 129..180);
+    #     the 60 left are the standoff 12..14 ones at x 66..68, in the 8 cm corridor between the
+    #     two keep-outs (x 61..68), and the search finds no way to arrive there facing WEST. So
+    #     it is NO_PATH, and still fails only because of its neighbour. It was NO_OBJECTIVES
+    #     under the 25-30 band this arena was written against (2026-08-25), which produced none
+    #     of those 60; it has been NO_PATH since the band's low end fell below 15 (13 on
+    #     2026-09-18, 12 now).
+    # A test fixture should capture this arena and a coverage tool would measure the first
+    # failure mode across the arena.
     results.append(run(
         "pathological arena: 2 obstacles, neither plannable",
         default_robot(),
@@ -247,17 +254,19 @@ def main() -> None:
         expected_segments=0,
         expected_unreachable={
             13: UnreachableReason.NO_OBJECTIVES,
-            14: UnreachableReason.NO_OBJECTIVES,
+            14: UnreachableReason.NO_PATH,
         },
     ))
 
     # The arena that proves the two reasons are actually told apart rather than both meaning
     # "we gave up". Without a case like this, NO_PATH is a code path nothing in the repo ever
     # executes. Obstacles 11 and 12 wall the start pose into a 5x5 cm pocket at x 14..18,
-    # y 14..18 - the robot cannot take a single 5 cm chunk, let alone a 39 cm turn - yet both
-    # have 48 perfectly valid goal poses each, so they are NO_PATH. Obstacle 13 is the
-    # wall-facing one from the arena above and has none at all, so it is NO_OBJECTIVES. Same
-    # run, same list, different reasons. Captured from this planner on 2026-08-25.
+    # y 14..18 - the robot cannot take a single 5 cm chunk, let alone a turn (the tightest
+    # fitted rear radius is 26 cm) - yet both have 75 perfectly valid goal poses each, so they
+    # are NO_PATH. Obstacle 13 is the wall-facing one from the arena above and has none at all,
+    # so it is NO_OBJECTIVES. Same run, same list, different reasons. Captured from this planner
+    # on 2026-08-25; re-checked 2026-09-25, when the wider 12-36 cm band, net of the lateral
+    # tolerance narrowing from 10 to 5, took the pose count from 48 to 75.
     results.append(run(
         "boxed-in arena: both unreachable reasons at once",
         default_robot(),

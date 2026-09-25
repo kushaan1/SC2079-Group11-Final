@@ -43,7 +43,10 @@ def test_seconds_sums_moves():
 def test_segment_cost_is_still_cells_and_seconds_matches_model():
     world = load(os.path.join(TESTDATA, "02-four-obstacles.json")).world()
     result = search(world, generate_objectives(world))
-    assert [s.cost for s in result.segments] == [88, 91, 280, 460]
+    # re-recorded 2026-09-25 after the per-command turn fit: each is straights plus fitted arcs
+    # (FL 41, FR 59, BL 49, BR 63 cells), and 13 fell from 460 by stopping at the band's new
+    # 12 cm end after two forward-lefts instead of a six-turn detour.
+    assert [s.cost for s in result.segments] == [84, 98, 277, 152]
     for s in result.segments:
         assert s.seconds == pytest.approx(cost.seconds(s.moves, world.cell_size))
         assert s.seconds > 0

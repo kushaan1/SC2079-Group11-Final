@@ -151,14 +151,14 @@ case everywhere. Buttons say what they do: "Plan route", "Open arena", "Save are
 
 ## Playback
 
-The planner's `Segment.vectors` is a collision-check set, not a path: a turn's arc comes out of
-`turn.__offsets` with its two ends interleaved, every arc cell carries the post-turn heading, and
-the arc is the path of a point `lead` cm behind the robot centre (`robot.south_length -
-TURN_PIVOT_OFFSET_CM`, 12 cm for the 31 cm robot), while the appended end pose is the new centre.
+The planner's `Segment.vectors` is not the car's path. It is ordered - `turn()` samples every
+arc in driving order - but every arc cell carries the post-turn heading, and the arc is the path
+of the rear pivot, `TurnInstruction.lead` cm behind the robot centre (7-14 cm, fitted per
+command from the tape), while the appended end pose is the new centre.
 Two consequences, both handled:
 
-- `Segment.compress` orders each arc in driving order and exposes `Segment.moves`, the parts in
-  sequence. `vectors` (and the HTTP `path`) become an ordered path as a side effect.
+- `Segment.compress` exposes `Segment.moves`, the parts in driving order, so playback can tell a
+  turn's cells from a straight's. `vectors` (and the HTTP `path`) are the same cells end to end.
 - `playback.py` builds one `Frame` per cell with a continuous `Pose(x, y, heading_deg)`: straight
   cells as-is; arc frames are placed on the true circle through the arc's end cells, with the
   heading equal to the angle swept, so the car glides through turns; then the end pose. So the car

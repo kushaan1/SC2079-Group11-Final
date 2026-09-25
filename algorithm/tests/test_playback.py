@@ -145,15 +145,15 @@ def test_empty_route():
 
 
 def _turns(playback):
-    """(start_deg, end_deg, frames) for every turn in the route, in order."""
+    """(move, frames) for every turn in the route, in order."""
     from pathfinding.search.instructions import Turn
     out = []
     i = 0
-    for seg_index, segment in enumerate(playback.route.segments):
+    for segment in playback.route.segments:
         for move in segment.moves:
             n = len(move.vectors)
             if isinstance(move, Turn):
-                out.append(playback.frames[i:i + n])
+                out.append((move, playback.frames[i:i + n]))
             i += n
         i += CAPTURE_DWELL_FRAMES
     return out
@@ -162,8 +162,8 @@ def _turns(playback):
 def test_arc_frames_lie_on_a_circle_of_the_turn_radius():
     import math
     p = Playback(route_for("02-four-obstacles.json"))
-    lead = p.route.robot.south_length - config.TURN_PIVOT_OFFSET_CM // p.route.cell_size
-    for frames in _turns(p):
+    for move, frames in _turns(p):
+        lead = move.turn.lead(p.route.cell_size)
         # rear point of every arc frame (frame pose minus lead along heading)
         rears = []
         for f in frames[:-1]:
@@ -171,23 +171,33 @@ def test_arc_frames_lie_on_a_circle_of_the_turn_radius():
             rears.append((f.pose.x - lead * math.sin(t), f.pose.y - lead * math.cos(t)))
         (x0, y0), (x1, y1) = rears[0], rears[-1]
         r = max(abs(x1 - x0), abs(y1 - y0))
-        assert 30 <= r <= 45
+        assert 20 <= r <= 45  # the fitted rear radii are 26-40 cm (spec §3)
         # The centre is offset from the first rear point perpendicular to the INITIAL heading. The
         # first arc frame is already one step into the sweep, so snap its heading back to the
         # compass point it came from before asking which way the offset goes.
         start = round(frames[0].pose.heading_deg / 90) * 90 % 360
         first_heading_is_vertical = start % 180 == 0
         cx, cy = (x0 + (x1 - x0), y0) if first_heading_is_vertical else (x0, y0 + (y1 - y0))
+        # 1.0, not 0.6: the circle is lifted from the sampled arc's rounded end cells, which a
+        # fractional radius and lead can leave up to a cell off square (2026-09-25: forward-left's
+        # first and last arc frames' rear points sit 0.47 off square, and its worst circle-check
+        # miss is 0.72).
         for rx, ry in rears:
-            assert math.isclose(math.hypot(rx - cx, ry - cy), r, abs_tol=0.6), (cx, cy, r, rx, ry)
+            assert math.isclose(math.hypot(rx - cx, ry - cy), r, abs_tol=1.0), (cx, cy, r, rx, ry)
 
 
 def test_arc_frames_step_evenly():
     import math
     p = Playback(route_for("02-four-obstacles.json"))
-    for frames in _turns(p):
+    for _, frames in _turns(p):
         steps = [math.hypot(b.pose.x - a.pose.x, b.pose.y - a.pose.y) for a, b in zip(frames, frames[1:])]
-        assert max(steps) <= 1.25 and min(steps) >= 0.5, steps
+        # Only the last step, onto the end pose, gets wider bounds. The end pose is the tape end
+        # rounded to the cm, while the frames before it ride a circle lifted from rounded cells
+        # plus a fractional lead, so the gap between the two (up to 0.8 cm here, 2026-09-25)
+        # falls on that one step. The steps before it are equal by construction.
+        *inner, last = steps
+        assert min(inner) >= 0.5 and max(inner) <= 1.25, steps  # below the ~1.4-1.65 cm integer-cell stair-step
+        assert 0.4 <= last <= 1.7, steps  # lands on the tape end rounded to the cm (2026-09-25: FR 0.434, BL 1.61)
 
 
 def test_frame_seconds_are_cumulative_and_end_at_the_routes_estimate():

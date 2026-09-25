@@ -109,9 +109,10 @@ ROBOT_BODY_CM = (19, 23)
 # Straight-line speed at competition speed, in centimetres per second. Together with TURN_TIME_S
 # it sets the time model the shortest-time optimiser ranks routes by, and the simulator clock.
 # The greedy planner still costs in cm and does not read it.
-# SOURCE: STM | placeholder | NOT MEASURED. 30 is a guess. Update together with
-#   TURN_RADIUS_CM, which must be measured at the same speed.
-ROBOT_SPEED_CM_S = 25  #
+# SOURCE: STM | placeholder | NOT MEASURED. 25 is the working figure the algo owner set on
+#   2026-09-25 (was 30). Update together with TURN_DISPLACEMENT_CM, which must be measured at the
+#   same speed.
+ROBOT_SPEED_CM_S = 25
 
 # ---------------------------------------------------------------------------------------
 # Goal-pose generation (world/objective.py)
@@ -123,22 +124,27 @@ ROBOT_SPEED_CM_S = 25  #
 
 # Closest the robot's leading face may sit to the obstacle face it is photographing, in cm.
 # "Leading face" is the edge of the 31 cm PLANNING footprint, 15 cm ahead of the robot's centre,
-# so CENTRE-to-face = 15 + this. The spec is given from the centre: 30 cm optimal. A band of
-# 13..17 here puts the centre 28-32 cm from the face, centred on 30; the physical nose
-# (ROBOT_BODY_CM is 23 long, so 11.5 cm ahead of centre) lands 16.5-20.5 cm from it. Lowering
-# this also lowers the clear space a face needs in front of it - see the arena rule in
-# docs/protocols/algorithm-service.md, which must be re-measured when this moves.
-# SOURCE: CV | measured | 30 cm from the middle of the robot, 2026-09-18. Was 25-30 (reference).
-STANDOFF_MIN_CM = 25
+# so CENTRE-to-face = 15 + this. The camera sits at the front of the chassis, ~11.5 cm ahead of
+# the centre (ROBOT_BODY_CM is 23 long, lens assumed at the plate's edge), so
+# CAMERA-to-face = this + 3.5. The band 12..36 puts the camera 15.5-39.5 cm from the face, which
+# is the 15-40 cm the algo owner asked for on 2026-09-25. If the lens is not at the edge, move
+# both bounds by the difference. Lowering this also lowers the clear space a face needs in front
+# of it - see the arena rule in docs/protocols/algorithm-service.md, which must be re-measured
+# when this moves.
+# SOURCE: CV | assumed | camera 15-40 cm from the object, algo owner 2026-09-25. Lens offset from
+#   the centre mark NOT measured; 11.5 assumed.
+STANDOFF_MIN_CM = 12
 
-# Furthest the robot's leading face may sit from that obstacle face, in cm. Exclusive bound.
-# SOURCE: CV | measured | See STANDOFF_MIN_CM: 13..17 inclusive, a 5 cm band like the original.
-STANDOFF_MAX_CM = 40
+# Furthest the robot's leading face may sit from that obstacle face, in cm. INCLUSIVE: the band
+# is the closed interval [STANDOFF_MIN_CM, STANDOFF_MAX_CM] (PROVENANCE.md, design decisions).
+# SOURCE: CV | assumed | See STANDOFF_MIN_CM.
+STANDOFF_MAX_CM = 36
 
 # How far the goal pose may slide sideways along the obstacle face, in cm, in each direction.
 # Widening this buys reachability at the cost of off-centre images.
-# SOURCE: ALGO | assumed | Reference value. Should grow as the robot/obstacle size ratio grows.
-LATERAL_TOLERANCE_CM = 0
+# SOURCE: ALGO | assumed | 5 cm, algo owner 2026-09-25 (was 10, the reference value). Should grow
+#   as the robot/obstacle size ratio grows.
+LATERAL_TOLERANCE_CM = 5
 
 # Extra lateral slack, IN GRID CELLS, granted only to an obstacle that touches the arena boundary.
 # Such an obstacle has less free space around it, so the planner accepts more off-centre poses.
@@ -168,44 +174,47 @@ BOUNDARY_CLEARANCE_ADJUST_CM = -1
 # Motion primitives (search/turn.py, search/instructions.py, search/segment.py)
 # ---------------------------------------------------------------------------------------
 
-# Turning radius per turn instruction, in centimetres. Keyed by TurnInstruction's string values,
-# so both config.TURN_RADIUS_CM["FORWARD_LEFT"] and config.TURN_RADIUS_CM[TurnInstruction.
-# FORWARD_LEFT] resolve (TurnInstruction is a str enum whose values equal its names). The dict is
-# keyed by string rather than by the enum so that this module stays free of project imports.
-# SOURCE: STM | measured | 2026-09-18, on our chassis, from a tape mark: centre displacement after
-#   one 90 degree turn command (dx = dy = R for a clean quarter arc). Left turns are much tighter
-#   than right - a 14 cm gap - and it is a property of the car, not noise. Speed setting, floor
-#   surface and the straight-run figures (ROBOT_SPEED_CM_S, TURN_TIME_S) were NOT recorded with
-#   these; re-measure all of it together if the speed setting changes.
-#   These are the QUARTER-TURN radii. The 45 degree commands have their own table below.
-TURN_RADIUS_CM = {
-    "FORWARD_LEFT": 41,
-    "FORWARD_RIGHT": 60,
-    "BACKWARD_LEFT": 40,
-    "BACKWARD_RIGHT": 56,
+# The robot centre's displacement after ONE turn command, in centimetres, straight off the tape:
+# (across, along). `along` is measured along the heading the car set off on, positive forward,
+# so every backward command is negative; `across` is perpendicular to it, positive toward the
+# side the wheels were turned (left for *_LEFT, right for *_RIGHT), which is the side the car
+# moved for all eight. Keyed by TurnInstruction's string values, so both
+# config.TURN_DISPLACEMENT_CM["FORWARD_LEFT_45"] and config.TURN_DISPLACEMENT_CM[TurnInstruction.
+# FORWARD_LEFT_45] resolve. Strings rather than the enum so this module stays free of project
+# imports.
+#
+# Two numbers per command because the model behind a turn has two parameters and one number
+# cannot pin both. The car rotates about a point on the LINE of its rear axle (the instantaneous
+# centre of rotation); the rear axle's midpoint, the rear pivot, rides a circle of radius R about
+# it, and the centre sits L (the lead) ahead of the rear pivot. So after a 90 the centre has moved
+# R + L across and R - L along (forward commands) or R - L across and R + L along (backward ones).
+# TurnInstruction.fit solves each pair for its own (R, L), and the planner's arc, end pose, arc
+# length and costs all derive from that: nothing here is a radius, a 45 is not half a 90, and
+# nothing downstream may assume either. The earlier tables held a single centre-to-centre chord
+# per command and were read as R, which put every planned 90 about 20-27 cm past the real car -
+# see PROVENANCE.md, "The turn model is fitted per command".
+# SOURCE: STM | measured | 2026-09-25 by the algo owner, on our chassis at the competition speed
+#   setting, centre of the car marked on the floor before and after one command, final heading
+#   checked at 90 / 45, one run each. The earlier session's chords (TR90 60, TL90 40.5, BR90 56,
+#   BL90 39.6, TR45 32, TL45 21, BR45 34, BL45 24) agree with these pairs within 2 cm on five
+#   commands and 5-7 cm on three (TR90, BL90, TL45): that is the car's run-to-run scatter, and
+#   the floor on how exact any plan can be. Re-measure all eight together if the speed changes.
+TURN_DISPLACEMENT_CM = {
+    "FORWARD_LEFT":      (37.0,  15.5),
+    "FORWARD_RIGHT":     (47.0,  28.0),
+    "BACKWARD_LEFT":     (21.5, -41.0),
+    "BACKWARD_RIGHT":    (33.0, -47.0),
+    "FORWARD_LEFT_45":   (18.5,  18.0),
+    "FORWARD_RIGHT_45":  (21.0,  22.0),
+    "BACKWARD_LEFT_45":  ( 4.5, -25.0),
+    "BACKWARD_RIGHT_45": ( 6.5, -31.8),
 }
 
-# How far the car's centre moves ALONG ITS ORIGINAL HEADING after one 45 DEGREE turn command, in
-# centimetres - the tape-measure number, entered as measured. TurnInstruction.radius derives the
-# 45 degree turning radius from it (R = this / sin 45 = this / 0.7071), and every consumer of a
-# *_45 token's radius - the traced arc, its cost, its arc length - reads that. A 45 is therefore
-# NOT modelled as the quarter-turn radius held for half the arc; it was, and the measured car did
-# not agree, covering 7-19% less ground than that model predicts.
-# SOURCE: STM | measured | 2026-09-18, same session and speed as TURN_RADIUS_CM. Derived radii
-#   today: 34 / 52 / 38 / 45 cm (FL / FR / BL / BR). The quarter turns need no such table because
-#   a 90 degree arc's displacement along the heading IS its radius.
-TURN_45_DISPLACEMENT_CM = {
-    "FORWARD_LEFT": 21,
-    "FORWARD_RIGHT": 32,
-    "BACKWARD_LEFT": 24,
-    "BACKWARD_RIGHT": 34,
-}
-
-# Offset applied to the pivot point of a turn, in centimetres, to compensate for the fact that the
-# turning geometry treats the robot as a point at its centre.
-# SOURCE: ALGO | assumed | Reference value, undocumented there. Effectively a fudge factor; it
-#   should disappear once turning is rebuilt on proper Dubins curves.
-TURN_PIVOT_OFFSET_CM = 3
+# How far apart, in centimetres, consecutive points of a segment's `centre_path` may be along a
+# turn. A wire-format number for the tablet's route drawing, not a planning one: the search
+# never reads it.
+# SOURCE: RPI | assumed | 5 cm, from the RPi owner's handover of 2026-09-25.
+CENTRE_PATH_SPACING_CM = 5
 
 # The straight-line move lengths, IN GRID CELLS, the search may take in one step. Each entry
 # becomes one candidate neighbour, so more entries means a finer but slower search.
@@ -217,7 +226,20 @@ STRAIGHT_CHUNK_CELLS = (5,)
 # arena arrives as one large command: measured 2026-09-17, a lone obstacle at (100,80) facing
 # NORTH gives a 140 cm FORWARD, and 300 random 4-8 obstacle arenas produced one of 160 cm against
 # a hard ceiling of 170 (the robot centre is confined to a 171 cm band, driven in 5 cm chunks).
-# Anything at or above 170 therefore disables the cap; 0 disables it explicitly.
+# Both 2026-09-17 figures predate the eight headings (on since 2026-09-18) and the 2026-09-25 turn
+# fit, and long straights are still sent after both. Re-measured 2026-09-25 on the (100,80) arena,
+# uncapped: as shipped (shortest-time, eight headings) the route opens with a 65 cm FORWARD, and
+# shortest-time with four headings drives 115 cm. The 10 cm that tests/test_straight_cap.py pins
+# is nearest-first under the test suite's four-heading pin, not what the service sends. On random
+# 4-8 obstacle arenas with the shipped config, straights still reach 155 cm nearest-first (6 of
+# 673 over 100 cm) and 120 cm shortest-time (3 of 168 over 100 cm), so this cap still binds.
+#
+# The 170 cm ceiling above is for a straight along an axis. With the eight headings a diagonal
+# cell is sqrt(2) cm on the wire, so a diagonal straight could in principle reach 240 cm (170
+# cells), and the cap matters there too: the longest diagonal observed, with eight headings on
+# 2026-09-25, is 141 cm (a lone obstacle at (180,100) facing NORTH, nearest-first). Anything at
+# or above 240 therefore disables the cap - 170 does only along an axis - and 0 disables it
+# explicitly.
 #
 # This is a WIRE-FORMAT limit, not a planning one. Splitting a command does not move the robot
 # differently - same cells, same cost, same seconds - it only chunks the command stream, so the
@@ -231,8 +253,9 @@ MAX_STRAIGHT_CM = 100
 # Seconds the robot takes for one 90 degree turn at competition speed, arc included. The time
 # model charges this per turn and cells/ROBOT_SPEED_CM_S per straight cell; the optimiser and the
 # simulator clock both use it.
-# SOURCE: STM | placeholder | NOT MEASURED. 3.0 is a guess: a 40 cm radius arc is 63 cm, about
-#   2 s at 30 cm/s, plus steering. Measure together with TURN_RADIUS_CM and ROBOT_SPEED_CM_S.
+# SOURCE: STM | placeholder | NOT MEASURED. 3.0 is a guess: at the 2026-09-25 fit a FORWARD_RIGHT
+#   rear arc is 59 cm, about 2.4 s at 25 cm/s, plus steering. Measure together with
+#   TURN_DISPLACEMENT_CM and ROBOT_SPEED_CM_S.
 TURN_TIME_S = 3.0
 
 # Whether the search may drive and turn through the four diagonal headings, using the 45
@@ -241,8 +264,9 @@ TURN_TIME_S = 3.0
 # made with this on to survive contact with the robot.
 # SOURCE: ALGO | assumed | Measured 2026-09-04 on branch kejun-experimental-algo: the
 #   shortest-time planner saves 22% on testdata 02 and 34% on 04. Switched ON 2026-09-18 once the
-#   STM owner had driven and measured 45 degree turns in all four directions; those are
-#   TURN_45_DISPLACEMENT_CM, separate from the quarter turns'. The RPi must decode the four *_45 tokens.
+#   STM owner had driven and measured 45 degree turns in all four directions; those are the
+#   *_45 rows of TURN_DISPLACEMENT_CM, calibrated separately from the quarter turns. The RPi must
+#   decode the four *_45 tokens.
 DIAGONAL_HEADINGS = True
 
 # Whether the search may rotate on the spot, by shuffling: full steering lock forward, full lock
@@ -270,16 +294,22 @@ PIVOT_TIME_S = 2.0
 # mid-shuffle stops a whole stroke away from where the planner placed it with its heading still
 # exactly right, which is a failure nothing downstream can see.
 #
-# More strokes is not better. Against the radii below, one 45 degree pivot drifts 3.5 cm at 2
-# strokes, 6.4 cm at 4 and 7.3 cm at 6, while the swept box it needs barely moves (51 x 58 cm
-# against 53 x 51 cm). That drift is INHERENT, and in particular it is not the forward/backward
-# radius asymmetry: the two strokes of a pair turn about circles that are not concentric, so the
-# pair does not close. Matching TURN_RADIUS_CM's 40 forward-right against its 37 backward-left
-# buys about 12% of it and no more. It is systematic rather than noise: it accumulates
-# with every extra stroke instead of averaging out, which is also why the planner can model it.
-# SOURCE: ALGO | assumed | 2 is the algo-side choice that minimises drift at the PLACEHOLDER
-#   radii, and is therefore only as trustworthy as they are. Re-derive it once the STM owner
-#   measures TURN_RADIUS_CM, and confirm the firmware drives the count the planner assumed.
+# More strokes is not better. Measured 2026-09-25 at the fitted radii, one 45 degree pivot
+# drifts 3.2 cm at 2 strokes, 5.3 cm at 4 and 6.1 cm at 6 turning right (5.5, 6.8 and 7.3 cm
+# turning left), while the swept box it needs barely moves (50 x 57 cm at 2 strokes against
+# 52 x 49 cm at 6 turning right, 50 x 59 against 49 x 54 turning left). The box is the centre
+# path's extent plus the circumscribed disc of the rotating 31 cm square, the rule that
+# reproduces the 2026-09-11 figures. Part of that drift is INHERENT: the two strokes of a pair
+# turn about circles that are not concentric, so the pair does not close even when the radii
+# match. At the fitted radii the forward/backward mismatch is a large share of it all the same:
+# if both strokes ran at the pair's larger radius, that would remove about 48% of the right
+# pivot's drift and 87% of the left's (measured 2026-09-25 at the fitted radii, where the right
+# pair is 37.5 and 31.25 cm and the left 26.25 and 40). It is systematic rather than noise: it
+# accumulates with every extra stroke instead of averaging out, which is also why the planner
+# can model it.
+# SOURCE: ALGO | assumed | 2 is the algo-side choice that minimises drift. Chosen 2026-09-11 at
+#   the PLACEHOLDER radii and re-derived 2026-09-25 at the fitted ones, where 2 strokes still
+#   drifts least for both pivots. Confirm the firmware drives the count the planner assumed.
 PIVOT_STROKES_PER_45 = 2
 
 # ---------------------------------------------------------------------------------------
@@ -324,7 +354,7 @@ SERVER_HOST = "0.0.0.0"
 # SOURCE: RPI | placeholder | The reference disagreed with itself: app.py bound 5001 while its own
 #   README, and the simulator client's hardcoded http://localhost:5000, both said 5000. 5000 is
 #   what every client actually calls. Confirm with RPi before demo day.
-SERVER_PORT = 8001
+SERVER_PORT = 5000
 
 # Directory the service writes each incoming request to, one timestamped JSON file per request.
 # Relative paths resolve against the process's working directory, so where the artefacts land

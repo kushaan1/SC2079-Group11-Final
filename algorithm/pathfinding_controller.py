@@ -9,9 +9,10 @@ this layer decides how those become status codes and JSON.
 **The wire contract is fixed** (AGENTS.md 2.2). The RPi's client was generated from the
 prior-year team's OpenAPI schema, so the request shape and the route are reproduced from their
 controller field for field, including choices this file would otherwise make differently (see
-:meth:`PathfindingResponseSegment.from_segment` on ``verbose``). There are exactly seven
-deliberate departures, all additive or error-path-only, and all recorded in
-``docs/protocols/algorithm-service.md``:
+:meth:`PathfindingResponseSegment.from_segment` on ``verbose``). There are exactly nine
+deliberate departures, all additive or error-path-only, and recorded in
+``docs/protocols/algorithm-service.md`` (items 8 and 9 below pending the protocol doc's next
+update, which is the owner's):
 
 1. ``PathfindingResponse.unreachable`` — new field. The obstacles the robot will NOT visit,
    with a reason each. Without it a dropped obstacle is invisible to the caller: the response
@@ -43,8 +44,15 @@ deliberate departures, all additive or error-path-only, and all recorded in
 7. ``PathfindingResponseSegment.end`` - new field, the car's stopping pose (centre, cm,
    heading), present even when ``verbose`` is false. It is what a mid-run re-plan feeds back
    as the tablet shape's ``robot``; see :func:`_android_robot`.
+8. ``PathfindingResponseSegment.poses`` - new field, the pose after every instruction, aligned
+   with ``instructions``. Verbose only. Replaces the RPi's own dead reckoning for the tablet's
+   ROBOT marker.
+9. ``PathfindingResponseSegment.centre_path`` - new field, the robot centre through the whole
+   segment including inside turns, at most ``config.CENTRE_PATH_SPACING_CM`` apart along an
+   arc. Verbose only. What the tablet draws the route from; ``path`` stays the rear-pivot cells
+   it always was.
 
-The reasoning behind all seven is in ``algorithm/PROVENANCE.md`` under "Design decisions".
+The reasoning behind all nine is in ``algorithm/PROVENANCE.md`` under "Design decisions".
 
 Stub mode is selected per-request from ``current_app.config["MDP_STUB"]`` rather than by an
 import-time flag, so the same module serves both modes and a test can flip it.
@@ -491,15 +499,47 @@ class PathfindingResponseSegment(BaseModel):
         "only if verbose is true.",
     )
     # Additive. Where the car stops for CAPTURE_IMAGE - its centre in cm and its heading, i.e.
-    # the last `path` vector - but reported even when `verbose` is false, because the RPi runs
-    # quiet and this is the one piece of geometry it needs: handed back as the tablet shape's
-    # `robot`, it re-plans from where the car is (checklist A.5: standing at a face, bull's-eye
-    # seen, route to the next face from HERE). None only when there is no geometry to report -
-    # stub mode, or a segment in which the car did not move.
+    # the last `path` vector - but reported even when `verbose` is false, because a quiet caller
+    # still needs it to re-plan: handed back as the tablet shape's `robot`, it re-plans from
+    # where the car is (checklist A.5: standing at a face, bull's-eye seen, route to the next
+    # face from HERE). None only when there is no geometry to report - stub mode, or a segment
+    # in which the car did not move.
     end: PathfindingVector | None = Field(
         default=None,
         description="Where the car stops for CAPTURE_IMAGE: its centre in cm and its heading. "
         "Present regardless of verbose. Send it back as `robot` to re-plan from there.",
+    )
+    # Additive. The car's centre pose after EVERY instruction, one entry per entry of
+    # `instructions` (CAPTURE_IMAGE repeats the last, so poses[-1] == end whenever `end` is set).
+    # The exception is a segment in which the car does not move, because it already stands on
+    # this obstacle's goal pose - two adjacent obstacles facing the same way can share one.
+    # There are no vectors to take `end` from, so it is None, and the single pose, for
+    # CAPTURE_IMAGE, is where the car already stands (the previous segment's last pose, or the
+    # request's `robot` for the first segment). This is what the RPi should report to the tablet
+    # after each command: the RPi's own dead reckoning carried a second copy of the turning radii
+    # and a 45-degree formula of its own, and drifted 15-38 cm from the planned car within a
+    # segment before snapping to `end`. With this it looks the pose up instead. Verbose only,
+    # like `path`, as the RPi owner's handover specified: the RPi always asks verbose, and a
+    # quiet response then carries no geometry but `end`, the one piece a re-plan needs, exactly
+    # as before this field existed (the key is sent, as []). Empty in stub mode like `path`.
+    poses: list[PathfindingVector] = Field(
+        default_factory=list,
+        description="The car's centre pose after each instruction, aligned one-to-one with "
+        "`instructions`; the last equals `end` whenever `end` is set; in a segment where the car "
+        "does not move, `end` is null and the single pose is where it already stands (the "
+        "previous segment's last pose, or the request's `robot` for the first segment). Only "
+        "when verbose. Report these to the tablet instead of dead-reckoning.",
+    )
+    # Additive. The robot centre through the whole segment, in driving order, INCLUDING inside
+    # turns, where `path` holds the rear pivot's cells instead. Starts at the segment's start
+    # pose, contains every entry of `poses`, and along an arc consecutive points are at most
+    # config.CENTRE_PATH_SPACING_CM apart; a straight may be just its two ends. Verbose only,
+    # like `path`; empty in stub mode for the same reason `end` is None there.
+    centre_path: list[PathfindingPoint] = Field(
+        default_factory=list,
+        description="The robot centre through the segment in driving order, turns included, "
+        "at most CENTRE_PATH_SPACING_CM (5 cm) between points along an arc. Only when verbose. "
+        "Draw the route from this, not from `path`.",
     )
 
     @classmethod
@@ -508,7 +548,9 @@ class PathfindingResponseSegment(BaseModel):
         # declared nullable. Preserved verbatim: a client that switched on `cost is None` would
         # break against the reference too, and the frozen contract makes the reference's actual
         # behaviour the contract rather than the schema's permissiveness. `seconds` follows the
-        # same rule for consistency rather than because a client depends on it.
+        # same rule for consistency rather than because a client depends on it, and so do
+        # `poses` and `centre_path`: [] when quiet, so the key is there in both modes and a
+        # client reads one shape.
         return cls(
             obstacle_id=segment.image_id,
             cost=segment.cost if verbose else 0,
@@ -516,6 +558,8 @@ class PathfindingResponseSegment(BaseModel):
             path=[PathfindingVector.from_vector(vector) for vector in segment.vectors] if verbose else [],
             seconds=round(segment.seconds, 2) if verbose else 0.0,
             end=PathfindingVector.from_vector(segment.vectors[-1]) if segment.vectors else None,
+            poses=[PathfindingVector.from_vector(pose) for pose in segment.poses] if verbose else [],
+            centre_path=[PathfindingPoint.from_point(point) for point in segment.centre_path] if verbose else [],
         )
 
 
@@ -726,8 +770,10 @@ def stub(body: PathfindingRequest) -> PathfindingResponse:
       and a wrong picture is harder to debug than a missing one. The instruction stream is
       fabricated too, but a client must decode instructions to be tested at all; nothing needs
       to *believe* the path.
-    - ``end`` is always ``None``, for the same reason as ``path``: a fabricated stopping pose
-      is one the RPi might feed back as ``robot`` and drive from.
+    - ``end`` is always ``None`` and ``poses`` and ``centre_path`` always empty, for the same
+      reason as ``path``: a fabricated pose is one the RPi might feed back as ``robot`` or
+      report to the tablet, and a fabricated centre line is one the tablet would draw as the
+      route.
     - ``unreachable`` is always empty, so a client's happy path is what gets exercised. Point
       the client at the real planner to see genuine ``unreachable`` entries — an arena at the
       competition's legal 30 cm obstacle spacing will produce plenty (see ``algorithm/README.md``).

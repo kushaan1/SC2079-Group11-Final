@@ -207,15 +207,17 @@ def test_plan_optimal_is_no_slower_than_greedy_and_partitions():
 
 
 def test_plan_optimal_on_testdata_02_costs_what_it_has_always_cost():
-    # Baseline, captured 2026-09-03 from this planner: 4 obstacles, 41.50 s of driving. Not an
-    # independent oracle - it is here so that a change to the cost model, the candidate search
-    # or the leg re-planning becomes visible instead of silent.
+    # Baseline, re-captured 2026-09-25 from this planner after the per-command turn fit: 4
+    # obstacles in the same order, 30.60 s of driving (41.50 s before: leg 13 now takes two
+    # turns instead of six, which outweighs the slower 25 cm/s). Not an independent oracle - it
+    # is here so that a change to the cost model, the candidate search or the leg re-planning
+    # becomes visible instead of silent.
     greedy, optimal = plans("02-four-obstacles.json")
     world, generated = arena("02-four-obstacles.json")
 
     assert [s.image_id for s in optimal.segments] == [12, 11, 14, 13]
-    assert sum(s.seconds for s in optimal.segments) == pytest.approx(41.50, abs=0.01)
-    assert sum(s.seconds for s in greedy.segments) == pytest.approx(41.50, abs=0.01)
+    assert sum(s.seconds for s in optimal.segments) == pytest.approx(30.60, abs=0.01)
+    assert sum(s.seconds for s in greedy.segments) == pytest.approx(30.60, abs=0.01)
 
     photographed = [s.image_id for s in optimal.segments]
     reported = [u.image_id for u in optimal.unreachable]
@@ -224,15 +226,16 @@ def test_plan_optimal_on_testdata_02_costs_what_it_has_always_cost():
 
 
 def test_plan_optimal_is_not_slower_than_greedy_on_the_five_obstacle_arena():
-    # The arena built to break an optimiser that trusts its own lower bound: the matrix
-    # prefers 12,11,14,15,13 (53.00 s bound) over greedy's 12,11,15,14,13 (54.00 s), and those
-    # re-plan to 66.83 s and 62.33 s. Picking the best-bound order and stopping loses 7.2%;
-    # scoring re-planned candidates against greedy's own route cannot.
+    # The arena built to break an optimiser that trusts its own lower bound. Re-recorded
+    # 2026-09-25 after the per-command turn fit: the matrix's favourite is now greedy's own
+    # order, 12,11,15,14,13 (39.80 s bound), but re-planned under the time weights it drives in
+    # 50.80 s against the 46.40 s greedy actually drove, so picking the best-bound order and
+    # stopping would lose 9.5%. Scoring re-planned candidates against greedy's own route
+    # cannot, and here it keeps that route.
     greedy, optimal = plans("04-five-obstacles.json")
     world, _ = arena("04-five-obstacles.json")
 
     assert_no_worse_than_greedy(greedy, optimal)
-    assert sum(s.seconds for s in optimal.segments) < 66.83   # what the bare matrix bound picks
 
     photographed = [s.image_id for s in optimal.segments]
     reported = [u.image_id for u in optimal.unreachable]
@@ -258,13 +261,15 @@ def test_route_continues_past_a_leg_that_fails_from_the_arrival_pose(monkeypatch
     segments = tour._route(world, generated, nodes, [1, 2, 3, 4])
 
     assert [n.image_id for n in nodes] == [11, 12, 13, 14]
-    assert len(calls) == 4                    # every leg attempted, in spite of the failures
+    assert len(calls) == 4                    # every leg attempted, in spite of the failure
     assert 12 not in {s.image_id for s in segments}         # the injected failure, lost
-    assert [s.image_id for s in segments] == [11, 13]
-    # 14 is missing for real, not by injection: the fourth call ran the actual search and it
-    # found nothing from the pose leg 13 ended at, even though the leg matrix prices 13 -> 14
-    # at 20.50 s from 13's pose SET. That is the arrival-pose gap this test exists for, and it
-    # is why plan_optimal scores several orders instead of trusting one.
+    # re-recorded 2026-09-25 after the per-command turn fit: 14 is back. Under the turns this
+    # was written against (2026-09-04) the fourth call found nothing from the pose leg 13 ended
+    # at, a real arrival-pose failure on top of the injected one; the fitted turns plan that
+    # leg, at 14.4 s against the 7.60 s the leg matrix prices 13 -> 14 from 13's pose SET. The
+    # arrival-pose gap is still there, as cost rather than failure, and it is why plan_optimal
+    # scores several orders instead of trusting one - but only the injection loses an obstacle.
+    assert [s.image_id for s in segments] == [11, 13, 14]
 
 
 def test_plan_optimal_partitions_when_a_leg_fails_from_the_arrival_pose(monkeypatch):

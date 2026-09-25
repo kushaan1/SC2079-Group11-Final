@@ -79,10 +79,21 @@ of obstacles the plan skips. `image_id` must be 1–40 and identifies the obstac
 a real run it is the tablet's obstacle number (1–8), echoed back unchanged. Full field-by-field
 description is in the protocol doc.
 
+With `verbose: true` each segment also carries `poses`, the robot centre after every instruction
+(one entry per instruction), and `centre_path`, the centre's line through the whole segment
+with points at most 5 cm apart along the turns. The last pose equals `end` whenever `end` is
+set; in a segment where the car does not move, `end` is null and the single pose is where it
+already stands (the previous segment's last pose, or the request's `robot` for the first
+segment). The RPi reports `poses` to the tablet as the robot marker and draws the route from
+`centre_path`; the older `path` is the collision check's rear-pivot cells and sits behind the
+car inside every turn. Both are empty when `verbose` is false and in stub mode.
+
 The visiting order is the shortest-time one by default. Add `"strategy": "greedy"` to the body for
 the old nearest-first order. Optimal never photographs fewer obstacles than greedy and, at equal
-count, never takes longer to drive; both plan in under a second on four obstacles. Each segment
-carries its estimated driving time in `seconds` when `verbose` is true.
+count, never takes longer to drive. Greedy plans in under 0.3 s on the test arenas; with the
+shipped config, shortest-time takes about 2-3.5 s on four or five obstacles (figures in
+[`testdata/README.md`](testdata/README.md)). Each segment carries its estimated driving time in
+`seconds` when `verbose` is true.
 
 ## Stub mode
 
@@ -178,20 +189,29 @@ competition-ready.
    is the deliberately conservative 31 cm *planning* footprint that does not. The fix is to get
    `ROBOT_FOOTPRINT_CM + 2 × OBSTACLE_CLEARANCE_CM ≤ 28`; that decision is not yet made.
 
-2. **Turning radii are not ours.** `config.TURN_RADIUS_CM` is `39/40/37/39` cm — the *prior-year*
-   team's measurements on *their* car. The asymmetry between the four directions is real and large,
-   and radius grows with speed. Every plan is only as true as these numbers. **This is the single
-   highest-value thing the STM owner can hand over.**
+2. **The turn model is fitted to our car, one run per command.** `config.TURN_DISPLACEMENT_CM`
+   holds, for each of the eight turn commands, how far the robot centre moved across and along
+   its start heading in one command, tape-measured on 2026-09-25 at the competition speed
+   setting. `TurnInstruction.fit` solves each pair for the rear-pivot model's radius and lead,
+   so the planned end pose of every turn matches the tape to the centimetre
+   (`tests/test_turn_calibration.py`). What the tape cannot give is repeatability: two 90s and one 45
+   moved 5-7 cm between two sessions, so a plan is exact to the measurement and the car is
+   exact to about a hand's width. Before this the tables held a centre-to-centre chord read as
+   a radius, and every planned 90 ended 20-27 cm past the real car.
 
-3. **Standoff is a placeholder.** 25–30 cm, inherited. The course documents state the camera
-   optimum three mutually inconsistent ways (~20 cm, a 25–30 cm band, and two disagreeing
-   formulas in `AGENTS.md` §7.2). CV needs to pick one against the real lens.
+3. **Standoff is set for a camera 15-40 cm from the face.** `STANDOFF_MIN_CM`/`MAX_CM` are
+   12..36 from the planning box's leading edge, which puts the lens 15.5-39.5 cm from the face
+   if it sits 11.5 cm ahead of the centre mark (the plate's edge; not measured). One number to
+   move if the lens is elsewhere. Lateral tolerance is +-5 cm. The planner takes the cheapest
+   goal pose in the band, which is often the far end, so the car will frequently stop with the
+   camera near 39 cm rather than near the deck's 20 cm optimum; narrow the top of the band if CV
+   wants it closer.
 
 4. **The time model's constants are guesses.** Visiting-order optimisation is **done** (2026-09-03):
    `strategy: "optimal"` is the default and minimises estimated driving time, satisfying checklist
-   item **B.3**. What it minimises is only as true as `config.ROBOT_SPEED_CM_S` (30) and
+   item **B.3**. What it minimises is only as true as `config.ROBOT_SPEED_CM_S` (25) and
    `config.TURN_TIME_S` (3.0), both **placeholders until STM measures them** — a turn currently
-   costs the same as 90 cm of straight, and moving that number moves which order wins. Two further
+   costs the same as 75 cm of straight, and moving that number moves which order wins. Two further
    caps are deliberate: above 9 obstacles the order is chosen greedily on the leg-cost matrix
    (`tour.MAX_EXHAUSTIVE`; Task 1 fields at most 8), and at most 8 candidate orders are re-planned
    for real (`tour.MAX_REPLANS`), which is logged as a warning when it binds — the answer is then

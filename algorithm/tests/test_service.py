@@ -47,13 +47,21 @@ def test_default_strategy_is_optimal_and_greedy_is_selectable():
 
 def test_optimal_is_strictly_faster_than_greedy_on_the_arena_built_for_it():
     """
-    The arena where the optimiser earns its keep: greedy loses 14% here.
+    The arena where the optimiser earns its keep: greedy loses 8% here.
 
     ``testdata/02`` cannot show this: greedy's order is already the optimal one there, so
     "optimal <= greedy" holds by equality and would still hold if the strategy did nothing
     at all. Here greedy takes obstacle 14 first because it is nearest and then doubles back
-    across the arena, and the recorded numbers are 35.17 s greedy against 30.33 s optimal
-    (13.8% quicker, and 678 cm of path against 763).
+    across the arena. The recorded numbers, re-captured 2026-09-25 after the per-command turn
+    fit, are 38.00 s greedy against 34.80 s optimal (8.4% quicker; it was 13.8% on 2026-09-04):
+    optimal drives one turn fewer, over 678 cm of path against greedy's 662, because the time
+    model charges a turn ``config.TURN_TIME_S`` however short its arc. The 678 is the response's
+    cost sum on 2026-09-25 (168 + 104 + 149 + 257, order 12, 14, 13, 11); that it equals the
+    2026-09-04 optimal figure, from a different order and geometry, is a coincidence. All of
+    this, the 38.00 against 34.80 s and the order inequality asserted below included, holds under
+    conftest's four-heading pin, which this test runs with: as shipped (eight headings) both
+    strategies visit 14, 13, 12, 11 and shortest-time wins on time only, 21.43 s against 22.38 s
+    (measured 2026-09-25).
 
     Asserted as an inequality rather than against those numbers: the point is the ordering
     of the two strategies, which is a property of the code, while either total moves with
@@ -97,8 +105,8 @@ def test_a_pivot_reaches_the_wire_and_round_trips():
     This is the whole of the wire change, and the failure it fixes was a 500 rather than a bad
     route: ``PathfindingResponseSegment.instructions`` named a union of three types, the search
     handed it a fourth, and pydantic refused the segment before the response was ever built. On
-    this arena the planner pivots on two of the four legs, so the flag could not be switched on
-    at all until the union was widened.
+    this arena the planner pivots on one of the four legs (2026-09-25, four headings), so the
+    flag could not be switched on at all until the union was widened.
 
     Round-tripping, rather than only reading the JSON, is what pins the contract: it asserts the
     emitted document re-parses into the declared union and the token comes back as a

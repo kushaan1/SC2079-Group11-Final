@@ -5,14 +5,16 @@ capture, plus the numbers the window shows (distance, estimated clock, captured 
 Two things have to be undone here before the cells can be animated. Both come from the way the
 planner stores a turn.
 
-1. Order. ``search.Segment.moves`` now hands over each turn's arc in driving order (the raw
-   ``turn.__offsets`` output is an interleaved collision-check set, not a path). This module relies
-   on that ordering and does not re-sort anything.
+1. Order. ``search.Segment.moves`` now hands over each turn's arc in driving order (``turn.py``
+   samples every arc that way; the midpoint-circle raster it replaced was an interleaved
+   collision-check set, not a path). This module relies on that ordering and does not re-sort
+   anything.
 2. Reference point and heading. An arc cell is the path of a point ``lead`` cm BEHIND the robot
-   centre, and every arc cell carries the POST-turn heading. Played back as-is the car would
-   never rotate. So the heading is swept evenly across the arc, and the centre is placed on the
-   quarter circle those cells discretise rather than on the cells themselves -- the integer cells
-   sit up to 1.2 cm off that circle and stair-step visibly.
+   centre (``TurnInstruction.lead``, fitted per command), and every arc cell carries the
+   POST-turn heading. Played back as-is the car would never rotate. So the heading is swept
+   evenly across the arc, and the centre is placed on the quarter circle those cells discretise
+   rather than on the cells themselves -- the integer cells sit up to 1.2 cm off that circle and
+   stair-step visibly.
 
 Pure logic. Nothing here knows about tkinter or drawing.
 """
@@ -73,9 +75,6 @@ class Playback:
         self.route = route
         self.frames: list[Frame] = []
         cell_size = route.cell_size
-        # Call-time config read: the pivot fudge factor may be re-tuned between plans.
-        lead = (route.robot.south_length - config.TURN_PIVOT_OFFSET_CM // cell_size
-                if route.robot is not None else 0)
         distance = 0.0
         # Two clocks, not one: distance is centimetres of path, seconds is the time model the
         # optimiser minimises. They are not proportional - a turn is charged a flat
@@ -88,6 +87,9 @@ class Playback:
             for move in segment.moves:
                 if isinstance(move, Turn):
                     *arc, end = move.vectors
+                    # The arc cells are the REAR PIVOT's path; the car's centre sits this far
+                    # ahead of it, per command, from the same fit the planner drew the arc with.
+                    lead = move.turn.lead(cell_size)
                     end_deg = HEADING_DEG[end.direction]
                     # The turn's own size, so a 45 degree turn sweeps 45 and not a quarter.
                     swing = move.turn.degrees

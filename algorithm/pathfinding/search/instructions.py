@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from math import radians, sin
+from math import cos, radians, sin
 
 from pydantic import BaseModel, Field
 
@@ -35,11 +35,10 @@ class Straight(str, Enum):
 
 class TurnInstruction(str, Enum):
     """
-    A turn. The bare names are the original quarter turns; the ``_45`` variants are the same
-    steering lock commanded for 45 degrees. They do NOT share a radius: a 90 reads its radius
-    from ``config.TURN_RADIUS_CM``, a 45 derives its own from the measured displacement in
-    ``config.TURN_45_DISPLACEMENT_CM``, because the real car's 45 covers less ground than a
-    half-held 90 would.
+    A turn. The bare names are the quarter turns; the ``_45`` variants are the same steering
+    lock commanded for 45 degrees. Every one of the eight is calibrated on its own from
+    ``config.TURN_DISPLACEMENT_CM``: a 45 is NOT half a 90, and neither is derived from the
+    other in either direction, because the car was measured doing each one.
     """
 
     FORWARD_LEFT = 'FORWARD_LEFT'
@@ -58,30 +57,69 @@ class TurnInstruction(str, Enum):
 
     @property
     def lock(self) -> str:
-        """The steering lock, which is what decides the radius. Both variants share one."""
+        """The steering lock, which decides which side the turning circle sits on."""
         return self.value.removesuffix('_45')
 
-    def radius(self, cell_size: int) -> int:
-        """
-        The turning radius (in grid cells). Different for each direction AND for each angle. A
-        90 reads ``config.TURN_RADIUS_CM`` directly. A 45 reads the measured displacement along
-        the heading from ``config.TURN_45_DISPLACEMENT_CM`` and derives the radius as
-        ``d / sin(45)``: config holds the tape number, this is the only place that converts it.
+    @property
+    def forward(self) -> bool:
+        """Whether the wheels drive forward through this turn. Decides which way the centre trails the pivot."""
+        return self.value.startswith('FORWARD')
 
-        Call-time config rule: the radii are read from config on every call, so a caller may
-        drop in freshly measured values at runtime without touching this module. Every consumer
-        of a turn's radius - the traced arc in ``turn.py`` (which keys its cache on this value),
-        ``arc_length``, both cost models - comes through here, so the two tables cannot disagree
-        with each other anywhere downstream.
-
-        :param cell_size: the cell size
-        :return: the turning radius in grid cells.
+    def displacement(self, cell_size: int) -> tuple[float, float]:
         """
-        if self.degrees == 45:
-            return round(config.TURN_45_DISPLACEMENT_CM[self.lock] / sin(radians(45))) // cell_size
-        return config.TURN_RADIUS_CM[self.lock] // cell_size
+        ``(across, along)``: how far the robot centre moves in one of these, in grid cells.
+
+        Call-time config rule: read from ``config.TURN_DISPLACEMENT_CM`` on every call, so the
+        STM owner can drop in a fresh tape measurement at runtime. Across is toward the steering
+        side, along is along the starting heading and negative for a backward command - see the
+        table's own comment for the convention.
+        """
+        across, along = config.TURN_DISPLACEMENT_CM[self.value]
+        return across / cell_size, along / cell_size
+
+    def fit(self, cell_size: int) -> tuple[float, float]:
+        """
+        The rear-pivot model's two parameters for this command, ``(radius, lead)`` in cells.
+
+        The car rotates about a point on the LINE of its rear axle, the instantaneous centre of
+        rotation. The rear axle's midpoint - the rear pivot - rides a circle of ``radius`` about
+        it, and the centre sits ``lead`` ahead of the rear pivot, so after a turn through
+        ``theta`` the centre has moved, with ``s = sin(theta)`` and ``c = 1 - cos(theta)``::
+
+            forward:   across = R*c + L*s      along  = R*s - L*c
+            backward:  across = R*c - L*s      -along = R*s + L*c
+
+        Two equations, two unknowns, solved here and nowhere else. The pair comes from the tape,
+        so the end pose the geometry builds from this fit reproduces the measurement by
+        construction; a chord alone could not have separated R from L, which is why the old
+        one-number tables were wrong by the whole lead. Each command is fitted on its own - the
+        eight leads come out 7-14 cm, one chassis property seen through tape noise and the
+        steering transient - and keeping them separate is what makes every end pose exact.
+        """
+        across, along = self.displacement(cell_size)
+        theta = radians(self.degrees)
+        s, c = sin(theta), 1 - cos(theta)
+        det = s * s + c * c
+        if self.forward:
+            radius = (across * c + along * s) / det
+            lead = (across * s - along * c) / det
+        else:
+            back = -along
+            radius = (across * c + back * s) / det
+            lead = (back * c - across * s) / det
+        return radius, lead
+
+    def radius(self, cell_size: int) -> float:
+        """The turning radius of the rear pivot, in grid cells, from :meth:`fit`. Every consumer of a
+        turn's radius - the traced arc, ``arc_length``, both cost models, the pivot shuffle - reads this."""
+        return self.fit(cell_size)[0]
+
+    def lead(self, cell_size: int) -> float:
+        """How far ahead of the rear pivot the robot centre sits, in grid cells, from :meth:`fit`."""
+        return self.fit(cell_size)[1]
 
     def arc_length(self, cell_size: int) -> int:
+        """The ground the rear pivot covers, in cells: what the distance model charges for a turn."""
         return round(self.radius(cell_size) * radians(self.degrees))
 
 

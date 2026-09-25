@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import config
 from pathfinding import cost
@@ -11,8 +11,9 @@ from pathfinding.search.instructions import (
     MiscInstruction, Move, MoveInstruction, Pivot, PivotInstruction, Turn, TurnInstruction,
 )
 from pathfinding.search.segment import segment
+from pathfinding.search.turn import centre_arc
 from pathfinding.world.objective import ObjectiveGeneration
-from pathfinding.world.primitives import Vector
+from pathfinding.world.primitives import Point, Vector
 from pathfinding.world.world import World, Obstacle
 
 logger = logging.getLogger(__name__)
@@ -194,8 +195,18 @@ class Segment:
     # without widening what the service actually emits.
     instructions: list[TurnInstruction | PivotInstruction | MoveInstruction | MiscInstruction]
     vectors: list[Vector]
-    moves: list[Turn | Pivot | Move]   # the parts in driving order; turn arcs de-interleaved
+    moves: list[Turn | Pivot | Move]   # the parts in driving order; turn() samples arcs that way
     seconds: float                # estimated driving time of `moves`; excludes the capture dwell
+    # The robot's centre pose AFTER each entry of `instructions`, one-to-one, CAPTURE_IMAGE
+    # included (it repeats the last). What the RPi reports to the tablet after each command,
+    # so it never has to model the motion itself - see PathfindingResponseSegment.poses.
+    poses: list[Vector] = field(default_factory=list)
+    # The robot's centre through the whole segment in driving order: the start pose, then every
+    # entry of `poses` with the centre's arc through each turn (at most
+    # config.CENTRE_PATH_SPACING_CM between points) and the centre cells of each pivot in
+    # between. This is the line the tablet draws the route from; `vectors` is the collision
+    # check's rear-pivot cells and sits `lead` behind the car inside every turn.
+    centre_path: list[Point] = field(default_factory=list)
 
     @classmethod
     def compress(cls, world: World, information: tuple[Obstacle, float, list[tuple[Vector, Turn | Pivot | Move | None]]]) -> Segment:
@@ -207,6 +218,18 @@ class Segment:
         instructions: list[TurnInstruction | PivotInstruction | MoveInstruction | MiscInstruction] = []
         vectors: list[Vector] = []
         moves: list[Turn | Pivot | Move] = []
+        # The pose after each instruction, kept in step with `instructions` through the merge
+        # below and the split after it. `parts` pairs every move with the state it reached, and
+        # its first entry is the segment's start with no move.
+        start = parts[0][0]
+        after: list[Vector] = []
+        # The move behind each instruction, kept in step with `instructions` exactly as `after`
+        # is: appended wherever an instruction is appended, and left alone when a chunk merges
+        # into the straight before it, so a merged command keeps its FIRST move as its source.
+        # Only a pivot's is ever read - its cells are the centre's own path through the shuffle,
+        # which nothing else in this method can reconstruct - so what a merged straight points
+        # at does not matter, only that the list stays aligned.
+        sources: list[Turn | Pivot | Move] = []
         # Cells accumulated into the MoveInstruction at the end of `instructions`, so a run of
         # merged chunks is converted to centimetres once. Converting each chunk and adding the
         # rounded results would drift by a centimetre per merge on a diagonal.
@@ -221,6 +244,8 @@ class Segment:
             match move:
                 case Turn():
                     instructions.append(move.turn)
+                    after.append(vector)
+                    sources.append(move)
                     vectors.extend(move.vectors)
                     moves.append(move)
 
@@ -232,12 +257,15 @@ class Segment:
                 # straight after the pivot therefore opens a new command with a fresh `run`.
                 case Pivot():
                     instructions.append(move.pivot)
+                    after.append(vector)
+                    sources.append(move)
                     vectors.extend(move.vectors)
                     moves.append(move)
 
                 case Move() if instructions and isinstance(instructions[-1], MoveInstruction) and instructions[-1].move == move.move:
                     run += len(move.vectors)
                     instructions[-1].amount = centimetres(move.vectors[0].direction, run)
+                    after[-1] = vector
                     vectors.extend(move.vectors)
                     moves.append(move)
 
@@ -245,6 +273,8 @@ class Segment:
                     run = len(move.vectors)
                     instructions.append(MoveInstruction(move=move.move,
                                                         amount=centimetres(move.vectors[0].direction, run)))
+                    after.append(vector)
+                    sources.append(move)
                     vectors.extend(move.vectors)
                     moves.append(move)
 
@@ -254,20 +284,73 @@ class Segment:
         # stays guarded against. The cap reads config on every call, like TurnInstruction.radius:
         # it is the STM owner's number and nothing may freeze it at import.
         limit = config.MAX_STRAIGHT_CM
-        instructions = [
-            piece
-            for instruction in instructions
-            for piece in (
-                [MoveInstruction(move=instruction.move, amount=amount)
-                 for amount in split_straight(instruction.amount, limit)]
-                if isinstance(instruction, MoveInstruction) else [instruction]
-            )
-        ]
+        cell_size = world.cell_size
+        split: list[TurnInstruction | PivotInstruction | MoveInstruction | MiscInstruction] = []
+        poses: list[Vector] = []
+        # Built in the same pass as `poses`, and from the same `reached` values, so that every
+        # pose is literally a point of the path by construction rather than by a tolerance: the
+        # RPi's "the car is on the route" check is then a lookup. Integers, like every other
+        # coordinate on the wire. Straights contribute only their ends and their split pieces'
+        # ends - the line between two points of a straight IS the straight - while turns and
+        # pivots contribute their curve, because a chord across an arc is not where the car went.
+        centre_path: list[Point] = [Point(start.x, start.y)]
+
+        def visit(point: Point) -> None:
+            """Append a centre point, dropping an exact repeat of the last one."""
+            if centre_path[-1] != point:
+                centre_path.append(point)
+
+        previous = start
+        # strict: the three lists grow in lockstep above; a mismatch must raise, not drop instructions.
+        for instruction, reached, source in zip(instructions, after, sources, strict=True):
+            if isinstance(instruction, MoveInstruction):
+                pieces = split_straight(instruction.amount, limit)
+                # The pieces' poses interpolate the straight from where it began to where it
+                # ended, by the share of the distance each piece has covered. Exact for a
+                # cardinal heading (a cm is a cell); rounded on a diagonal, where the last
+                # piece is pinned to the real end so no rounding can survive it.
+                covered = 0
+                for index, amount in enumerate(pieces):
+                    covered += amount
+                    if index == len(pieces) - 1:
+                        pose = reached
+                    else:
+                        share = covered / instruction.amount
+                        pose = Vector(reached.direction,
+                                      round(previous.x + (reached.x - previous.x) * share),
+                                      round(previous.y + (reached.y - previous.y) * share))
+                    split.append(MoveInstruction(move=instruction.move, amount=amount))
+                    poses.append(pose)
+                    visit(Point(pose.x, pose.y))
+            else:
+                if isinstance(instruction, TurnInstruction):
+                    # The centre's own arc, sampled finely; its last point IS the end pose the
+                    # search recorded, up to the rounding both sides apply, so the exact
+                    # `reached` is appended after it and the rounded duplicate dropped.
+                    # `previous` is where this turn began: the pose after the instruction
+                    # before it, or the segment's start.
+                    for x, y in centre_arc(previous, instruction, cell_size)[:-1]:
+                        visit(Point(round(x), round(y)))
+                elif isinstance(instruction, PivotInstruction):
+                    # A pivot's cells are already the CENTRE's path through the shuffle (see
+                    # pivot._Shuffle.cells), about a cell apart, so they go in as they are.
+                    # The last of them is the end pose, which `reached` supplies below.
+                    # A pivot is never merged, so its instruction's source is its own Pivot move.
+                    assert isinstance(source, Pivot), source
+                    for vector in source.vectors[:-1]:
+                        visit(Point(vector.x, vector.y))
+                split.append(instruction)
+                poses.append(reached)
+                visit(Point(reached.x, reached.y))
+            previous = reached
+        instructions = split
 
         instructions.append(MiscInstruction.CAPTURE_IMAGE)
+        poses.append(previous)
 
         # Not named `cost`: that would make the module-level `cost` import a local of this
         # method and turn the two reads above into an UnboundLocalError.
         distance = round(sum(cost.move_cost(m, cost.DISTANCE_CELLS, world.cell_size) for m in moves))
 
-        return cls(obstacle.image_id, distance, instructions, vectors, moves, cost.seconds(moves, world.cell_size))
+        return cls(obstacle.image_id, distance, instructions, vectors, moves, cost.seconds(moves, world.cell_size), poses,
+                   centre_path)

@@ -5,13 +5,14 @@ The pivot: turning on the spot, for a car that cannot.
 The chassis is Ackermann-steered and has no zero-radius solution, so "on the spot" is driven as
 a SHUFFLE - full steering lock forward, full lock back the other way, repeated - with both
 strokes swinging the nose the same way. The rotations add; the translations, being one forward
-and one back, very nearly cancel. What is left over is a few centimetres of drift, and that
-drift is INHERENT, not a defect waiting to be tuned out: the two strokes of a pair turn about
-two circles that are not concentric, so the pair does not close. Matching the forward and
-backward radii buys about 12% of it - 3.52 cm per 45 degrees at the placeholder 40/37 against
-3.09 cm at a matched 40/40 - and no more. What the planner needs from it is only that it is
-systematic rather than noise, which is why this module can model it exactly instead of padding
-for it.
+and one back, very nearly cancel. What is left over is a few centimetres of drift, and some of
+that drift is INHERENT, not a defect waiting to be tuned out: the two strokes of a pair turn
+about two circles that are not concentric, so the pair does not close. At the fitted radii the
+mismatch between the two locks' radii is a large share of it all the same - if both strokes ran
+at the pair's larger radius, that would remove about 48% of the right pivot's drift and 87% of
+the left's, measured 2026-09-25 at the fitted radii - but never all of it. What the planner
+needs from it is only that it is systematic rather than noise, which is why this module can
+model it exactly instead of padding for it.
 
 This module is `turn.py` applied to that compound manoeuvre, and it is deliberately the same
 shape: one derivation of the geometry, cached as offsets from the origin, rejected on a
@@ -27,11 +28,10 @@ from math import atan2, ceil, cos, degrees, radians, sin
 
 import numpy as np
 
-import config
 from pathfinding.search.instructions import PivotInstruction, TurnInstruction
 from pathfinding.search.turn import _ANTICLOCKWISE, _LEFT_LOCK
 from pathfinding.world.primitives import Direction, Vector
-from pathfinding.world.world import World, Robot
+from pathfinding.world.world import World
 
 
 @dataclass(frozen=True, eq=False)
@@ -41,8 +41,8 @@ class _Shuffle:
 
     Cacheable for the reason :class:`~pathfinding.search.turn._Arc` is: every coordinate
     :func:`__shuffle` produces is the starting cell plus a constant, so the shape depends only
-    on ``(direction, instruction, both radii, offset, stroke count, robot extents)`` and a call
-    is a translation. A pivot's shape is dearer to derive than an arc's - it is several strokes
+    on ``(direction, instruction, both radii, the lead, the stroke count)`` and a call is a
+    translation. A pivot's shape is dearer to derive than an arc's - it is several strokes
     of sampled arc rather than one - which makes the cache worth more here, not less.
 
     :param direction: The post-pivot facing, shared by every cell and the end pose. The heading
@@ -70,9 +70,9 @@ class _Shuffle:
     end: tuple[int, int]
 
 
-# Keyed by everything a pivot's shape depends on. The stroke count and both radii are in the key
-# as well as the robot, because all three are config the STM owner is expected to replace at
-# runtime, and a stale shape would be a plan for a manoeuvre the car no longer drives.
+# Keyed by everything a pivot's shape depends on. The stroke count, both radii and the lead are in
+# the key because all of them come from config the STM owner is expected to replace at runtime,
+# and a stale shape would be a plan for a manoeuvre the car no longer drives.
 _SHUFFLES: dict[tuple, _Shuffle] = {}
 
 # The two steering locks one pivot alternates, forward stroke first, keyed by which way its nose
@@ -104,10 +104,9 @@ def pivot(world: World, start: Vector, instruction: PivotInstruction) -> list[Ve
     Performs a pivot: a shuffle turn, close to on the spot.
 
     Same contract as :func:`~pathfinding.search.turn.turn`, and the same machinery behind it.
-    The shape is derived once per ``(direction, instruction, radii, offset, strokes, robot
-    extents)`` and cached as offsets; a call translates them by ``start``, rejects the pivot
-    outright if its bounding box leaves the arena, and otherwise reads every cell in one numpy
-    operation.
+    The shape is derived once per ``(direction, instruction, radii, lead, strokes)`` and cached
+    as offsets; a call translates them by ``start``, rejects the pivot outright if its bounding
+    box leaves the arena, and otherwise reads every cell in one numpy operation.
 
     The cells are the robot's CENTRE path. They are checked against whatever grid ``world``
     carries, which is NOT on its own enough for a pivot: the ordinary grid inflates obstacles
@@ -122,24 +121,25 @@ def pivot(world: World, start: Vector, instruction: PivotInstruction) -> list[Ve
     :return: The path of the pivot if it is legal, otherwise returns None.
     """
 
-    # Call-time config rule: the radii, the pivot offset and the stroke count are all read from
-    # config on every call, so freshly measured values can be dropped in at runtime. All three
-    # are part of the cache key, so doing so invalidates the cached shape by itself.
+    # Call-time config rule: the fits and the stroke count are read from config on every call, so
+    # freshly measured values can be dropped in at runtime. All are part of the cache key, so
+    # doing so invalidates the cached shape by itself.
     cell_size = world.cell_size
     locks = _LOCKS[instruction.clockwise]
     radii = tuple(lock.radius(cell_size) for lock in locks)
-    offset = config.TURN_PIVOT_OFFSET_CM // cell_size
+    # One lead for the whole shuffle: it is one dimension of one chassis - rear pivot to centre -
+    # and the two locks' fitted leads differ only by tape noise, so the mean is the honest single
+    # figure.
+    lead = sum(lock.lead(cell_size) for lock in locks) / len(locks)
     strokes = instruction.strokes()
 
-    robot = world.robot
-    key = (start.direction, instruction, radii, offset, strokes,
-           robot.north_length, robot.east_length, robot.south_length, robot.west_length)
+    key = (start.direction, instruction, radii, lead, strokes)
 
     try:
         shuffle = _SHUFFLES[key]
     except KeyError:
         shuffle = _SHUFFLES[key] = __shuffle(
-            start.direction, instruction, locks, radii, offset, strokes, robot
+            start.direction, instruction, locks, radii, lead, strokes
         )
 
     x, y = start.x, start.y
@@ -167,41 +167,39 @@ def __shuffle(
     direction: Direction,
     instruction: PivotInstruction,
     locks: tuple[TurnInstruction, ...],
-    radii: tuple[int, ...],
-    offset: int,
+    radii: tuple[float, ...],
+    lead: float,
     strokes: int,
-    robot: Robot,
 ) -> _Shuffle:
     """
     Builds one cache entry: the pivot's centre path as offsets from the starting cell.
 
-    Per stroke this is `turn.__geometry`'s statement of a turn, unchanged - the robot pivots
-    about a point ``lead`` behind its centre, the turning circle sits ``radius`` to the side the
-    steering lock chooses, the rear point rides that circle through the angle the robot turns
-    through, and the new centre is ``lead`` ahead of where the rear point lands - run once per
-    stroke with the locks alternating and each stroke starting from where the last one left off.
-    Deriving it rather than writing it out is the same bet `turn.__geometry` made and won:
-    sixteen hand-written cases there became one derivation that then served eight headings and
-    two turn sizes for free, and this serves four instructions from eight headings at any
-    stroke count with no new cases either.
+    Per stroke this is `turn.__frame`'s statement of a turn, unchanged - the rear pivot sits
+    ``lead`` behind the centre, the car rotates about a point on the line of the rear axle
+    ``radius`` to the side the steering lock chooses, the rear pivot rides that circle through
+    the angle the robot turns through, and the new centre is ``lead`` ahead of where the rear
+    pivot lands - run once per stroke with the locks alternating and each stroke starting from
+    where the last one left off. Deriving it rather than writing it out is the same bet
+    `turn.__frame` made and won: sixteen hand-written cases there became one derivation that
+    then served eight headings and two turn sizes for free, and this serves four instructions
+    from eight headings at any stroke count with no new cases either.
 
-    Two things are NOT `turn.__geometry`, and both matter:
+    Two things are NOT `turn.__frame`, and both matter:
 
     * **The heading is a float.** At the default two strokes per 45 degrees the car passes
       through 22.5 degrees, which no `Direction` names, so the derivation works in continuous
       compass degrees and `Direction.of_degrees` is called once, at the end. Reaching for
       `Direction.unit` mid-manoeuvre - the obvious thing, and what a turn does - would quantise
       every intermediate pose to the nearest eighth and the strokes would stop cancelling.
-    * **Nothing is rounded until a cell is emitted.** A turn rounds its rear point because it is
-      an integer anchor for a midpoint-circle walk; here each stroke's end is the next stroke's
-      start, so rounding would accumulate over the strokes and show up as drift the car does not
-      actually have. The grid only ever sees `round` applied to a finished centre.
+    * **Nothing is rounded until a cell is emitted.** A turn is one stroke, so no later stroke
+      inherits where it stopped; here each stroke's end is the next stroke's start, so rounding
+      would accumulate over the strokes and show up as drift the car does not actually have. The
+      grid only ever sees `round` applied to a finished centre.
 
     Angles are maths angles, anticlockwise from the x axis, which is why the compass delta is
-    negated. Assumes a square robot, so that one ``lead`` serves every heading; `Entity` and the
-    parity bump make that true by construction.
+    negated. One ``lead`` serves every heading and both strokes: :func:`pivot` passes the mean
+    of the two locks' fitted leads.
     """
-    lead = robot.south_length - offset
     theta = instruction.degrees / strokes
 
     heading = float(direction.degrees)

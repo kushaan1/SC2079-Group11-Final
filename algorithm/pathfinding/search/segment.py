@@ -207,12 +207,15 @@ def reach(
 
 class _FreeWorld:
     """
-    A stand-in world that refuses nothing, used to read a turn's shape.
+    A stand-in world that refuses nothing, used to read a turn's or a pivot's shape.
 
-    :func:`~pathfinding.search.turn.turn` builds an arc from ``(direction, instruction,
-    radius, pivot offset, robot extents)`` and translates it to the start pose, so the path it
-    returns from the origin of a world with nothing in it IS that arc as offsets. This is the
-    only thing this class is for; every legality question is asked of the real world's grid.
+    :func:`~pathfinding.search.turn.turn` builds an arc from ``(direction, instruction, the
+    measured (across, along) pair)`` and :func:`~pathfinding.search.pivot.pivot` a shuffle from
+    ``(direction, instruction, radii, lead, strokes)``, and each translates its shape to the
+    start pose, so the path either returns from the origin of a world with nothing in it IS that
+    shape as offsets. This is the only thing this class is for; every legality question is asked
+    of the real world's grid. Neither reads ``robot`` any more - a turn's geometry is measured,
+    not derived from the planning footprint - so that attribute is carried but unread.
     """
 
     def __init__(self, world: World):

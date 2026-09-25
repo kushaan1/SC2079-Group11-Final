@@ -184,7 +184,7 @@ branch-and-bound up to 9 obstacles.** Three choices, taken together on 2026-09-0
 
 - *Time, not distance.* `cost` stays centimetres, but the optimiser minimises
   `straight_cm / ROBOT_SPEED_CM_S + turns × TURN_TIME_S` (`pathfinding/cost.py`). At the current
-  30 cm/s and 3 s per quarter-turn a turn is worth 90 cm of straight, so the shortest route and
+  25 cm/s and 3 s per quarter-turn a turn is worth 75 cm of straight, so the shortest route and
   the quickest route are genuinely different routes. **Both constants are guesses until STM
   measures them**, which is a real limitation and not a rounding error: change them and the
   chosen order can change. It is still the right objective — the competition scores time — and it
@@ -206,6 +206,65 @@ branch-and-bound up to 9 obstacles.** Three choices, taken together on 2026-09-0
   RPi's client was generated before it did. Greedy stays selectable because reproducing an old
   plan needs the old planner.
 
+**The turn model is fitted per command from two-axis tape measurements.** A car at fixed
+steering lock rotates about a point on the line of its rear axle; the rear axle's midpoint (the
+rear pivot) rides a circle of radius R about it, and the centre sits L (the lead) ahead of the
+rear pivot. After a 90 the centre has moved `R + L` across and `R - L` along (forward commands;
+backward ones swap the two). The reference's single lead of `south_length - 3 = 12` cm and its
+one radius per 90 command were inherited unchanged, and on 2026-09-18 and 09-25 the four 90
+radii and the four 45 displacements were "measured" as the straight-line distance between the
+centre marks - a chord, `2 * sqrt(R^2 + L^2) * sin(theta/2)`, read as R for a 90 and as
+`R * sin(45)` for a 45. Every planned 90 then ended 20-27 cm past the real car and every 45
+about 4 cm past.
+
+On 2026-09-25 each of the eight commands was measured as an (across, along) pair of the centre
+(`config.TURN_DISPLACEMENT_CM`), and `TurnInstruction.fit` solves each pair for its own (R, L):
+
+| command | R | L |
+|---|---|---|
+| FORWARD_LEFT | 26.3 | 10.8 |
+| FORWARD_RIGHT | 37.5 | 9.5 |
+| BACKWARD_LEFT | 31.3 | 9.8 |
+| BACKWARD_RIGHT | 40.0 | 7.0 |
+| FORWARD_LEFT_45 | 31.0 | 13.3 |
+| FORWARD_RIGHT_45 | 37.1 | 14.3 |
+| BACKWARD_LEFT_45 | 32.4 | 7.1 |
+| BACKWARD_RIGHT_45 | 41.6 | 8.1 |
+
+L is one chassis property and comes out 7-14 cm on all eight, which is the evidence the
+rear-pivot circle is the right idealisation; the spread is tape noise, amplified on the 45s,
+plus the steering transient at the start of each arc. Three choices follow. *Each command keeps
+its own (R, L)* rather than sharing a mean L, because that is what makes every end pose exact
+and it absorbs whatever the transient is; a 45 is not derived from a 90 or vice versa. *The end
+pose comes from the tape, not the circle*: the fit makes the two agree analytically, and
+pinning the pose to the measurement means no rounding inside the arc can move where the car is
+planned to stop. *The collision check keeps its form* - the rear pivot's arc is checked and the
+end pose appended unchecked - re-parameterised but not made stricter or looser, by the algo
+owner's decision. `TURN_PIVOT_OFFSET_CM`, `TURN_RADIUS_CM` and `TURN_45_DISPLACEMENT_CM` are
+gone; the arc no longer depends on the planning footprint, because the pivot point is measured.
+What no fit removes is the car's own scatter: 5-7 cm between sessions on two of the 90s and one 45.
+
+**The response carries the centre after every instruction and through every turn.** The RPi
+drew the tablet's robot marker from its own dead reckoning between captures, with its own copy
+of the turn radii and its own 45 degree formula, and it drifted 15-38 cm inside a segment. The
+team's rule is that all motion calibration lives in the planner, so on 2026-09-25 (the RPi
+owner's handover) two additive, verbose-only fields were added: `poses`, one centre pose per
+instruction, and `centre_path`, the centre's line through the segment including the arcs, from
+`turn.centre_arc` at no more than `CENTRE_PATH_SPACING_CM` between points. `path` was left
+exactly as it was - it is the rear pivot's cells, useful for the collision check and the
+simulator, wrong to draw a car from - and `verbose: false` responses are unchanged apart from
+those two keys, sent empty. With these the RPi deletes its radii and its dead reckoning. The
+response models require non-negative coordinates, and turns collision-check the rear pivot, not
+the centre, so a centre point carried right through the arena's 14-cell boundary band to a
+negative coordinate would fail the whole request with a 500. The exposure is theoretical.
+Mid-turn the centre rides a circle only `sqrt(R^2 + L^2) - R` wider than the rear pivot's
+checked one: under 3 cm at today's fits and under 4 cm with a 14.5 cm lead, against a 14 cm
+band. The whole lead can overhang the band only at a turn's end pose, which is appended
+unchecked, and a turn that ends facing the wall that closely leaves the car where every next
+move is refused, so no returned route contains it. A sweep of 1,350 random arenas on 2026-09-25
+with the leads raised to 14.5-19.4 cm never produced a negative coordinate (the minimum was 4).
+A lead re-measured above 14.5 cm is therefore not a reason to discard it.
+
 ## Known gaps
 
 Carried here so they are not rediscovered as surprises. The user-facing version is in
@@ -217,14 +276,16 @@ Carried here so they are not rediscovered as surprises. The user-facing version 
    45 cm gives 3 cells. The real chassis is ~18.6–18.8 cm wide and physically fits a 30 cm gap with
    ~11 cm to spare — it is the conservative *planning* footprint that does not. Target for the fix:
    `ROBOT_FOOTPRINT_CM + 2 × OBSTACLE_CLEARANCE_CM ≤ 28`.
-2. **The turning radii are not ours.** 39/40/37/39 cm are the prior-year team's measurements on
-   *their* car. Radius also grows with speed. These need re-measuring on our chassis at competition
-   speed; every plan is only as true as they are.
-3. **The standoff band is a placeholder.** 25–30 cm, inherited. The course documents state the
-   camera optimum three mutually inconsistent ways. CV needs to pick one against the real lens.
+2. **The turn model is measured, one run per command, on 2026-09-25.** See the design decision
+   above. Not yet measured: repeatability (two sessions differ by 5-7 cm on two 90s and one 45), the
+   steering transient's length, and the straight speed and turn time the time model needs.
+3. **Standoff is 12..36 cm from the planning box's leading edge**, chosen for a camera 15-40 cm
+   from the face on the assumption that the lens sits 11.5 cm ahead of the centre mark. The
+   lens offset has not been measured. Because the search takes the cheapest pose in the band,
+   the far end is chosen often; if CV wants the camera near 20 cm, lower `STANDOFF_MAX_CM`.
 4. **The time model's constants are guesses.** Visiting-order optimisation is done (2026-09-03,
    `pathfinding/search/tour.py`): `strategy: "optimal"` is the HTTP default and satisfies
-   checklist item B.3. `ROBOT_SPEED_CM_S` (30) and `TURN_TIME_S` (3.0) are placeholders until STM
+   checklist item B.3. `ROBOT_SPEED_CM_S` (25) and `TURN_TIME_S` (3.0) are placeholders until STM
    measures them, and the chosen order depends on their ratio. Held–Karp was replaced by
    exhaustive branch-and-bound over real re-planned routes with the leg matrix as the lower bound
    (see "Design decisions"); the matrix still costs **9 searches at N=8, not 56**, because one

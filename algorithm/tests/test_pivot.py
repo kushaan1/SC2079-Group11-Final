@@ -183,7 +183,7 @@ def test_a_pivot_barely_moves_the_robot(instruction):
     """
     The property that makes a pivot a pivot rather than an expensive turn.
 
-    One 90 degree `FORWARD_RIGHT` arc carries the centre (52, 28) cm away from where it
+    One 90 degree `FORWARD_RIGHT` arc carries the centre (47, 28) cm away from where it
     started - asserted below, so that number cannot rot - and the search reaches for a pivot
     precisely where that displacement is unwanted or will not fit. A shuffle that alternated
     its locks from the wrong one of the pair, or that put a turning circle on the wrong side of
@@ -191,13 +191,14 @@ def test_a_pivot_barely_moves_the_robot(instruction):
     path in driving order; what it would stop doing is cancelling, and it would drive away like
     an arc. This is the test that sees that, and the only one that does.
 
-    15 cells is a bound, not a measurement: the real figure is under 7 at the placeholder
-    radii, and the slack is there so that re-measuring `TURN_RADIUS_CM` does not fail a test
-    that is asserting the wrong thing. What it rules out is a manoeuvre of an arc's magnitude.
+    15 cells is a bound, not a measurement: the real figure is under 10.5 at the fitted radii
+    (the left 90's), and the slack is there so that re-measuring `TURN_DISPLACEMENT_CM` does not
+    fail a test that is asserting the wrong thing. What it rules out is a manoeuvre of an arc's
+    magnitude.
     """
     world = empty_world()
     arc = turn(world, Vector(Direction.NORTH, 100, 100), TurnInstruction.FORWARD_RIGHT)[-1]
-    assert (arc.x - 100, arc.y - 100) == (52, 28), "the arc this is contrasted with has moved"
+    assert (arc.x - 100, arc.y - 100) == (47, 28), "the arc this is contrasted with has moved"
 
     for direction in Direction:
         end = pivot(world, Vector(direction, 100, 100), instruction)[-1]
@@ -253,13 +254,13 @@ def test_a_pivot_is_the_same_manoeuvre_from_every_heading(instruction):
     `Direction` names. `Direction.of_degrees` would round it to NORTH going one way round and to
     EAST going the other, and the eight headings would stop being rotations of one another.
 
-    That failure is nearly invisible from anywhere else: it keeps the end heading exact, keeps
-    the path connected, and leaves the drift small enough to pass the bound above from most
-    headings. Here it shows up as a spread of 5.3 to 9.2 cells against the one allowed.
+    That failure is nearly invisible from anywhere else: it keeps the end heading exact and, at
+    the fitted radii, leaves the drift small enough to pass the bound above from every heading.
+    Here it shows up as a spread of 3.8 to 10.2 cells against the one allowed.
 
     A cell of tolerance, not zero, because the drift is rounded onto the integer grid at the
-    end: the cardinal headings and the diagonal ones round differently, which is the 0.4 cell
-    alternation this sees at the placeholder radii.
+    end: the cardinal headings and the diagonal ones round differently, which is the 0.3 cell
+    alternation this sees at the fitted radii.
     """
     world = empty_world()
     drifts = [
@@ -271,14 +272,14 @@ def test_a_pivot_is_the_same_manoeuvre_from_every_heading(instruction):
 
 
 @pytest.mark.parametrize("perturbed", (
-    "the forward radii", "the backward radii", "the pivot offset", "the stroke count",
+    "the forward radii", "the backward radii", "the lead", "the stroke count",
 ))
 def test_the_shape_follows_the_config_it_was_derived_from(perturbed, monkeypatch):
     """
     `config.py`'s call-time rule, and the cache key that rule depends on, in one assertion.
 
-    Every number a pivot's shape is made of is a placeholder the STM owner is expected to
-    replace, and `pivot()` caches the shape it derives. Two ways to get this wrong and neither
+    Every number a pivot's shape is made of is one the STM owner is expected to re-measure or
+    retune, and `pivot()` caches the shape it derives. Two ways to get this wrong and neither
     shows up as an error: read the constants once at import, or leave one of them out of the
     cache key. Both end with the planner serving a shape for a manoeuvre the car no longer
     drives, from the second call onward, with `config.py` saying something else entirely.
@@ -291,17 +292,35 @@ def test_the_shape_follows_the_config_it_was_derived_from(perturbed, monkeypatch
     The backward case earns its keep twice over, because the backward radius is the number a
     shuffle uses and an identically named turn does not: a stroke loop that reached for the
     forward radius on both strokes - a plausible slip, the two strokes being otherwise
-    symmetrical - passes every other test in this file and fails only this one.
+    symmetrical - fails this case whatever the radii are. At the fitted radii some of the arena
+    tests below fail on it as well, but only incidentally, because they pin the exact shape; for
+    a pair whose two radii agree, this case is the only one that can see it.
+
+    Both of those depend on each case moving ONE number and nothing else. A radius and the lead
+    are both fitted from the same tape pairs, so each pair is moved along the line that holds
+    the other still: `(a + 2, b + 2)` on a forward 90 and `(a + 2, b - 2)` on a backward one
+    raise R by 2 with L untouched, and the lead case is the mirror image, raising L by 2 with R
+    held. Setting a pair to a round radius instead - `(25, 25)` is a forward 90 of radius 25 and
+    lead 0 - drags the shuffle's mean lead along with it, and then a cache key holding no radius
+    at all, and the forward-radius-twice slip above, pass every case.
     """
     # Each changed to something the default is not, in the direction that moves the shape: a
-    # radius because it is what each stroke arcs around, the offset because it is what sets
-    # `lead`, the stroke count because it is what sets the swing per stroke.
+    # radius because it is what each stroke arcs around, the lead because it is what carries the
+    # centre ahead of the rear pivot, the stroke count because it is what sets the swing per
+    # stroke. 2026-09-25: re-expressed on `TURN_DISPLACEMENT_CM` when the tape pairs replaced the
+    # radius table and the pivot offset. The radius cases are deliberately NOT round L = 0 pairs;
+    # the docstring's last paragraph says why, and mutants run on that date confirmed it.
+    pairs = config.TURN_DISPLACEMENT_CM
     changed = {
-        "the forward radii":
-            ("TURN_RADIUS_CM", dict(config.TURN_RADIUS_CM, FORWARD_LEFT=25, FORWARD_RIGHT=25)),
-        "the backward radii":
-            ("TURN_RADIUS_CM", dict(config.TURN_RADIUS_CM, BACKWARD_LEFT=25, BACKWARD_RIGHT=25)),
-        "the pivot offset": ("TURN_PIVOT_OFFSET_CM", 9),
+        "the forward radii": ("TURN_DISPLACEMENT_CM", dict(pairs, **{
+            name: (across + 2, along + 2) for name, (across, along) in pairs.items()
+            if name in ("FORWARD_LEFT", "FORWARD_RIGHT")})),
+        "the backward radii": ("TURN_DISPLACEMENT_CM", dict(pairs, **{
+            name: (across + 2, along - 2) for name, (across, along) in pairs.items()
+            if name in ("BACKWARD_LEFT", "BACKWARD_RIGHT")})),
+        "the lead": ("TURN_DISPLACEMENT_CM", dict(pairs, **{
+            name: (across + 2, along - 2) if name.startswith("FORWARD") else (across - 2, along - 2)
+            for name, (across, along) in pairs.items() if not name.endswith("_45")})),
         "the stroke count": ("PIVOT_STROKES_PER_45", 4),
     }
     name, value = changed[perturbed]
@@ -324,10 +343,10 @@ def test_a_pivot_that_does_not_fit_is_refused():
     comes back as None, and the shape is what decides that, not the cell it starts on.
 
     The obstacle here is placed so the cell the robot stands on stays free and it could still
-    drive five cells straight ahead - only the swing to the east is blocked. That is the case
-    worth pinning, because it is the one a cheaper check would get wrong: refusing on the start
-    cell alone would let a pivot swing through the obstacle, and refusing on the whole
-    bounding box would turn down the left-hand pivots, which have room.
+    drive five cells straight ahead - only the right-hand pivots' swing to the north-east is
+    blocked. That is the case worth pinning, because it is the one a cheaper check would get
+    wrong: refusing on the start cell alone would let a pivot swing through the obstacle, and
+    refusing on the whole bounding box would turn down the left-hand pivots, which have room.
 
     The pose beyond the arena's north edge is not a contrived input. A turn's and a pivot's end
     pose are deliberately NOT collision-checked, so the search does hold poses outside the
@@ -337,8 +356,13 @@ def test_a_pivot_that_does_not_fit_is_refused():
     answered by the eastern wall.
     """
     robot = Robot.planned(Direction.NORTH, Point(0, 0), Point(30, 30))
+    # 2026-09-25: moved 20 cells north, from (125, 100). The fitted left 90 comes to rest 5 cells
+    # EAST of its start and 9 south, and the old placement's inflated box reached down to y - 21,
+    # so it blocked the left 90 along with the right-hand pivots. From here the inflated box
+    # starts at (104, 99): the right-hand pivots cross into it 4 cells east of the start, and the
+    # left 90's cells that far east are 8 cells below it.
     world = World(config.GRID_SIZE, robot,
-                  [Obstacle(Direction.WEST, Point(125, 100), Point(134, 109), 1)])
+                  [Obstacle(Direction.WEST, Point(125, 120), Point(134, 129), 1)])
     start = Vector(Direction.NORTH, 100, 100)
 
     assert world.contains(start)
@@ -388,7 +412,7 @@ def test_a_pivot_is_always_dearer_in_time_than_the_arc_it_replaces():
     The economics the primitive rests on, and the reason it needs no fencing off from open
     ground: at the placeholder figures a 45 degree pivot is 2.0 s against the 45 degree arc's
     1.5, and a 90 is 4.0 against 3.0. The pivot is dearer AND it arrives nowhere - the quarter
-    turn asserted above carries the centre (52, 28) cm, a pivot under 7 - so an optimiser
+    turn asserted above carries the centre (47, 28) cm, a pivot under 11 - so an optimiser
     minimising seconds reaches for one only where that displacement is unwanted or will not fit:
     tight corners, U-turns, squaring up for a final approach. On an open route it never wins.
 
@@ -436,7 +460,7 @@ def test_a_pivot_is_charged_the_ground_its_wheels_cover(instruction):
     strokes = instruction.strokes()
     forward, backward = _STROKE_LOCKS[instruction.clockwise]
     expected = (strokes / 2) * math.radians(instruction.degrees / strokes) * (
-        config.TURN_RADIUS_CM[forward] + config.TURN_RADIUS_CM[backward]
+        TurnInstruction(forward).radius(1) + TurnInstruction(backward).radius(1)
     )
 
     assert cost.DISTANCE_CELLS.pivot(instruction) == pytest.approx(expected)
@@ -481,8 +505,9 @@ def test_a_pivot_is_priced_against_the_two_locks_it_actually_alternates(monkeypa
     FORWARD_LEFT with BACKWARD_RIGHT. Look the radii up under the other handedness - or under
     the forward lock twice, the two strokes being otherwise symmetrical - and the cost is still
     positive, still scales with the swing, still reads config at call time, and is wrong by the
-    gap between the radii. At the placeholder 40/37/39/39 that gap is under half a percent:
-    exactly the size of error that survives review and then quietly picks the wrong route.
+    gap between the radii. At the fitted radii (37.5 + 31.25 clockwise against 26.25 + 40) a
+    swapped handedness is under 4% out: exactly the size of error that survives review and then
+    quietly picks the wrong route.
 
     So the radii are driven apart until the mistake cannot hide. WHICH WAY they are driven apart
     is the whole substance of this test, and the two obvious choices each have a blind spot:
@@ -498,12 +523,17 @@ def test_a_pivot_is_priced_against_the_two_locks_it_actually_alternates(monkeypa
     gives 1.33 and the backward lock twice gives 4. The expected ratio is stated rather than
     recomputed from the formula, which keeps this an independent check on WHICH radii are read
     instead of a restatement of what is done with them - and, incidentally, pins that they are
-    read at call time, since a model holding the shipped radii would answer about 0.99 here.
+    read at call time, since a model holding the shipped radii would answer about 1.04 here.
     """
-    monkeypatch.setattr(config, "TURN_RADIUS_CM", {
-        "FORWARD_RIGHT": 40, "BACKWARD_LEFT": 40,   # the clockwise shuffle: 80 cells of radius
-        "FORWARD_LEFT": 30, "BACKWARD_RIGHT": 10,   # the anticlockwise one: 40, and not 40/40
-    })
+    # Tape pairs with L = 0, so each is its radius outright: (R, R) is a forward 90 of radius R
+    # and (R, -R) a backward one. The lead plays no part in the price.
+    monkeypatch.setattr(config, "TURN_DISPLACEMENT_CM", dict(
+        config.TURN_DISPLACEMENT_CM,
+        # The clockwise shuffle: 80 cells of radius.
+        FORWARD_RIGHT=(40.0, 40.0), BACKWARD_LEFT=(40.0, -40.0),
+        # The anticlockwise one: 40, and not 40/40.
+        FORWARD_LEFT=(30.0, 30.0), BACKWARD_RIGHT=(10.0, -10.0),
+    ))
 
     for size in (45, 90):
         clockwise = cost.DISTANCE_CELLS.pivot(PivotInstruction[f"PIVOT_RIGHT_{size}"])
@@ -522,15 +552,13 @@ def test_a_pivots_distance_stays_in_cells_at_any_cell_size(instruction):
     size but 1 the search would be told a pivot costs several times what it does and would never
     take one.
 
-    Floor division rather than a scale factor, because that is how a radius becomes cells
-    everywhere else in the planner (`TurnInstruction.radius` floors, and so does the geometry in
-    `pivot.py`). A cost model dividing by 5.0 instead would price a manoeuvre the car does not
-    drive.
+    A radius in cells is the centimetre fit divided by the cell size, which is what
+    `TurnInstruction.radius(5)` returns and what the expected charge below is built from.
     """
     strokes = instruction.strokes()
     forward, backward = _STROKE_LOCKS[instruction.clockwise]
     expected = (strokes / 2) * math.radians(instruction.degrees / strokes) * (
-        config.TURN_RADIUS_CM[forward] // 5 + config.TURN_RADIUS_CM[backward] // 5
+        TurnInstruction(forward).radius(5) + TurnInstruction(backward).radius(5)
     )
 
     assert cost.DISTANCE_CELLS.pivot(instruction, 5) == pytest.approx(expected)
@@ -795,8 +823,8 @@ def _crowded_world():
     """
     A world built so that one pivot, and only that pivot, runs out of ROTATION clearance.
 
-    The obstacle's inflated box stops at x = 78. `PIVOT_LEFT_90` from (100, 100) swings the
-    centre out to x = 82, four clear cells short of it, so every cell of that pivot's centre
+    The obstacle's inflated box stops at x = 86. `PIVOT_LEFT_90` from (100, 100) swings the
+    centre out to x = 90, four clear cells short of it, so every cell of that pivot's centre
     path is free on the ordinary grid and `pivot()` returns a path. Four cells is not enough
     room to rotate in: the robot is off its axis for the whole manoeuvre and needs its
     circumscribed radius, seven cells more than the half-extent the grid was inflated by.
@@ -807,8 +835,10 @@ def _crowded_world():
     pivot's bounding box, would flatten it.
     """
     robot = Robot.planned(Direction.NORTH, Point(0, 0), Point(30, 30))
+    # 2026-09-25: moved 8 cells east, from (48, 100), to keep the gap at four cells: the fitted
+    # left 90 swings its centre 10 cells west of the start, where the old shuffle swung 18.
     return World(config.GRID_SIZE, robot,
-                 [Obstacle(Direction.EAST, Point(48, 100), Point(57, 109), 1)])
+                 [Obstacle(Direction.EAST, Point(56, 100), Point(65, 109), 1)])
 
 
 def test_a_pivot_is_refused_where_the_rotation_clearance_is_missing():
@@ -878,8 +908,11 @@ def test_the_rotation_clearance_is_a_disc_and_not_a_box():
     assert delta == 7, "the 31 cm robot's rotation clearance has moved"
 
     robot = Robot.planned(Direction.NORTH, Point(0, 0), Point(30, 30))
+    # 2026-09-25: moved 8 cells east and 6 south, from (45, 66), with the fitted swing: its
+    # westmost cell is (90, 97) where the old shuffle's was (82, 103), and the inflated corner,
+    # now (83, 90), is again seven cells west and seven south of it.
     cornered = World(config.GRID_SIZE, robot,
-                     [Obstacle(Direction.EAST, Point(45, 66), Point(54, 75), 1)])
+                     [Obstacle(Direction.EAST, Point(53, 60), Point(62, 69), 1)])
 
     for world, inside in ((_crowded_world(), True), (cornered, False)):
         chunks, table = _table_of(world, Direction.NORTH)
@@ -904,14 +937,20 @@ def _pocket_world():
     (23, 60) facing NORTH. The second obstacle faces WEST, into the corridor, and is the only
     one whose goal poses are inside it.
 
-    37 cells is chosen, and it is the whole point of the arena. The narrowest quarter turn out
-    of NORTH is BACKWARD_LEFT, which sweeps 37 cells to the west of wherever it starts and so
-    needs 38; the widest, FORWARD_LEFT, needs 52. A 90 degree pivot sweeps 19 cells to one side
-    and needs 7 more for the rotation clearance, so it fits in 34. The corridor is therefore
-    wide enough to turn on the spot in and too narrow to turn in, which is exactly the
-    situation the primitive was added for and is otherwise hard to come by: with a backward
-    straight available the planner can usually reach any pose it can see, and a pocket tight
-    enough to prevent that is usually tight enough to prevent a pivot too.
+    The robot's column, x = 23, is the whole point of the arena: facing NORTH the robot cannot
+    leave it without turning, and it has 9 free cells to its west and 27 to its east. At the
+    fitted radii the left locks' arcs sweep 26 (FORWARD_LEFT) and 31 (BACKWARD_LEFT) cells west
+    of wherever they start and the right locks' 38 and 40 east, so no quarter turn fits there;
+    a right 90 degree pivot sweeps 17 cells east and needs 7 more for the rotation clearance, 24
+    of the 27. From where the robot stands it can therefore turn on the spot and cannot turn,
+    which is exactly the situation the primitive was added for and is otherwise hard to come
+    by: with a backward straight available the planner can usually reach any pose it can see,
+    and a pocket tight enough to prevent that is usually tight enough to prevent a pivot too.
+
+    2026-09-25: this used to be argued from the corridor's width, which the fitted turns no
+    longer support - FORWARD_LEFT now fits in the corridor from x = 40 and BACKWARD_LEFT from
+    x = 45. Nothing was moved, because neither column is one the robot can reach facing NORTH,
+    and the tests below assert the robot's column rather than the corridor.
     """
     robot = Robot.planned(Direction.NORTH, Point(8, 45), Point(38, 75))
     return World(config.GRID_SIZE, robot, [
@@ -935,9 +974,11 @@ def test_an_obstacle_out_of_reach_without_pivots_is_reachable_with_them():
     once it may turn on the spot. Same world, same weights, one flag.
 
     The arena is built rather than borrowed, and `_pocket_world` says why it has to be. The
-    corridor is 37 cells wide, which is below every quarter turn's sweep out of NORTH and above
-    a 90 degree pivot's. So the robot, which starts facing NORTH, can never face anything else
-    without a pivot - and the obstacle's goal poses all face EAST.
+    robot's column, x = 23, is too close to the west band for either left lock's sweep out of
+    NORTH and too close to the obstacles for either right lock's, and it leaves room for a right
+    90 degree pivot. So the robot, which starts facing NORTH and cannot leave that column
+    without turning, can never face anything else without a pivot - and the obstacle's goal
+    poses all face EAST.
 
     The proof is not left to the two None/not-None answers, which would also be produced by an
     arena that merely got harder. The search's own move table is asserted directly: at the only
@@ -1077,9 +1118,15 @@ def test_a_straight_after_a_pivot_starts_a_new_command():
     assert compressed.vectors == north + shuffle.vectors + east
 
 
+# 2026-09-25: the second obstacle moved from (76, 60) to (127, 63). The fitted right 90 comes to
+# rest at (+6, 0), level with its start, where the old shuffle stopped 3 cells south of it. An
+# inflated NORTH-EAST corner within seven cells of that end cell is then at least as close to the
+# start, six cells west of it on the same row, so no such placement isolates the end. The
+# obstacle comes from the east instead: its inflated north-WEST corner sits seven cells straight
+# below the end and 9.2 from the start.
 @pytest.mark.parametrize("cell, corner", (
     ("the cell it starts from", (70, 63)),
-    ("the cell it comes to rest on", (76, 60)),
+    ("the cell it comes to rest on", (127, 63)),
 ))
 def test_both_ends_of_a_pivots_path_are_checked_for_rotation_clearance(cell, corner):
     """
@@ -1093,13 +1140,14 @@ def test_both_ends_of_a_pivots_path_are_checked_for_rotation_clearance(cell, cor
     pivot like a turn - arc checked, end pose appended unchecked - drops the cell the car comes
     to rest on, still rotated off its axis.
 
-    Both are single cells at the edge of a roughly thirty-cell path, so an arena that catches
-    one has to be built to isolate it: every OTHER cell of the pivot must have its seven cells
-    of rotation clearance while that one does not. Obstacle inflation is a rectangle 52 cells
-    on a side, so the only shape that can be brought that close to one cell of a path without
-    touching its neighbours is a CORNER, and each world here is one obstacle placed so that its
-    inflated north-east corner falls seven cells from the cell under test and more than seven
-    from every other. The pivot is legal on the ordinary grid in both.
+    Both are single cells at the edge of a fifty-odd-cell path, so an arena that catches one
+    has to be built to isolate it: every OTHER cell of the pivot must have its seven cells of
+    rotation clearance while that one does not. Obstacle inflation is a rectangle 52 cells on a
+    side, so the only shape that can be brought that close to one cell of a path without
+    touching its neighbours is a CORNER, and each world here is one obstacle placed so that a
+    corner of its inflated box falls seven cells from the cell under test and more than seven
+    from every other: its north-east corner below the start, its north-west corner below the
+    end. The pivot is legal on the ordinary grid in both.
 
     Left out, the mask says yes and the planner drives a rotation through an obstacle at one
     end of it or the other. Nothing downstream looks again.
@@ -1116,12 +1164,18 @@ def test_both_ends_of_a_pivots_path_are_checked_for_rotation_clearance(cell, cor
     assert path is not None, "the ordinary grid already refuses it, so this proves nothing"
 
     delta = _clearance(world)
-    interior = [(v.x, v.y) for v in path[:-1]]
+    # Every cell the search's mask reads: the start, which the returned path leaves out, and the
+    # path itself, which ends on the end pose.
+    cells = {(start.x, start.y)} | {(v.x, v.y) for v in path}
     under_test = (start.x, start.y) if "starts" in cell else (path[-1].x, path[-1].y)
 
     # Exactly one cell of the manoeuvre is short of clearance, and it is the one named.
+    # 2026-09-25: "every other" now includes the OTHER END. The check used to read `path[:-1]`,
+    # which holds neither the start nor the end, so it could not see an obstacle crowding both -
+    # which is what moving the old corner 3 cells north, to (76, 63), produces at the fitted
+    # radii: both ends 7.0 cells from it, and the old check passing.
     assert _nearest_blocked(world, [under_test])[1] <= delta, cell
-    assert _nearest_blocked(world, set(interior) - {under_test})[1] > delta, cell
+    assert _nearest_blocked(world, cells - {under_test})[1] > delta, cell
 
     chunks, table = _table_of(world, Direction.NORTH)
     assert not table[_pivot_code(PivotInstruction.PIVOT_RIGHT_90, chunks)](100, 100)
@@ -1141,11 +1195,11 @@ def test_the_virtual_boundary_is_not_eroded_but_is_still_a_wall():
 
     Two cells, one either side of the sharp edge, and they pull in opposite directions:
 
-    * At x = 32 a `PIVOT_LEFT_90` swings its centre out to x = 14, the first legal cell of the
+    * At x = 24 a `PIVOT_LEFT_90` swings its centre out to x = 14, the first legal cell of the
       arena. Every cell of the manoeuvre is a legal centre cell, and the only thing within
       seven cells of the swing is the virtual line. It must be OFFERED. Under an erosion of
       the whole grid it is refused, and this assertion is what says so.
-    * At x = 31 the same swing reaches x = 13, which is inside the keep-out band. The robot's
+    * At x = 23 the same swing reaches x = 13, which is inside the keep-out band. The robot's
       CENTRE may not go there, virtual boundary or not, and the corresponding hard property is
       that the eroded grid stays a subset of the free one. It must be REFUSED - and it is
       refused for the ordinary reason, which `pivot()` agrees with.
@@ -1156,13 +1210,16 @@ def test_the_virtual_boundary_is_not_eroded_but_is_still_a_wall():
     chunks, table = _table_of(world, Direction.NORTH)
     code = _pivot_code(PivotInstruction.PIVOT_LEFT_90, chunks)
 
-    fits = pivot(world, Vector(Direction.NORTH, 32, 100), PivotInstruction.PIVOT_LEFT_90)
+    # 2026-09-25: both starts moved 8 cells west, from x = 32 and 31. The fitted left 90 swings
+    # its centre 10 cells west of where it starts, where the old shuffle swung 18, and these are
+    # the two starts that put its westmost cell either side of the band's edge.
+    fits = pivot(world, Vector(Direction.NORTH, 24, 100), PivotInstruction.PIVOT_LEFT_90)
     assert fits is not None
     assert min(vector.x for vector in fits) == 14, "the swing no longer grazes the band"
-    assert table[code](32, 100), "the virtual boundary was eroded as though it were an obstacle"
+    assert table[code](24, 100), "the virtual boundary was eroded as though it were an obstacle"
 
-    assert pivot(world, Vector(Direction.NORTH, 31, 100), PivotInstruction.PIVOT_LEFT_90) is None
-    assert not table[code](31, 100)
+    assert pivot(world, Vector(Direction.NORTH, 23, 100), PivotInstruction.PIVOT_LEFT_90) is None
+    assert not table[code](23, 100)
 
 
 @pytest.mark.parametrize("world_of, instruction", (

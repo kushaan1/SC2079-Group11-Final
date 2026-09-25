@@ -14,8 +14,10 @@ from pathfinding.search.instructions import Move, Pivot, PivotInstruction, Turn,
 # The two steering locks one pivot alternates, keyed by which way its nose swings. Imported from
 # the geometry rather than restated here, for the reason that table's own comment gives: it is
 # derived from `turn._ANTICLOCKWISE`, and a second copy could disagree with it silently. What
-# disagreement would cost HERE is a pivot priced against the wrong two radii - wrong only by the
-# forward/backward gap, half a percent at the shipped numbers, and invisible in a route.
+# disagreement would cost HERE is a pivot priced against the wrong two radii - the other pivot's
+# pair. At the fitted radii (2026-09-25) the clockwise pair sums to 68.75 cm of radius and the
+# anticlockwise pair to 66.25, so either priced as the other is off by about 3.7% of its
+# distance price, and nothing would raise.
 from pathfinding.search.pivot import _LOCKS
 from pathfinding.world.primitives import Direction
 
@@ -52,9 +54,9 @@ class _Distance:
         Half the strokes run on the forward lock and half on the backward one - that is what
         makes a shuffle a shuffle - and each sweeps ``degrees / strokes``, so the total is
         ``(strokes / 2) * radians(theta) * (R_forward + R_backward)``. Both radii go through
-        :meth:`TurnInstruction.radius`, which reads ``config.TURN_RADIUS_CM`` at call time and
-        floors it into cells exactly as `pivot.py` floors it, so the cost and the geometry are
-        derived from one set of numbers rather than two that have to be kept in step.
+        :meth:`TurnInstruction.radius`, which fits ``config.TURN_DISPLACEMENT_CM`` at call time
+        exactly as `pivot.py` reads it, so the cost and the geometry are derived from one set of
+        numbers rather than two that have to be kept in step.
 
         The stroke count CANCELS out of that expression - ``(s / 2) * radians(d / s)`` is
         ``radians(d) / 2`` for any ``s`` - and it is written out anyway, in the form the
@@ -67,11 +69,12 @@ class _Distance:
         collapsed to `radians(d) / 2` this would read as a formula that simply forgot about
         strokes, which is a different and much less trustworthy-looking claim.
 
-        The figures this produces are not small: at the shipped radii a 90 degree pivot covers
-        about 60 cells of wheel travel against a quarter turn's 63, for none of that turn's
-        52 by 28 cm of progress. Nearly as dear as the arc and achieving nothing - the same
-        verdict :meth:`_Time.pivot` reaches by a different route, which is what one would want
-        of two models of the same manoeuvre.
+        The figures this produces are not small: measured 2026-09-25 at the fitted radii, a 90
+        degree pivot covers about 54 cells of wheel travel turning right (52 turning left)
+        against a FORWARD_RIGHT quarter turn's 59, for none of that turn's 47 by 28 cm of
+        progress. Nearly as dear as the arc and achieving nothing - the same verdict
+        :meth:`_Time.pivot` reaches by a different route, which is what one would want of two
+        models of the same manoeuvre.
         """
         strokes = instruction.strokes()
         theta = instruction.degrees / strokes
@@ -89,10 +92,10 @@ class _Time:
     speed per straight."""
 
     def turn(self, turn: TurnInstruction, cell_size: int = 1) -> float:
-        # TURN_TIME_S is quoted per 90 degrees. A 45 is the same steering lock held for half as
-        # long - same radius, half the arc - so it is charged half. Flat-rating both would price
-        # two 45s exactly like one 90 that covers twice the ground, which is the sort of tie the
-        # optimiser resolves by picking the wrong one.
+        # TURN_TIME_S is quoted per 90 degrees. A 45 is the same steering lock held for about half
+        # as long - its own fitted radius, roughly half the arc - so it is charged half.
+        # Flat-rating both would price two 45s exactly like one 90 that covers twice the ground,
+        # which is the sort of tie the optimiser resolves by picking the wrong one.
         return config.TURN_TIME_S * turn.degrees / 90
 
     def pivot(self, instruction: PivotInstruction, cell_size: int = 1) -> float:
@@ -108,41 +111,43 @@ class _Time:
         **The economics, which are the whole point of the primitive.** At the figures shipped
         today a 45 degree pivot costs 2.0 s against 1.5 s for a 45 degree arc, and a 90 costs
         4.0 against 3.0. A pivot is therefore ALWAYS dearer in time than the turn it replaces,
-        and it gains no ground while being dearer: a quarter-turn arc carries the robot (52, 28)
-        cm of useful travel, a shuffle carries it about 6, and that 6 is drift it did not ask
-        for rather than progress.
+        and it gains no ground while being dearer: a FORWARD_RIGHT carries the robot (47, 28) cm
+        of useful travel, a 90 degree shuffle carries it about 6 turning right and 10 turning
+        left (measured 2026-09-25 at the fitted radii), and that is drift it did not ask for
+        rather than progress.
 
         That inequality is deliberate, and what it buys is that a pivot is never a cheaper way
         of doing what a turn already does. What it does NOT buy - and an earlier draft of this
         docstring, and of the design spec, both claimed that it did - is that a pivot stays out
         of open ground. The comparison above is against the SINGLE turn a pivot replaces, and
         the search does not substitute one move for one move: it substitutes a sequence. A
-        quarter turn buys its heading and 52 by 28 cm of displacement in the same breath, and
+        FORWARD_RIGHT buys its heading and 47 by 28 cm of displacement in the same breath, and
         where that displacement is not where the route wanted to go it has to be undone - by a
         straight, or by another turn, or by both.
 
         So a pivot wins wherever the corrective travel it avoids is dearer than the premium it
         charges, and that happens on perfectly open arenas. `04-five-obstacles`, image 11,
         priced under this model, from the robot's own start pose to the same goal-pose set with
-        only the flag changed:
+        only the flag changed (measured 2026-09-25 at the fitted radii, four headings):
 
-            without   FORWARD 50, BACKWARD_RIGHT, BACKWARD 30, FORWARD_RIGHT, BACKWARD 20   9.33 s
-            with      FORWARD 5, PIVOT_RIGHT_90, FORWARD 5, FORWARD_LEFT, BACKWARD 20       8.00 s
+            without   FORWARD 50, BACKWARD_RIGHT, BACKWARD 25, FORWARD_RIGHT, BACKWARD 5    9.20 s
+            with      PIVOT_RIGHT_90, FORWARD 10, FORWARD_LEFT                             7.40 s
 
         The mechanism is legible in the first three commands. Without a pivot the route has to
-        drive 50 cm up the arena to buy the room for a quarter turn, and then reverse 30 cm of
+        drive 50 cm up the arena to buy the room for a quarter turn, and then reverse 25 cm of
         that straight back out again, because it wanted the heading and not the journey. With
-        one it rotates after 5 cm. The pivot is dearer than the `BACKWARD_RIGHT` it stands in
-        for and 1.33 s cheaper than that turn plus the 75 cm of straight the turn dragged in
-        with it. The largest such saving on this arena is image 13's, 23.17 s to 18.33 s.
+        one it rotates where it stands. The pivot costs 1.00 s more than the `BACKWARD_RIGHT` it
+        stands in for and buys back the 70 cm of straight that turn dragged in with it, 2.80 s
+        at 25 cm/s, so the leg is 1.80 s cheaper. The largest such saving on this arena is image
+        13's, 21.00 s to 18.60 s.
 
-        Whole routes move the same way: :func:`~pathfinding.search.tour.plan_optimal` takes
-        this arena from 62.33 s to 52.00 s with the flag on. Per-LEG figures out of that
-        comparison are not like for like and should not be quoted - the visit order changes
-        between the two plans, so a given obstacle's leg starts from a different pose in each.
-        The per-leg numbers above are one-obstacle searches from one fixed start pose, which is
-        the comparison that isolates the primitive. The primitive is doing better than it was
-        specified to, not worse.
+        Whole routes move the same way, if by less: measured the same day,
+        :func:`~pathfinding.search.tour.plan_optimal` takes this arena from 46.40 s to 45.80 s
+        with the flag on, using three pivots. Per-LEG figures out of that comparison are not like
+        for like and should not be quoted - the visit order changes between the two plans, so a
+        given obstacle's leg starts from a different pose in each. The per-leg numbers above are
+        one-obstacle searches from one fixed start pose, which is the comparison that isolates
+        the primitive. The primitive is doing better than it was specified to, not worse.
 
         The claim this model supports is therefore the narrow one, and it is the one to quote:
         a pivot costs more than the turn it replaces, so the search reaches for one only where
