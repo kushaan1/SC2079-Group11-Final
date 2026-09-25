@@ -111,7 +111,7 @@ ROBOT_BODY_CM = (19, 23)
 # The greedy planner still costs in cm and does not read it.
 # SOURCE: STM | placeholder | NOT MEASURED. 30 is a guess. Update together with
 #   TURN_RADIUS_CM, which must be measured at the same speed.
-ROBOT_SPEED_CM_S = 30  #
+ROBOT_SPEED_CM_S = 25  #
 
 # ---------------------------------------------------------------------------------------
 # Goal-pose generation (world/objective.py)
@@ -133,12 +133,12 @@ STANDOFF_MIN_CM = 25
 
 # Furthest the robot's leading face may sit from that obstacle face, in cm. Exclusive bound.
 # SOURCE: CV | measured | See STANDOFF_MIN_CM: 13..17 inclusive, a 5 cm band like the original.
-STANDOFF_MAX_CM = 30
+STANDOFF_MAX_CM = 40
 
 # How far the goal pose may slide sideways along the obstacle face, in cm, in each direction.
 # Widening this buys reachability at the cost of off-centre images.
 # SOURCE: ALGO | assumed | Reference value. Should grow as the robot/obstacle size ratio grows.
-LATERAL_TOLERANCE_CM = 10
+LATERAL_TOLERANCE_CM = 0
 
 # Extra lateral slack, IN GRID CELLS, granted only to an obstacle that touches the arena boundary.
 # Such an obstacle has less free space around it, so the planner accepts more off-centre poses.
@@ -157,7 +157,7 @@ BOUNDARY_LATERAL_BONUS_CELLS = 2
 # Extra margin added around every obstacle beyond the robot half-extent, in centimetres.
 # SOURCE: ALGO | assumed | Reference value. The rules require 30 cm straight-line clearance between
 #   obstacles; this 6 cm sits on top of the 15 cm robot half-extent. AGENTS.md 3.2.
-OBSTACLE_CLEARANCE_CM = 18
+OBSTACLE_CLEARANCE_CM = 6
 
 # Adjustment applied to the boundary keep-out band, in centimetres. NEGATIVE: it *relaxes* the
 # boundary by 1 cm, because the arena boundary is virtual and costs nothing to clip.
@@ -179,10 +179,10 @@ BOUNDARY_CLEARANCE_ADJUST_CM = -1
 #   these; re-measure all of it together if the speed setting changes.
 #   These are the QUARTER-TURN radii. The 45 degree commands have their own table below.
 TURN_RADIUS_CM = {
-    "FORWARD_LEFT": 42,
-    "FORWARD_RIGHT": 56,
-    "BACKWARD_LEFT": 41,
-    "BACKWARD_RIGHT": 55,
+    "FORWARD_LEFT": 41,
+    "FORWARD_RIGHT": 60,
+    "BACKWARD_LEFT": 40,
+    "BACKWARD_RIGHT": 56,
 }
 
 # How far the car's centre moves ALONG ITS ORIGINAL HEADING after one 45 DEGREE turn command, in
@@ -195,10 +195,10 @@ TURN_RADIUS_CM = {
 #   today: 34 / 52 / 38 / 45 cm (FL / FR / BL / BR). The quarter turns need no such table because
 #   a 90 degree arc's displacement along the heading IS its radius.
 TURN_45_DISPLACEMENT_CM = {
-    "FORWARD_LEFT": 24,
-    "FORWARD_RIGHT": 37,
-    "BACKWARD_LEFT": 27,
-    "BACKWARD_RIGHT": 32,
+    "FORWARD_LEFT": 21,
+    "FORWARD_RIGHT": 32,
+    "BACKWARD_LEFT": 24,
+    "BACKWARD_RIGHT": 34,
 }
 
 # Offset applied to the pivot point of a turn, in centimetres, to compensate for the fact that the
