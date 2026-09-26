@@ -6,7 +6,7 @@
   ******************************************************************************
   * @attention
   *
-  * Copyright (c) 2026 STMicroelectronics....
+  * Copyright (c) 2026 STMicroelectronics.
   * All rights reserved.
   *
   * This software is licensed under terms that can be found in the LICENSE file
@@ -43,13 +43,15 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c2;
+
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
+TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim8;
 TIM_HandleTypeDef htim9;
 TIM_HandleTypeDef htim12;
-
-I2C_HandleTypeDef hi2c2;
 
 UART_HandleTypeDef huart3;
 
@@ -81,8 +83,68 @@ uint8_t ack_s[] = "ACK,S\r\n";	// Stop (only stop verb — STOP removed)
 // Timed F/B duration (ms). Keep as short jog; use FW <cm> for distance.
 #define MOVE_DURATION_MS 500
 
+// Confirmed 2026-09-20: rear-left wheel (MotorB) visibly spins faster than
+// rear-right (MotorA) at the same commanded duty, off the ground with no
+// load/traction involved -- a real motor/gearbox difference, not floor
+// friction or an encoder artifact. Matches every straight-line encoder trial
+// this whole session: B consistently logs more counts than A, every FW and
+// BW run, forward and backward (~3.3% avg on FW runs, ~1.2% avg on BW runs).
+// This is very likely the source of the "backwards drifts right" observation.
+// Fix: trim A up / B down symmetrically around the commanded duty so the
+// AVERAGE stays ~unchanged (distance calibration above is based on the
+// average of the two encoders, so it shouldn't need re-deriving because of
+// this), only the left/right split shifts. Value is a first pass from the
+// averaged imbalance across FW+BW cal data, not independently re-tuned.
+// 2.5 -> 5.0 (2026-09-20): still drifting right at 2.5, not overcorrected
+// to the left, so direction was right but magnitude too small -- next data
+// point rather than a re-derivation. If 5.0 overshoots into a left drift,
+// split the difference; if still right, keep pushing up. Also worth ruling
+// out separately: whether SERVO_CENTER_US (1500) is actually dead straight
+// on this chassis -- with the car up so wheels spin free, send SC and
+// visually check the front wheels are square to the chassis, not just
+// symmetric between LL/RR. A miscentered SC would cause a constant-direction
+// drift independent of any motor trim and this fix can't correct for that.
+#define MOTOR_TRIM_PCT 5.0f
+
 // FW/BW distance (RPi Task 1: 5–200 cm). Cal was A.3 band 80–120 — short/long may need retune.
-#define COUNTS_PER_100CM 6185
+// Re-derived 2026-09-20 from FW 80 (3 runs) and FW 110 (3 runs), tape-measured:
+//   old C=6185 undershot both -- 80->~77.8cm, 110->~102.3cm.
+//   Encoder overshoot past the old target was ~520-550 counts on BOTH runs
+//   despite the very different target sizes, i.e. roughly a FIXED number of
+//   counts, not a percentage -- consistent with brake/coast momentum during
+//   FW_BRAKE_MS rather than a pure ratio error. True counts/cm (back-solved
+//   from actual measured distance) was ~70-72 both times -> ~7103 counts/100cm.
+//   So the fix is two constants: a corrected ratio, and a fixed count
+//   subtracted from the stop target before checking it, matching how
+//   Pivot_Run already handles PIVOT_STOP_MARGIN_DEG. Only re-verified at
+//   80/110cm so far (within the graded A.3 80-120 band); not reverified at
+//   the short/long extremes of the full 5-200cm range.
+#define COUNTS_PER_100CM 7103
+#define FW_BRAKE_OVERSHOOT_COUNTS 533	// avg counts the car coasts past target during Motors_Brake+FW_BRAKE_MS
+
+// BW given its own constants 2026-09-20: FW 100/120 re-test came back within
+// ~1.7-2.5% of commanded (fine), but BW 80/100/110/120 (12 runs) consistently
+// undershot more than FW -- 80cm landed at -5.4%, close to the A.3 +/-6%
+// edge. Back-solved true ratio from those 12 runs was ~74.18 counts/cm
+// (vs ~72 for FW) and avg brake-coast overshoot ~523 counts -- both close to
+// FW's numbers but consistently a bit higher, so BW no longer borrows FW's
+// constants directly.
+#define BW_COUNTS_PER_100CM 7418
+#define BW_BRAKE_OVERSHOOT_COUNTS 523
+
+// Separately: across every FW *and* BW run logged so far, MotorB(left) has
+// consistently traveled ~50-190 more encoder counts than MotorA(right) for
+// the "same" straight-line command (see ENC data for FW80/FW100/FW110/FW120/
+// BW80/BW100/BW110/BW120). That matches the "backwards drifts right"
+// observation directly -- right side is consistently under-traveling versus
+// left, in both directions, not just reverse. This isn't something
+// COUNTS_PER_100CM can fix (it only tunes the *average* of the two sides).
+// Likely a real mechanical/motor imbalance (tire wear, gearbox, or the
+// MotorA IN1/IN2 swap noted below interacting with it) -- worth a physical
+// check (spin both wheels off the ground at the same commanded duty and see
+// if one is visibly slower), or eventually a small per-side duty trim
+// similar to how Pivot_Run already uses asymmetric FWD/REV duties. Not
+// applied here yet -- no duty-trim data collected.
 #define FW_CM_MIN 5
 #define FW_CM_MAX 200
 #define FW_TIMEOUT_MS 60000
@@ -145,7 +207,12 @@ volatile uint16_t pending_arc_deg = 0;
 #define ARC_BIAS_DT_MS 5
 #define ARC_TIMEOUT_MS_PER_90 8000
 /* Task 18: overshoot grew with angle (~1.4%); stop early by percent, not fixed °. */
-#define ARC_STOP_EARLY_PCT 1.4f
+/* Bumped from 1.4 -> 3.0 (2026-09-20): 90 deg was visibly overshooting, 45 deg
+ * was fine. No protractor measurement taken -- this is a rough increase, not
+ * a re-derived cal. Re-check TL/TR at 45/90/180 after reflashing: if 90 still
+ * overshoots, nudge this up another ~1%; if 45 now undershoots noticeably,
+ * back it off slightly. */
+#define ARC_STOP_EARLY_PCT 3.0f
 
 volatile uint16_t pending_fw_cm = 0;	// 0 = none; else FW distance cm
 volatile uint16_t pending_bw_cm = 0;	// 0 = none; else BW distance cm
@@ -155,9 +222,15 @@ volatile uint8_t pending_pivot = 0;	// 0 = none; else PIVOT_LEFT / PIVOT_RIGHT
 volatile uint16_t pending_pivot_deg = 0;
 volatile uint8_t pending_imu = 0;	// 1 = run IMU whoami in main loop
 volatile uint8_t pending_gyro = 0;	// 1 = run GYRO sample in main loop
+volatile uint8_t pending_us = 0;	// 1 = run ultrasonic read in main loop
+volatile uint32_t echo_us = 0;
+volatile uint8_t echo_ready = 0;
+static uint32_t us_t1 = 0;
+static uint8_t us_rising = 1;
 volatile uint8_t drive_abort = 0;	// set by S to stop an in-progress drive/pivot/arc
 
 uint8_t err_range[] = "ERR,RANGE\r\n";
+uint8_t err_busy[] = "ERR,BUSY\r\n";	// sent when a valid command arrives while another motion is still in progress
 uint8_t ack_fw[] = "ACK,FW\r\n";
 uint8_t ack_bw[] = "ACK,BW\r\n";
 uint8_t ack_fs[] = "ACK,FS\r\n";
@@ -178,6 +251,8 @@ uint8_t done_tl[] = "DONE,TL\r\n";
 uint8_t done_tr[] = "DONE,TR\r\n";
 uint8_t done_bl[] = "DONE,BL\r\n";
 uint8_t done_br[] = "DONE,BR\r\n";
+uint8_t done_f[] = "DONE,F\r\n";	// sent after the timed F jog physically finishes
+uint8_t done_b[] = "DONE,B\r\n";	// sent after the timed B jog physically finishes
 
 #define MOTION_IDLE() \
   (pending_move == 0 && pending_arc == 0 && pending_fw_cm == 0 && \
@@ -213,10 +288,12 @@ static void MX_USART3_UART_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM9_Init(void);
 static void MX_TIM12_Init(void);
-/* USER CODE BEGIN PFP */
+static void MX_I2C2_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_I2C2_Init(void);
+static void MX_TIM6_Init(void);
+static void MX_TIM8_Init(void);
+/* USER CODE BEGIN PFP */
 int ICM20948_WhoAmI(uint8_t *id_out);
 int ICM20948_Init(void);
 int ICM20948_ReadGyroRaw(int16_t *gx, int16_t *gy, int16_t *gz);
@@ -224,6 +301,8 @@ int ICM20948_ReadAccelRaw(int16_t *ax, int16_t *ay, int16_t *az);
 int ICM20948_ReadGyroDps(int16_t *gx_dps, int16_t *gy_dps, int16_t *gz_dps);
 void Imu_Report(void);
 void Gyro_Report(void);
+void US_Report(void);
+float US_ReadCm(void);
 int16_t EncoderA_GetCount(void);
 int16_t EncoderB_GetCount(void);
 void Encoder_Reset(void);
@@ -294,10 +373,12 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM9_Init();
   MX_TIM12_Init();
+  MX_I2C2_Init();
+  MX_TIM2_Init();
+  MX_TIM3_Init();
+  MX_TIM6_Init();
+  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
-  MX_TIM2_Init();	// Motor A encoder PA15/PB3
-  MX_TIM3_Init();	// Motor B encoder PB4/PB5
-  MX_I2C2_Init();	// ICM-20948 (PB10/PB11)
   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
   Encoder_Reset();
@@ -320,6 +401,8 @@ int main(void)
   /* Bring up UART before IMU init so CoolTerm still works if I2C stalls. */
   HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
   (void)ICM20948_Init();
+  HAL_TIM_Base_Start(&htim6);                  // 1us timer for Trig pulse
+  HAL_TIM_IC_Start_IT(&htim8, TIM_CHANNEL_2);  // Echo capture on PC7
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -401,6 +484,12 @@ int main(void)
 		  Gyro_Report();
 	  }
 
+	  if (pending_us)
+	  {
+		  pending_us = 0;
+		  US_Report();
+	  }
+
 	  // Slow heartbeat only when idle
 	  if (MOTION_IDLE() && pending_imu == 0 && pending_gyro == 0)
 	  {
@@ -408,7 +497,7 @@ int main(void)
 		  HAL_Delay(200);
 	  }
   }
-  /* USER CODE END 3 *////
+  /* USER CODE END 3 */
 }
 
 /**
@@ -450,6 +539,138 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 65535;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 4;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 4;
+  if (HAL_TIM_Encoder_Init(&htim2, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 65535;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 4;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 4;
+  if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
 }
 
 /**
@@ -502,6 +723,103 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 2 */
   HAL_TIM_MspPostInit(&htim4);
+
+}
+
+/**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 16-1;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 65535;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+  * @brief TIM8 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM8_Init(void)
+{
+
+  /* USER CODE BEGIN TIM8_Init 0 */
+
+  /* USER CODE END TIM8_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM8_Init 1 */
+
+  /* USER CODE END TIM8_Init 1 */
+  htim8.Instance = TIM8;
+  htim8.Init.Prescaler = 16-1;
+  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim8.Init.Period = 65535;
+  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim8.Init.RepetitionCounter = 0;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_IC_Init(&htim8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_BOTHEDGE;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim8, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM8_Init 2 */
+
+  /* USER CODE END TIM8_Init 2 */
 
 }
 
@@ -569,9 +887,6 @@ static void MX_TIM12_Init(void)
 
   /* USER CODE END TIM12_Init 1 */
   htim12.Instance = TIM12;
-  // At SYSCLK = HSI 16 MHz (PLL off): Prescaler 15 => 16 MHz / 16 = 1 MHz
-  // => 1 tick = 1 us. Period 19999 => 20000 us = 20 ms => 50 Hz servo frame.
-  // Pulse compare register is then directly in microseconds (e.g. 1500 = 1.5 ms).
   htim12.Init.Prescaler = 15;
   htim12.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim12.Init.Period = 19999;
@@ -645,10 +960,14 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(US_Trig_GPIO_Port, US_Trig_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
@@ -659,6 +978,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED3_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : US_Trig_Pin */
+  GPIO_InitStruct.Pin = US_Trig_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(US_Trig_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : Buzzer_Pin */
   GPIO_InitStruct.Pin = Buzzer_Pin;
@@ -714,28 +1040,48 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         }
         else if (strcmp((char *)rx_buf, "SC") == 0)
         {
+          char msg[24];
+          int n;
           Steer_Center();
-          HAL_UART_Transmit(&huart3, ack_sc, sizeof(ack_sc) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,SC,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "SL") == 0)
         {
+          char msg[24];
+          int n;
           Steer_StepLeft();
-          HAL_UART_Transmit(&huart3, ack_sl, sizeof(ack_sl) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,SL,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "SR") == 0)
         {
+          char msg[24];
+          int n;
           Steer_StepRight();
-          HAL_UART_Transmit(&huart3, ack_sr, sizeof(ack_sr) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,SR,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "LL") == 0)
         {
+          char msg[24];
+          int n;
           Steer_LockLeft();
-          HAL_UART_Transmit(&huart3, ack_ll, sizeof(ack_ll) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,LL,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "RR") == 0)
         {
+          char msg[24];
+          int n;
           Steer_LockRight();
-          HAL_UART_Transmit(&huart3, ack_rr, sizeof(ack_rr) - 1, HAL_MAX_DELAY);
+          n = snprintf(msg, sizeof(msg), "ACK,RR,%lu\r\n", (unsigned long)servo_pulse_us);
+          if (n > 0)
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
         }
         else if (strcmp((char *)rx_buf, "ENC") == 0)
         {
@@ -758,6 +1104,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         {
           pending_gyro = 1;	/* sample in main loop — Init uses HAL_Delay */
         }
+        else if (strcmp((char *)rx_buf, "US") == 0)
+        {
+          pending_us = 1;	/* read in main loop — never block UART ISR */
+        }
         else if (strncmp((char *)rx_buf, "TL ", 3) == 0)
         {
           int deg = atoi((char *)rx_buf + 3);
@@ -769,6 +1119,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_arc_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_tl, sizeof(ack_tl) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "TR ", 3) == 0)
         {
@@ -781,6 +1133,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_arc_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_tr, sizeof(ack_tr) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "BL ", 3) == 0)
         {
@@ -793,6 +1147,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_arc_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_bl, sizeof(ack_bl) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "BR ", 3) == 0)
         {
@@ -805,6 +1161,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_arc_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_br, sizeof(ack_br) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "FW ", 3) == 0)
         {
@@ -818,6 +1176,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_fw_cm = (uint16_t)cm;
             HAL_UART_Transmit(&huart3, ack_fw, sizeof(ack_fw) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "BW ", 3) == 0)
         {
@@ -831,6 +1191,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_bw_cm = (uint16_t)cm;
             HAL_UART_Transmit(&huart3, ack_bw, sizeof(ack_bw) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "FS ", 3) == 0)
         {
@@ -844,6 +1206,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_fs_cm = (uint16_t)cm;
             HAL_UART_Transmit(&huart3, ack_fs, sizeof(ack_fs) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "BS ", 3) == 0)
         {
@@ -857,6 +1221,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_bs_cm = (uint16_t)cm;
             HAL_UART_Transmit(&huart3, ack_bs, sizeof(ack_bs) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "PL ", 3) == 0)
         {
@@ -871,6 +1237,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_pivot_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_pl, sizeof(ack_pl) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else if (strncmp((char *)rx_buf, "PR ", 3) == 0)
         {
@@ -885,6 +1253,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             pending_pivot_deg = (uint16_t)deg;
             HAL_UART_Transmit(&huart3, ack_pr, sizeof(ack_pr) - 1, HAL_MAX_DELAY);
           }
+          else
+            HAL_UART_Transmit(&huart3, err_busy, sizeof(err_busy) - 1, HAL_MAX_DELAY);
         }
         else
         {
@@ -995,18 +1365,24 @@ void Motors_Brake(void)
 
 void Motors_Forward(void)
 {
-  MotorA_Forward(MOTOR_DUTY);
-  MotorB_Forward(MOTOR_DUTY);
+  drive_abort = 0;
+  MotorA_Forward((uint32_t)((float)MOTOR_DUTY * (1.0f + MOTOR_TRIM_PCT / 100.0f)));
+  MotorB_Forward((uint32_t)((float)MOTOR_DUTY * (1.0f - MOTOR_TRIM_PCT / 100.0f)));
   HAL_Delay(MOVE_DURATION_MS);
   Motors_Stop();
+  if (!drive_abort)
+    HAL_UART_Transmit(&huart3, done_f, sizeof(done_f) - 1, HAL_MAX_DELAY);
 }
 
 void Motors_Backward(void)
 {
-  MotorA_Backward(MOTOR_DUTY);
-  MotorB_Backward(MOTOR_DUTY);
+  drive_abort = 0;
+  MotorA_Backward((uint32_t)((float)MOTOR_DUTY * (1.0f + MOTOR_TRIM_PCT / 100.0f)));
+  MotorB_Backward((uint32_t)((float)MOTOR_DUTY * (1.0f - MOTOR_TRIM_PCT / 100.0f)));
   HAL_Delay(MOVE_DURATION_MS);
   Motors_Stop();
+  if (!drive_abort)
+    HAL_UART_Transmit(&huart3, done_b, sizeof(done_b) - 1, HAL_MAX_DELAY);
 }
 
 // Average |A|,|B| — A counts negative on forward in cal data.
@@ -1022,9 +1398,12 @@ uint32_t Encoder_DistCounts(void)
 // SC → reset encoders → drive until avg counts hit target → brake → DONE
 // dir: 0 = forward (FW/FS), 1 = backward (BW)
 static void Drive_CmAt(uint16_t cm, uint32_t duty, uint32_t counts_per_100,
+                       uint32_t brake_overshoot_counts,
                        uint8_t reverse, uint8_t *done, uint16_t done_len)
 {
-  uint32_t target = ((uint32_t)cm * counts_per_100) / 100U;
+  int32_t target_signed = (int32_t)(((uint32_t)cm * counts_per_100) / 100U)
+                           - (int32_t)brake_overshoot_counts;
+  uint32_t target = (target_signed < 1) ? 1U : (uint32_t)target_signed;
   uint32_t t0;
 
   drive_abort = 0;
@@ -1033,15 +1412,19 @@ static void Drive_CmAt(uint16_t cm, uint32_t duty, uint32_t counts_per_100,
   HAL_Delay(TURN_SERVO_SETTLE_MS);
 
   Encoder_Reset();
-  if (reverse)
   {
-    MotorA_Backward(duty);
-    MotorB_Backward(duty);
-  }
-  else
-  {
-    MotorA_Forward(duty);
-    MotorB_Forward(duty);
+    uint32_t duty_a = (uint32_t)((float)duty * (1.0f + MOTOR_TRIM_PCT / 100.0f));
+    uint32_t duty_b = (uint32_t)((float)duty * (1.0f - MOTOR_TRIM_PCT / 100.0f));
+    if (reverse)
+    {
+      MotorA_Backward(duty_a);
+      MotorB_Backward(duty_b);
+    }
+    else
+    {
+      MotorA_Forward(duty_a);
+      MotorB_Forward(duty_b);
+    }
   }
 
   t0 = HAL_GetTick();
@@ -1065,23 +1448,25 @@ static void Drive_CmAt(uint16_t cm, uint32_t duty, uint32_t counts_per_100,
 
 void Drive_ForwardCm(uint16_t cm)
 {
-  Drive_CmAt(cm, MOTOR_DUTY, COUNTS_PER_100CM, 0, done_fw, (uint16_t)(sizeof(done_fw) - 1));
+  Drive_CmAt(cm, MOTOR_DUTY, COUNTS_PER_100CM, FW_BRAKE_OVERSHOOT_COUNTS, 0, done_fw, (uint16_t)(sizeof(done_fw) - 1));
 }
 
 void Drive_BackwardCm(uint16_t cm)
 {
-  Drive_CmAt(cm, MOTOR_DUTY, COUNTS_PER_100CM, 1, done_bw, (uint16_t)(sizeof(done_bw) - 1));
+  /* Own cal as of 2026-09-20 -- see BW_COUNTS_PER_100CM comment above. */
+  Drive_CmAt(cm, MOTOR_DUTY, BW_COUNTS_PER_100CM, BW_BRAKE_OVERSHOOT_COUNTS, 1, done_bw, (uint16_t)(sizeof(done_bw) - 1));
 }
 
 void Drive_ForwardSlowCm(uint16_t cm)
 {
-  Drive_CmAt(cm, FS_DUTY, COUNTS_PER_100CM_FS, 0, done_fs, (uint16_t)(sizeof(done_fs) - 1));
+  /* No coast-overshoot data for the slow duty yet -- 0 margin, unchanged from before. */
+  Drive_CmAt(cm, FS_DUTY, COUNTS_PER_100CM_FS, 0, 0, done_fs, (uint16_t)(sizeof(done_fs) - 1));
 }
 
 void Drive_BackwardSlowCm(uint16_t cm)
 {
   /* Same slow duty + FS cal until a separate BS tape cal exists. */
-  Drive_CmAt(cm, FS_DUTY, COUNTS_PER_100CM_FS, 1, done_bs, (uint16_t)(sizeof(done_bs) - 1));
+  Drive_CmAt(cm, FS_DUTY, COUNTS_PER_100CM_FS, 0, 1, done_bs, (uint16_t)(sizeof(done_bs) - 1));
 }
 
 // On-spot pivot: integrate ICM20948 yaw (Z) until |angle| hits command → brake → ACK.
@@ -1321,22 +1706,6 @@ void Steer_LockRight(void)
   Steer_SetPulse(SERVO_MAX_US);
 }
 
-static void MX_I2C2_Init(void)
-{
-  hi2c2.Instance = I2C2;
-  hi2c2.Init.ClockSpeed = 100000;
-  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c2.Init.OwnAddress1 = 0;
-  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c2.Init.OwnAddress2 = 0;
-  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
 
 /* Select user bank 0 and read WHO_AM_I. Returns 0 on I2C OK (id may still be wrong). */
 int ICM20948_WhoAmI(uint8_t *id_out)
@@ -1521,71 +1890,6 @@ int ICM20948_ReadGyroDps(int16_t *gx_dps, int16_t *gy_dps, int16_t *gz_dps)
   return 0;
 }
 
-static void MX_TIM2_Init(void)
-{  TIM_Encoder_InitTypeDef sConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* Motor A encoder: TIM2_CH1=PA15, TIM2_CH2=PB3 */
-  htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 65535;
-  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
-  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
-  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
-  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 4;
-  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
-  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
-  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 4;
-  if (HAL_TIM_Encoder_Init(&htim2, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
-static void MX_TIM3_Init(void)
-{
-  TIM_Encoder_InitTypeDef sConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* Motor B encoder: TIM3_CH1=PB4, TIM3_CH2=PB5 */
-  htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 0;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 65535;
-  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
-  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
-  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
-  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 4;
-  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
-  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
-  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 4;
-  if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
 int16_t EncoderA_GetCount(void)
 {
   return (int16_t)__HAL_TIM_GET_COUNTER(&htim2);
@@ -1600,6 +1904,48 @@ void Encoder_Reset(void)
 {
   __HAL_TIM_SET_COUNTER(&htim2, 0);
   __HAL_TIM_SET_COUNTER(&htim3, 0);
+}
+
+/* ===== Ultrasonic HC-SR04: Trig PB14, Echo PC7 (TIM8_CH2) ===== */
+static void delay_us(uint16_t us)
+{
+  __HAL_TIM_SET_COUNTER(&htim6, 0);
+  while (__HAL_TIM_GET_COUNTER(&htim6) < us);
+}
+
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance != TIM8) return;
+  uint32_t t = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+  if (us_rising) { us_t1 = t; us_rising = 0; }
+  else
+  {
+    echo_us = (t >= us_t1) ? (t - us_t1) : (65536 - us_t1 + t);
+    echo_ready = 1;
+    us_rising = 1;
+  }
+}
+
+/* Returns distance in cm, or -1 if no echo. Takes up to 40 ms. */
+float US_ReadCm(void)
+{
+  echo_ready = 0;
+  us_rising = 1;
+  HAL_GPIO_WritePin(US_Trig_GPIO_Port, US_Trig_Pin, GPIO_PIN_SET);
+  delay_us(10);
+  HAL_GPIO_WritePin(US_Trig_GPIO_Port, US_Trig_Pin, GPIO_PIN_RESET);
+  uint32_t start = HAL_GetTick();
+  while (!echo_ready && (HAL_GetTick() - start) < 40);
+  return echo_ready ? (echo_us / 58.0f) : -1.0f;
+}
+
+void US_Report(void)
+{
+  char msg[24];
+  int cm = (int)US_ReadCm();
+  int n = snprintf(msg, sizeof(msg), "US,%d\r\n", cm);
+  if (n > 0)
+    HAL_UART_Transmit(&huart3, (uint8_t *)msg, (uint16_t)n, HAL_MAX_DELAY);
 }
 
 /* USER CODE END 4 */
