@@ -11,11 +11,12 @@ htmlcov/
 
 # Computer-vision runtime artifacts and private model weights
 image-rec/captures/
+image-rec/weights/
 image-rec/**/models/*
 !image-rec/**/models/.gitkeep
 !image-rec/**/models/*.json
 image-rec/.venv-export
-image-rec/misc/test_images
+image-rec/misc/test_real/
 
 
 
@@ -31,6 +32,7 @@ image-rec/training/**/*.[hH][eE][iI][cC]
 image-rec/training/.generated/
 image-rec/training/runs/
 image-rec/training/exports/
+image-rec/training/predictions/
 image-rec/training/annotations/task1
 image-rec/training/annotations/task2
 image-rec/training/**/*.cache
